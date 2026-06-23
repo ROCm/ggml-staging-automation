@@ -38,8 +38,8 @@ jobs:
     env:
       PIP_CACHE_DIR: ${{ github.workspace }}/build/caches/pip
       CCACHE_DIR: ${{ github.workspace }}/build/caches/ccache
-      VULKAN_SDK_VERSION: 1.4.313.0
-      VULKAN_SDK_SHA256: 4e957b66ade85eeaee95932aa7e3b45aea64db373c58a5eaefc8228cc71445c2
+      VULKAN_SDK_VERSION: 1.3.296.0
+      VULKAN_SDK_SHA256: 79b0a1593dadc46180526250836f3e53688a9a5fb42a0e5859eb72316dc4d53e
     steps:
       - name: Checkout repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
