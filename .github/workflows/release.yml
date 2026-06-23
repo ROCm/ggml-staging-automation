@@ -1,0 +1,126 @@
+# Copyright 2026 The HRX Authors
+#
+# Licensed under the Apache License v2.0 with LLVM Exceptions.
+# See https://llvm.org/LICENSE.txt for license information.
+# SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release tag/version. Defaults to hrx-b<workflow run number>."
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  prepare_release:
+    name: Prepare
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      artifact_name: ${{ steps.version.outputs.artifact_name }}
+      asset_name: ${{ steps.version.outputs.asset_name }}
+    steps:
+      - name: Determine version
+        id: version
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          version="${INPUT_VERSION:-hrx-b${GITHUB_RUN_NUMBER}}"
+          if [[ ! "$version" =~ ^[A-Za-z0-9._-]+$ ]]; then
+            echo "Release version must contain only letters, numbers, '.', '_', and '-'." >&2
+            exit 1
+          fi
+          artifact_name="llama-${version}-bin-manylinux-hrx-x64"
+          asset_name="${artifact_name}.tar.gz"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "artifact_name=$artifact_name" >> "$GITHUB_OUTPUT"
+          echo "asset_name=$asset_name" >> "$GITHUB_OUTPUT"
+
+  llama_cpp_manylinux_hrx:
+    name: Linux / HRX
+    needs: prepare_release
+    uses: ./.github/workflows/build_llama_cpp_linux.yml
+    permissions:
+      contents: read
+    with:
+      name: Build
+      artifact_name: ${{ needs.prepare_release.outputs.artifact_name }}
+      package_file_name: ${{ needs.prepare_release.outputs.asset_name }}
+      package_root_name: llama-${{ needs.prepare_release.outputs.version }}
+      build_type: Release
+      hrx_build_type: Release
+      upload_artifact: true
+
+  publish_release:
+    name: Publish
+    runs-on: ubuntu-latest
+    needs:
+      - prepare_release
+      - llama_cpp_manylinux_hrx
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Download release artifact
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: ${{ needs.prepare_release.outputs.artifact_name }}
+          path: release
+
+      - name: Verify release artifact
+        env:
+          VERSION: ${{ needs.prepare_release.outputs.version }}
+          ASSET_NAME: ${{ needs.prepare_release.outputs.asset_name }}
+        run: |
+          set -euo pipefail
+          test -f "release/$ASSET_NAME"
+          tar -tzf "release/$ASSET_NAME" | grep -q "^llama-${VERSION}/bin/"
+          tar -tzf "release/$ASSET_NAME" | grep -q "^llama-${VERSION}/lib/"
+
+      - name: Create release notes
+        env:
+          VERSION: ${{ needs.prepare_release.outputs.version }}
+          ASSET_NAME: ${{ needs.prepare_release.outputs.asset_name }}
+        run: |
+          set -euo pipefail
+          commit_message="$(git log -1 --pretty=%B)"
+          {
+            echo "<details open>"
+            echo
+            printf '%s\n' "$commit_message"
+            echo
+            echo "</details>"
+            echo
+            echo "**Linux:**"
+            echo "- [Manylinux x64 (HRX)](https://github.com/${GITHUB_REPOSITORY}/releases/download/${VERSION}/${ASSET_NAME})"
+            echo
+            echo "HRX ROCm runtime dependencies required by this build are bundled in the archive."
+          } > release-notes.md
+
+      - name: Create prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.prepare_release.outputs.version }}
+          ASSET_NAME: ${{ needs.prepare_release.outputs.asset_name }}
+        run: |
+          set -euo pipefail
+          gh release create "$VERSION" "release/$ASSET_NAME" \
+            --prerelease \
+            --latest=false \
+            --target "$GITHUB_SHA" \
+            --title "$VERSION" \
+            --notes-file release-notes.md
