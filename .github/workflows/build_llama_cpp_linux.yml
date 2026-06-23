@@ -48,24 +48,18 @@ jobs:
       - name: Initialize submodules
         run: git submodule update --init hrx-system llama.cpp
 
-      - name: Install native Vulkan build dependencies
+      - name: Install Python dependencies
+        run: python3 -m pip install --upgrade -r requirements.txt cmake==3.31.6 ninja
+
+      - name: Build Vulkan SDK build dependencies
         run: |
           set -eu
-          # Alma/RHEL8 exposes glslc through shaderc; there is no glslc package.
-          if command -v dnf >/dev/null 2>&1; then
-            dnf install -y shaderc vulkan-headers vulkan-loader-devel
-          elif command -v yum >/dev/null 2>&1; then
-            yum install -y shaderc vulkan-headers vulkan-loader-devel
-          else
-            echo "No supported native package manager found." >&2
-            exit 1
-          fi
-          glslc --version
-          test -f /usr/include/vulkan/vulkan.h
-          test -e /usr/lib64/libvulkan.so
-
-      - name: Install Python dependencies
-        run: python3 -m pip install --upgrade -r requirements.txt cmake==3.31.6
+          python3 scripts/hrx/build_vulkan_sdk.py
+          vulkan_sdk="$PWD/build/vulkan-sdk"
+          echo "$vulkan_sdk/bin" >> "$GITHUB_PATH"
+          echo "VULKAN_SDK=$vulkan_sdk" >> "$GITHUB_ENV"
+          echo "CMAKE_PREFIX_PATH=$vulkan_sdk${CMAKE_PREFIX_PATH:+:$CMAKE_PREFIX_PATH}" >> "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=$vulkan_sdk/lib:$vulkan_sdk/lib64${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" >> "$GITHUB_ENV"
 
       - name: Build and validate llama.cpp
         run: |
