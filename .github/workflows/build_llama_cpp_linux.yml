@@ -11,7 +11,7 @@ on:
     inputs:
       name:
         type: string
-        default: Linux / llama.cpp / HRX
+        default: Build
       artifact_name:
         type: string
         default: llama-cpp-linux-x86_64
@@ -47,6 +47,19 @@ jobs:
 
       - name: Initialize submodules
         run: git submodule update --init hrx-system llama.cpp
+
+      - name: Install native build dependencies
+        run: |
+          if command -v dnf >/dev/null 2>&1; then
+            dnf install -y glslc vulkan-headers vulkan-loader-devel
+          elif command -v yum >/dev/null 2>&1; then
+            yum install -y glslc vulkan-headers vulkan-loader-devel
+          else
+            echo "No supported native package manager found." >&2
+            exit 1
+          fi
+          glslc --version
+          test -f /usr/include/vulkan/vulkan.h
 
       - name: Install Python dependencies
         run: python3 -m pip install --upgrade -r requirements.txt cmake==3.31.6

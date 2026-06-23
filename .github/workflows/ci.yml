@@ -18,12 +18,12 @@ permissions:
 
 jobs:
   llama_cpp_linux:
-    name: Linux / llama.cpp / HRX
+    name: Linux / HRX
     uses: ./.github/workflows/build_llama_cpp_linux.yml
     permissions:
       contents: read
     with:
-      name: Linux / llama.cpp / HRX
+      name: Build
       artifact_name: llama-cpp-linux-x86_64
       build_type: Release
       hrx_build_type: Release
