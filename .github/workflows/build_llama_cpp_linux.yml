@@ -1,0 +1,66 @@
+# Copyright 2026 The HRX Authors
+#
+# Licensed under the Apache License v2.0 with LLVM Exceptions.
+# See https://llvm.org/LICENSE.txt for license information.
+# SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+
+name: Build llama.cpp Linux
+
+on:
+  workflow_call:
+    inputs:
+      name:
+        type: string
+        default: Linux / llama.cpp / HRX
+      artifact_name:
+        type: string
+        default: llama-cpp-linux-x86_64
+      upload_artifact:
+        type: boolean
+        default: true
+      build_type:
+        type: string
+        default: Release
+      hrx_build_type:
+        type: string
+        default: Release
+
+permissions:
+  contents: read
+
+jobs:
+  build_llama_cpp_linux:
+    name: ${{ inputs.name }}
+    runs-on: aws-linux-scale-rocm-prod
+    timeout-minutes: 90
+    container:
+      image: ghcr.io/rocm/therock_build_manylinux_x86_64@sha256:702a5133851e6d1daf1207d2c9fbb01c2667914a5b6dc5a01faeb3ce66ea6421
+    env:
+      PIP_CACHE_DIR: ${{ github.workspace }}/build/caches/pip
+      CCACHE_DIR: ${{ github.workspace }}/build/caches/ccache
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Adjust git config
+        run: git config --global --add safe.directory "$PWD"
+
+      - name: Initialize submodules
+        run: git submodule update --init hrx-system llama.cpp
+
+      - name: Install Python dependencies
+        run: python3 -m pip install --upgrade -r requirements.txt cmake==3.31.6
+
+      - name: Build and validate llama.cpp
+        run: |
+          python3 scripts/hrx/build_all.py \
+            --build-type "${{ inputs.build_type }}" \
+            --hrx-build-type "${{ inputs.hrx_build_type }}"
+
+      - name: Upload llama.cpp install tree
+        if: ${{ inputs.upload_artifact }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ inputs.artifact_name }}
+          path: build/llama.cpp-install
+          if-no-files-found: error
