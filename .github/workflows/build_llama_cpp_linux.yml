@@ -38,6 +38,8 @@ jobs:
     env:
       PIP_CACHE_DIR: ${{ github.workspace }}/build/caches/pip
       CCACHE_DIR: ${{ github.workspace }}/build/caches/ccache
+      VULKAN_SDK_VERSION: 1.4.313.0
+      VULKAN_SDK_SHA256: 4e957b66ade85eeaee95932aa7e3b45aea64db373c58a5eaefc8228cc71445c2
     steps:
       - name: Checkout repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -48,18 +50,33 @@ jobs:
       - name: Initialize submodules
         run: git submodule update --init hrx-system llama.cpp
 
-      - name: Install native build dependencies
+      - name: Install Vulkan SDK build dependencies
         run: |
-          if command -v dnf >/dev/null 2>&1; then
-            dnf install -y glslc vulkan-headers vulkan-loader-devel
-          elif command -v yum >/dev/null 2>&1; then
-            yum install -y glslc vulkan-headers vulkan-loader-devel
-          else
-            echo "No supported native package manager found." >&2
-            exit 1
+          set -eu
+          download_dir="$PWD/build/downloads"
+          sdk_root="$PWD/build/vulkan-sdk"
+          archive="$download_dir/vulkansdk-linux-x86_64-${VULKAN_SDK_VERSION}.tar.xz"
+          sdk="${sdk_root}/${VULKAN_SDK_VERSION}/x86_64"
+
+          mkdir -p "$download_dir" "$sdk_root"
+          if [ ! -x "$sdk/bin/glslc" ]; then
+            curl -L --fail --retry 5 --retry-delay 5 \
+              -A "Mozilla/5.0" \
+              -o "$archive" \
+              "https://sdk.lunarg.com/sdk/download/${VULKAN_SDK_VERSION}/linux/vulkansdk-linux-x86_64-${VULKAN_SDK_VERSION}.tar.xz"
+            printf '%s  %s\n' "$VULKAN_SDK_SHA256" "$archive" | sha256sum --check -
+            tar -xJf "$archive" -C "$sdk_root"
           fi
-          glslc --version
-          test -f /usr/include/vulkan/vulkan.h
+
+          test -x "$sdk/bin/glslc"
+          test -f "$sdk/include/vulkan/vulkan.h"
+          test -e "$sdk/lib/libvulkan.so"
+          "$sdk/bin/glslc" --version
+
+          echo "$sdk/bin" >> "$GITHUB_PATH"
+          echo "VULKAN_SDK=$sdk" >> "$GITHUB_ENV"
+          echo "CMAKE_PREFIX_PATH=$sdk${CMAKE_PREFIX_PATH:+:$CMAKE_PREFIX_PATH}" >> "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=$sdk/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" >> "$GITHUB_ENV"
 
       - name: Install Python dependencies
         run: python3 -m pip install --upgrade -r requirements.txt cmake==3.31.6

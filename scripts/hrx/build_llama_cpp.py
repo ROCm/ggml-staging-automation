@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 
 from hrx_build import (
     REPO_ROOT,
@@ -42,7 +43,11 @@ def main() -> int:
         raise SystemExit(f"Missing loomc package in hrx-system install tree: {hrx_install}")
 
     env = rocm_env(rocm_root)
-    cmake_prefix_path = f"{hrx_install};{rocm_root}"
+    cmake_prefix_paths = [os.fspath(hrx_install), os.fspath(rocm_root)]
+    vulkan_sdk = env.get("VULKAN_SDK")
+    if vulkan_sdk:
+        cmake_prefix_paths.append(vulkan_sdk)
+    cmake_prefix_path = ";".join(cmake_prefix_paths)
     cmake_args = [
         "cmake",
         "-S",
