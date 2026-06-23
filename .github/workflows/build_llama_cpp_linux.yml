@@ -24,9 +24,12 @@ on:
       hrx_build_type:
         type: string
         default: Release
-
-permissions:
-  contents: read
+      package_file_name:
+        type: string
+        default: ""
+      package_root_name:
+        type: string
+        default: llama.cpp-install
 
 jobs:
   build_llama_cpp_linux:
@@ -67,10 +70,29 @@ jobs:
             --build-type "${{ inputs.build_type }}" \
             --hrx-build-type "${{ inputs.hrx_build_type }}"
 
+      - name: Package llama.cpp install tree
+        if: ${{ inputs.upload_artifact }}
+        env:
+          ARTIFACT_NAME: ${{ inputs.artifact_name }}
+          PACKAGE_FILE_NAME: ${{ inputs.package_file_name }}
+          PACKAGE_ROOT_NAME: ${{ inputs.package_root_name }}
+        run: |
+          set -eu
+          package_file_name="${PACKAGE_FILE_NAME:-${ARTIFACT_NAME}.tar.gz}"
+          package_dir="$PWD/build/artifacts"
+          package_root="$package_dir/$PACKAGE_ROOT_NAME"
+
+          rm -rf "$package_dir"
+          mkdir -p "$package_root"
+          cp -a "$PWD/build/llama.cpp-install/." "$package_root/"
+          cp "$PWD/LICENSE" "$package_root/LICENSE"
+          cp "$PWD/README.md" "$package_root/README.md"
+          tar -czf "$package_dir/$package_file_name" -C "$package_dir" "$PACKAGE_ROOT_NAME"
+
       - name: Upload llama.cpp install tree
         if: ${{ inputs.upload_artifact }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ${{ inputs.artifact_name }}
-          path: build/llama.cpp-install
+          path: build/artifacts/*.tar.gz
           if-no-files-found: error
