@@ -1,0 +1,5 @@
+.direnv/
+.venv/
+build/
+**/__pycache__/
+*.py[cod]
