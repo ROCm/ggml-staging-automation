@@ -15,6 +15,11 @@ def main() -> int:
     parser.add_argument("--skip-validate", action="store_true")
     parser.add_argument("--build-type", default="Release", help="llama.cpp build type")
     parser.add_argument("--hrx-build-type", default="Release", help="hrx-system build type")
+    parser.add_argument(
+        "--build-test-package",
+        action="store_true",
+        help="also build the separate llama.cpp test install tree",
+    )
     args, extra_args = parser.parse_known_args()
 
     common = [
@@ -30,6 +35,12 @@ def main() -> int:
         args.llama_build_dir.resolve(),
         "--llama-install-dir",
         args.llama_install_dir.resolve(),
+        "--llama-test-build-dir",
+        args.llama_test_build_dir.resolve(),
+        "--llama-test-install-dir",
+        args.llama_test_install_dir.resolve(),
+        "--package-dir",
+        args.package_dir.resolve(),
     ]
     if not args.skip_fetch:
         run([python_executable(), REPO_ROOT / "scripts" / "hrx" / "fetch_rocm.py", *common])
@@ -54,6 +65,16 @@ def main() -> int:
     )
     if not args.skip_validate:
         run([python_executable(), REPO_ROOT / "scripts" / "hrx" / "validate_install.py", *common])
+    if args.build_test_package:
+        run(
+            [
+                python_executable(),
+                REPO_ROOT / "scripts" / "hrx" / "build_llama_cpp_tests.py",
+                *common,
+                "--build-type",
+                args.build_type,
+            ]
+        )
     return 0
 
 

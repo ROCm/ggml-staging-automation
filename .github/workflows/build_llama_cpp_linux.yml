@@ -30,6 +30,12 @@ on:
       package_root_name:
         type: string
         default: llama.cpp-install
+      build_test_package:
+        type: boolean
+        default: false
+      test_artifact_name:
+        type: string
+        default: llama-cpp-linux-x86_64-tests
 
 jobs:
   build_llama_cpp_linux:
@@ -66,9 +72,24 @@ jobs:
 
       - name: Build and validate llama.cpp
         run: |
+          test_package_args=()
+          if [ "${{ inputs.build_test_package }}" = "true" ]; then
+            test_package_args=(
+              --build-test-package
+            )
+          fi
           python3 scripts/hrx/build_all.py \
             --build-type "${{ inputs.build_type }}" \
-            --hrx-build-type "${{ inputs.hrx_build_type }}"
+            --hrx-build-type "${{ inputs.hrx_build_type }}" \
+            "${test_package_args[@]}"
+
+      - name: Package llama.cpp tests
+        if: ${{ inputs.build_test_package }}
+        run: |
+          set -eu
+          python3 scripts/hrx/package_llama_cpp_tests.py \
+            --package-file "build/packages/${{ inputs.test_artifact_name }}.tar.gz" \
+            --package-root-name "${{ inputs.package_root_name }}"
 
       - name: Package llama.cpp install tree
         if: ${{ inputs.upload_artifact }}
@@ -96,3 +117,12 @@ jobs:
           name: ${{ inputs.artifact_name }}
           path: build/artifacts/*.tar.gz
           if-no-files-found: error
+
+      - name: Upload llama.cpp test package
+        if: ${{ inputs.upload_artifact && inputs.build_test_package }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ inputs.test_artifact_name }}
+          path: build/packages/${{ inputs.test_artifact_name }}.tar.gz
+          if-no-files-found: error
+          retention-days: 1

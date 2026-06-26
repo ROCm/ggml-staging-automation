@@ -1,0 +1,99 @@
+# Copyright 2026 The HRX Authors
+#
+# Licensed under the Apache License v2.0 with LLVM Exceptions.
+# See https://llvm.org/LICENSE.txt for license information.
+# SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+
+name: Test llama.cpp Release Linux
+
+on:
+  workflow_call:
+    inputs:
+      name:
+        type: string
+        default: Release tests
+      release_artifact_name:
+        type: string
+        required: true
+      test_artifact_name:
+        type: string
+        default: llama-cpp-linux-x86_64-tests
+      package_root_name:
+        type: string
+        default: llama.cpp-install
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  test_llama_cpp_release_linux:
+    name: ${{ inputs.name }} (${{ matrix.gpu_target }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: gfx1151_strix-halo
+            gpu_target: gfx1151
+            runs_on: linux-gfx1151-gpu-rocm
+          - name: gfx1201_9070
+            gpu_target: gfx1201
+            runs_on: linux-gfx120X-gpu-rocm
+    runs-on: ${{ matrix.runs_on }}
+    timeout-minutes: 20
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Adjust git config
+        run: git config --global --add safe.directory "$PWD"
+
+      # scripts/hrx/fetch_rocm.py imports ci_core_linux.py from hrx-system.
+      - name: Initialize submodules
+        run: git submodule update --init hrx-system
+
+      - name: Install Python dependencies
+        run: python3 -m pip install --upgrade -r requirements.txt
+
+      - name: Download llama.cpp release package
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: ${{ inputs.release_artifact_name }}
+          path: artifacts/release
+
+      - name: Download llama.cpp test package
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: ${{ inputs.test_artifact_name }}
+          path: artifacts/test
+
+      - name: Extract package artifacts
+        run: |
+          release_package="$PWD/artifacts/release/${{ inputs.release_artifact_name }}.tar.gz"
+          test_package="$PWD/artifacts/test/${{ inputs.test_artifact_name }}.tar.gz"
+          extract_dir="$PWD/build/release-test/${{ matrix.gpu_target }}/extract"
+
+          rm -rf "$extract_dir"
+          mkdir -p "$extract_dir"
+
+          tar -xzf "$release_package" -C "$extract_dir"
+          tar -xzf "$test_package" -C "$extract_dir"
+
+      - name: Fetch ROCm
+        run: |
+          python3 scripts/hrx/fetch_rocm.py \
+            --rocm-root "$PWD/build/release-test/${{ matrix.gpu_target }}/rocm-root" \
+            --download-cache-dir "$PWD/build/release-test/${{ matrix.gpu_target }}/downloads"
+
+      - name: Run installed GPU tests
+        run: |
+          rocm_root="$PWD/build/release-test/${{ matrix.gpu_target }}/rocm-root"
+          prefix="$PWD/build/release-test/${{ matrix.gpu_target }}/extract/${{ inputs.package_root_name }}"
+          export PATH="$rocm_root/bin:$PATH"
+          export LD_LIBRARY_PATH="$prefix/bin:$prefix/bin/rocm_sysdeps/lib:$prefix/lib:$rocm_root/lib:$rocm_root/lib/rocm_sysdeps/lib:${LD_LIBRARY_PATH:-}"
+
+          ldd "$prefix/bin/test-backend-ops"
+          "$prefix/bin/test-backend-ops" test \
+            -o MUL_MAT \
+            -b HRX0 \
+            -p "type_a=f16,type_b=f32,m=64,n=2,k=128"
