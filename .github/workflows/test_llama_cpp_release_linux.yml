@@ -45,15 +45,15 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - name: Adjust git config
-        run: git config --global --add safe.directory "$PWD"
+      # - name: Adjust git config
+      #   run: git config --global --add safe.directory "$PWD"
 
-      # scripts/hrx/fetch_rocm.py imports ci_core_linux.py from hrx-system.
-      - name: Initialize submodules
-        run: git submodule update --init hrx-system
+      # # scripts/hrx/fetch_rocm.py imports ci_core_linux.py from hrx-system.
+      # - name: Initialize submodules
+      #   run: git submodule update --init hrx-system
 
-      - name: Install Python dependencies
-        run: python3 -m pip install --upgrade -r requirements.txt
+      # - name: Install Python dependencies
+      #   run: python3 -m pip install --upgrade -r requirements.txt
 
       - name: Download llama.cpp release package
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
@@ -79,11 +79,11 @@ jobs:
           tar -xzf "$release_package" -C "$extract_dir"
           tar -xzf "$test_package" -C "$extract_dir"
 
-      - name: Fetch ROCm
-        run: |
-          python3 scripts/hrx/fetch_rocm.py \
-            --rocm-root "$PWD/build/release-test/${{ matrix.gpu_target }}/rocm-root" \
-            --download-cache-dir "$PWD/build/release-test/${{ matrix.gpu_target }}/downloads"
+      # - name: Fetch ROCm
+      #   run: |
+      #     python3 scripts/hrx/fetch_rocm.py \
+      #       --rocm-root "$PWD/build/release-test/${{ matrix.gpu_target }}/rocm-root" \
+      #       --download-cache-dir "$PWD/build/release-test/${{ matrix.gpu_target }}/downloads"
 
       - name: Run installed GPU tests
         run: |
