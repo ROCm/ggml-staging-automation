@@ -63,6 +63,7 @@ def cmake_configure(
             *cmake_generator_args(),
             "-DCMAKE_BUILD_TYPE=Release",
             f"-DCMAKE_INSTALL_PREFIX={install_dir}",
+            "-DCMAKE_INSTALL_LIBDIR=lib",
             *extra_args,
         ]
     )
@@ -145,24 +146,13 @@ def main() -> int:
     build_vulkan_loader(loader_src, build_dir / "Vulkan-Loader", install_dir)
     build_glslc(shaderc_src, build_dir / "shaderc", install_dir)
 
-    vulkan_loader = next(
-        (
-            path
-            for path in (
-                install_dir / "lib" / "libvulkan.so",
-                install_dir / "lib64" / "libvulkan.so",
-            )
-            if path.exists()
-        ),
-        None,
-    )
     required = [
         install_dir / "include" / "vulkan" / "vulkan.h",
         install_dir / "bin" / "glslc",
+        install_dir / "lib" / "libvulkan.so",
+        install_dir / "lib" / "libvulkan.so.1",
     ]
     missing = [path for path in required if not path.exists()]
-    if vulkan_loader is None:
-        missing.append(install_dir / "lib" / "libvulkan.so")
     if missing:
         raise SystemExit(
             "Vulkan SDK build did not produce required files:\n  "
