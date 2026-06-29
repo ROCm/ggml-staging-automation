@@ -120,15 +120,18 @@ def main() -> int:
         default=DEFAULT_BUILD_ROOT / "vulkan-sdk-build",
     )
     parser.add_argument(
+        "--vulkan-sdk-dir",
         "--install-dir",
+        dest="vulkan_sdk_dir",
         type=Path,
         default=DEFAULT_BUILD_ROOT / "vulkan-sdk",
+        help="Vulkan SDK install root",
     )
     args = parser.parse_args()
 
     source_dir = args.source_dir.resolve()
     build_dir = args.build_dir.resolve()
-    install_dir = args.install_dir.resolve()
+    install_dir = args.vulkan_sdk_dir.resolve()
 
     headers_src = source_dir / "Vulkan-Headers"
     loader_src = source_dir / "Vulkan-Loader"

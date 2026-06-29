@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from pathlib import Path
 
 from build_llama_cpp import build_llama_cpp
 from hrx_build import add_common_path_args
@@ -15,11 +16,17 @@ def main() -> int:
     parser.add_argument("--build-type", default="Release")
     parser.add_argument("--no-install", action="store_true")
     parser.add_argument("--backend-dl", action="store_true")
+    parser.add_argument(
+        "--vulkan-sdk-dir",
+        type=Path,
+        default=None,
+    )
     args, extra_cmake_args = parser.parse_known_args()
 
     build_llama_cpp(
         rocm_root=args.rocm_root,
         hrx_install=args.hrx_install_dir,
+        vulkan_sdk_dir=args.vulkan_sdk_dir,
         build_dir=args.llama_test_build_dir,
         install_dir=args.llama_test_install_dir,
         build_type=args.build_type,

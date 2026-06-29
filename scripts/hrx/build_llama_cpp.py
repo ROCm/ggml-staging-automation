@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import shutil
 from pathlib import Path
 
 from hrx_build import (
@@ -22,10 +23,55 @@ from hrx_build import (
 )
 
 
+def vulkan_cmake_args(vulkan_sdk_dir: Path) -> list[str]:
+    include_dir = vulkan_sdk_dir / "include"
+    library = vulkan_sdk_dir / "lib" / "libvulkan.so"
+    glslc = vulkan_sdk_dir / "bin" / "glslc"
+    required = [
+        include_dir / "vulkan" / "vulkan.h",
+        library,
+        glslc,
+    ]
+    missing = [path for path in required if not path.exists()]
+    if missing:
+        raise SystemExit(
+            "Vulkan SDK is incomplete. Missing:\n  "
+            + "\n  ".join(os.fspath(path) for path in missing)
+        )
+    return [
+        f"-DVulkan_INCLUDE_DIR={include_dir}",
+        f"-DVulkan_LIBRARY={library}",
+        f"-DVulkan_GLSLC_EXECUTABLE={glslc}",
+    ]
+
+
+def copy_vulkan_loader(vulkan_sdk_dir: Path, dest_dir: Path) -> None:
+    lib_dir = vulkan_sdk_dir / "lib"
+    required_loader = lib_dir / "libvulkan.so.1"
+    if not required_loader.exists():
+        raise SystemExit(f"Missing Vulkan loader: {required_loader}")
+
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    for source in sorted(lib_dir.glob("libvulkan.so*")):
+        dest = dest_dir / source.name
+        if dest.exists() or dest.is_symlink():
+            remove_tree(dest)
+        shutil.copy2(source, dest, follow_symlinks=False)
+
+
+def remove_vulkan_artifacts(dest_dir: Path) -> None:
+    if not dest_dir.exists():
+        return
+    for pattern in ("libvulkan.so*", "libggml-vulkan.so*"):
+        for dest in dest_dir.glob(pattern):
+            remove_tree(dest)
+
+
 def build_llama_cpp(
     *,
     rocm_root: Path,
     hrx_install: Path,
+    vulkan_sdk_dir: Path | None,
     build_dir: Path,
     install_dir: Path,
     build_type: str,
@@ -44,6 +90,10 @@ def build_llama_cpp(
     hrx_install = hrx_install.resolve()
     build_dir = build_dir.resolve()
     install_dir = install_dir.resolve()
+    vulkan_args: list[str] = []
+    if vulkan_sdk_dir is not None:
+        vulkan_sdk_dir = vulkan_sdk_dir.resolve()
+        vulkan_args = vulkan_cmake_args(vulkan_sdk_dir)
     require_rocm_root(rocm_root)
     if not (hrx_install / "lib" / "cmake" / "hrx" / "hrx-config.cmake").exists():
         raise SystemExit(f"Missing hrx-system install tree: {hrx_install}")
@@ -51,11 +101,8 @@ def build_llama_cpp(
         raise SystemExit(f"Missing loomc package in hrx-system install tree: {hrx_install}")
 
     env = rocm_env(rocm_root)
-    cmake_prefix_paths = [os.fspath(hrx_install), os.fspath(rocm_root)]
-    vulkan_sdk = env.get("VULKAN_SDK")
-    if vulkan_sdk:
-        cmake_prefix_paths.append(vulkan_sdk)
-    cmake_prefix_path = ";".join(cmake_prefix_paths)
+    env.pop("VULKAN_SDK", None)
+    cmake_prefix_path = ";".join([os.fspath(hrx_install), os.fspath(rocm_root)])
     cmake_args = [
         "cmake",
         "-S",
@@ -65,6 +112,7 @@ def build_llama_cpp(
         *cmake_generator_args(),
         cmake_build_type_arg(build_type),
         f"-DCMAKE_PREFIX_PATH={cmake_prefix_path}",
+        *vulkan_args,
         f"-DCMAKE_INSTALL_PREFIX={install_dir}",
         "-DCMAKE_INSTALL_LIBDIR=lib",
         *cmake_toolchain_args(rocm_root),
@@ -74,7 +122,7 @@ def build_llama_cpp(
         r"-DCMAKE_BUILD_RPATH=$ORIGIN",
         r"-DCMAKE_INSTALL_RPATH=$ORIGIN;$ORIGIN/../lib",
         "-DGGML_CPU=ON",
-        "-DGGML_VULKAN=ON",
+        f"-DGGML_VULKAN={'ON' if vulkan_sdk_dir is not None else 'OFF'}",
         "-DGGML_HRX=ON",
         "-DGGML_HRX_EMBED_ROCM_LIBS=ON",
         f"-DGGML_HRX_ROCM_PATH={rocm_root}",
@@ -93,6 +141,10 @@ def build_llama_cpp(
     ]
     run(cmake_args, env=env)
     run(["cmake", "--build", build_dir, "--target", target], env=env)
+    if vulkan_sdk_dir is not None:
+        copy_vulkan_loader(vulkan_sdk_dir, build_dir / "bin")
+    else:
+        remove_vulkan_artifacts(build_dir / "bin")
     if install:
         if install_dir.exists():
             remove_tree(install_dir)
@@ -106,6 +158,8 @@ def build_llama_cpp(
             ],
             env=env,
         )
+        if vulkan_sdk_dir is not None:
+            copy_vulkan_loader(vulkan_sdk_dir, install_dir / "lib")
 
 
 def main() -> int:
@@ -117,11 +171,21 @@ def main() -> int:
     parser.add_argument("--build-tests", action="store_true")
     parser.add_argument("--build-examples", action="store_true")
     parser.add_argument("--backend-dl", action="store_true")
+    parser.add_argument(
+        "--vulkan-sdk-dir",
+        type=Path,
+        default=None,
+        help=(
+            "Vulkan SDK install root with include, lib, and bin subdirectories; "
+            "omit to build llama.cpp without Vulkan"
+        ),
+    )
     args, extra_cmake_args = parser.parse_known_args()
 
     build_llama_cpp(
         rocm_root=args.rocm_root,
         hrx_install=args.hrx_install_dir,
+        vulkan_sdk_dir=args.vulkan_sdk_dir,
         build_dir=args.llama_build_dir,
         install_dir=args.llama_install_dir,
         build_type=args.build_type,
