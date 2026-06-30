@@ -30,8 +30,6 @@ def default_paths() -> dict[str, Path]:
         "hrx_install": build_root / "hrx-system-install",
         "llama_build": build_root / "llama.cpp-build",
         "llama_install": build_root / "llama.cpp-install",
-        "llama_test_build": build_root / "llama.cpp-test-build",
-        "llama_test_install": build_root / "llama.cpp-test-install",
         "packages": build_root / "packages",
     }
 
@@ -44,8 +42,6 @@ def add_common_path_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--hrx-install-dir", type=Path, default=paths["hrx_install"])
     parser.add_argument("--llama-build-dir", type=Path, default=paths["llama_build"])
     parser.add_argument("--llama-install-dir", type=Path, default=paths["llama_install"])
-    parser.add_argument("--llama-test-build-dir", type=Path, default=paths["llama_test_build"])
-    parser.add_argument("--llama-test-install-dir", type=Path, default=paths["llama_test_install"])
     parser.add_argument("--package-dir", type=Path, default=paths["packages"])
 
 

@@ -77,32 +77,32 @@ jobs:
             --vulkan-sdk-dir "$PWD/build/vulkan-sdk" \
             "${test_package_args[@]}"
 
-      - name: Package llama.cpp tests
-        if: ${{ inputs.build_test_package }}
-        run: |
-          set -eu
-          python3 scripts/hrx/package_llama_cpp_tests.py \
-            --package-file "build/packages/${{ inputs.test_artifact_name }}.tar.gz" \
-            --package-root-name "${{ inputs.package_root_name }}"
-
-      - name: Package llama.cpp install tree
-        if: ${{ inputs.upload_artifact }}
+      - name: Package llama.cpp artifacts
+        if: ${{ inputs.upload_artifact || inputs.build_test_package }}
         env:
           ARTIFACT_NAME: ${{ inputs.artifact_name }}
+          BUILD_TEST_PACKAGE: ${{ inputs.build_test_package }}
           PACKAGE_FILE_NAME: ${{ inputs.package_file_name }}
           PACKAGE_ROOT_NAME: ${{ inputs.package_root_name }}
+          TEST_ARTIFACT_NAME: ${{ inputs.test_artifact_name }}
         run: |
           set -eu
           package_file_name="${PACKAGE_FILE_NAME:-${ARTIFACT_NAME}.tar.gz}"
-          package_dir="$PWD/build/artifacts"
-          package_root="$package_dir/$PACKAGE_ROOT_NAME"
+          release_package_dir="$PWD/build/artifacts"
+          rm -rf "$release_package_dir"
 
-          rm -rf "$package_dir"
-          mkdir -p "$package_root"
-          cp -a "$PWD/build/llama.cpp-install/." "$package_root/"
-          cp "$PWD/LICENSE" "$package_root/LICENSE"
-          cp "$PWD/README.md" "$package_root/README.md"
-          tar -czf "$package_dir/$package_file_name" -C "$package_dir" "$PACKAGE_ROOT_NAME"
+          test_package_args=()
+          if [ "$BUILD_TEST_PACKAGE" = "true" ]; then
+            test_package_args=(
+              --test-package-file "$PWD/build/packages/${TEST_ARTIFACT_NAME}.tar.gz"
+            )
+          fi
+
+          python3 scripts/hrx/build_artifacts_from_llama_cpp_install.py \
+            --llama-install-dir "$PWD/build/llama.cpp-install" \
+            --release-package-file "$release_package_dir/$package_file_name" \
+            --package-root-name "$PACKAGE_ROOT_NAME" \
+            "${test_package_args[@]}"
 
       - name: Upload llama.cpp install tree
         if: ${{ inputs.upload_artifact }}

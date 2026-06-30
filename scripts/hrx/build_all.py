@@ -28,7 +28,7 @@ def main() -> int:
     parser.add_argument(
         "--build-test-package",
         action="store_true",
-        help="also build the separate llama.cpp test install tree",
+        help="also install llama.cpp test binaries into the llama.cpp install tree",
     )
     args, extra_args = parser.parse_known_args()
 
@@ -45,10 +45,6 @@ def main() -> int:
         args.llama_build_dir.resolve(),
         "--llama-install-dir",
         args.llama_install_dir.resolve(),
-        "--llama-test-build-dir",
-        args.llama_test_build_dir.resolve(),
-        "--llama-test-install-dir",
-        args.llama_test_install_dir.resolve(),
         "--package-dir",
         args.package_dir.resolve(),
     ]
@@ -75,6 +71,7 @@ def main() -> int:
             "--build-type",
             args.build_type,
             *vulkan_sdk_args,
+            *(["--build-installed-tests"] if args.build_test_package else []),
         ]
     )
     if not args.skip_validate:
@@ -85,17 +82,6 @@ def main() -> int:
                 REPO_ROOT / "scripts" / "hrx" / "validate_install.py",
                 *common,
                 *validate_args,
-            ]
-        )
-    if args.build_test_package:
-        run(
-            [
-                python_executable(),
-                REPO_ROOT / "scripts" / "hrx" / "build_llama_cpp_tests.py",
-                *common,
-                "--build-type",
-                args.build_type,
-                *vulkan_sdk_args,
             ]
         )
     return 0

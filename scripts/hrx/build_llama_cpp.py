@@ -79,7 +79,6 @@ def build_llama_cpp(
     install: bool,
     ggml_build_tests: bool,
     llama_build_tests: bool,
-    llama_tests_install: bool,
     build_examples: bool,
     backend_dl: bool,
     extra_cmake_args: list[str],
@@ -131,7 +130,7 @@ def build_llama_cpp(
         f"-DGGML_BUILD_TESTS={'ON' if ggml_build_tests else 'OFF'}",
         f"-DGGML_BUILD_EXAMPLES={'ON' if build_examples else 'OFF'}",
         f"-DLLAMA_BUILD_TESTS={'ON' if llama_build_tests else 'OFF'}",
-        f"-DLLAMA_TESTS_INSTALL={'ON' if llama_tests_install else 'OFF'}",
+        f"-DLLAMA_TESTS_INSTALL={'ON' if llama_build_tests else 'OFF'}",
         f"-DLLAMA_BUILD_EXAMPLES={'ON' if build_examples else 'OFF'}",
         "-DLLAMA_BUILD_TOOLS=ON",
         "-DLLAMA_BUILD_SERVER=ON",
@@ -170,6 +169,11 @@ def main() -> int:
     parser.add_argument("--target", default="all")
     parser.add_argument("--no-install", action="store_true")
     parser.add_argument("--build-tests", action="store_true")
+    parser.add_argument(
+        "--build-installed-tests",
+        action="store_true",
+        help="build and install llama.cpp tests",
+    )
     parser.add_argument("--build-examples", action="store_true")
     parser.add_argument("--backend-dl", action="store_true")
     parser.add_argument(
@@ -193,8 +197,7 @@ def main() -> int:
         target=args.target,
         install=not args.no_install,
         ggml_build_tests=args.build_tests,
-        llama_build_tests=args.build_tests,
-        llama_tests_install=args.build_tests,
+        llama_build_tests=args.build_tests or args.build_installed_tests,
         build_examples=args.build_examples,
         backend_dl=args.backend_dl,
         extra_cmake_args=extra_cmake_args,
