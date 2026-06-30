@@ -101,7 +101,6 @@ def build_llama_cpp(
         raise SystemExit(f"Missing loomc package in hrx-system install tree: {hrx_install}")
 
     env = rocm_env(rocm_root)
-    env.pop("VULKAN_SDK", None)
     cmake_prefix_path = ";".join([os.fspath(hrx_install), os.fspath(rocm_root)])
     cmake_args = [
         "cmake",
@@ -142,6 +141,8 @@ def build_llama_cpp(
     run(cmake_args, env=env)
     run(["cmake", "--build", build_dir, "--target", target], env=env)
     if vulkan_sdk_dir is not None:
+        # llama.cpp globally configures cmake to put .so files under bin in the
+        # build directory. During install it uses a more standard lib layout.
         copy_vulkan_loader(vulkan_sdk_dir, build_dir / "bin")
     else:
         remove_vulkan_artifacts(build_dir / "bin")

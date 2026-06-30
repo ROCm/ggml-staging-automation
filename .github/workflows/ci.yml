@@ -36,7 +36,7 @@ jobs:
   llama_cpp_release_tests:
     name: Linux / HRX release tests
     needs: llama_cpp_linux
-    uses: ./.github/workflows/test_llama_cpp_release_linux.yml
+    uses: ./.github/workflows/release_tests.yml
     permissions:
       contents: read
       actions: read

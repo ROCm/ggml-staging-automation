@@ -71,7 +71,7 @@ jobs:
     needs:
       - prepare_release
       - llama_cpp_manylinux_hrx
-    uses: ./.github/workflows/test_llama_cpp_release_linux.yml
+    uses: ./.github/workflows/release_tests.yml
     permissions:
       contents: read
       actions: read

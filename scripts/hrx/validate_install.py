@@ -25,7 +25,7 @@ BUNDLED_FILES = (
     "libomp.so",
 )
 
-INSTALL_BUNDLED_FILES = (
+VULKAN_BUNDLED_FILES = (
     "libvulkan.so.1",
 )
 
@@ -119,7 +119,7 @@ def validate_tree(
     bundle_roots = [path for path in (root / "bin", root / "lib", root) if path.exists()]
     bundled_files = BUNDLED_FILES
     if require_vulkan_loader:
-        bundled_files = (*bundled_files, *INSTALL_BUNDLED_FILES)
+        bundled_files = (*bundled_files, *VULKAN_BUNDLED_FILES)
     missing_bundled = [
         filename
         for filename in bundled_files
