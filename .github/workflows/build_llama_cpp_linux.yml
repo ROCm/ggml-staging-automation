@@ -88,19 +88,19 @@ jobs:
         run: |
           set -eu
           package_file_name="${PACKAGE_FILE_NAME:-${ARTIFACT_NAME}.tar.gz}"
-          release_package_dir="$PWD/build/artifacts"
-          rm -rf "$release_package_dir"
+          package_dir="$PWD/build/artifacts"
+          rm -rf "$package_dir"
 
           test_package_args=()
           if [ "$BUILD_TEST_PACKAGE" = "true" ]; then
             test_package_args=(
-              --test-package-file "$PWD/build/packages/${TEST_ARTIFACT_NAME}.tar.gz"
+              --test-package-file "$package_dir/${TEST_ARTIFACT_NAME}.tar.gz"
             )
           fi
 
           python3 scripts/hrx/build_artifacts_from_llama_cpp_install.py \
             --llama-install-dir "$PWD/build/llama.cpp-install" \
-            --release-package-file "$release_package_dir/$package_file_name" \
+            --release-package-file "$package_dir/$package_file_name" \
             --package-root-name "$PACKAGE_ROOT_NAME" \
             "${test_package_args[@]}"
 
@@ -109,7 +109,7 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ${{ inputs.artifact_name }}
-          path: build/artifacts/*.tar.gz
+          path: build/artifacts/${{ inputs.package_file_name || format('{0}.tar.gz', inputs.artifact_name) }}
           if-no-files-found: error
 
       - name: Upload llama.cpp test package
@@ -117,6 +117,6 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ${{ inputs.test_artifact_name }}
-          path: build/packages/${{ inputs.test_artifact_name }}.tar.gz
+          path: build/artifacts/${{ inputs.test_artifact_name }}.tar.gz
           if-no-files-found: error
           retention-days: 1

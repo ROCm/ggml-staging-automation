@@ -40,7 +40,7 @@ jobs:
             gpu_target: gfx1201
             runs_on: linux-gfx120X-gpu-rocm
     runs-on: ${{ matrix.runs_on }}
-    timeout-minutes: 20
+    timeout-minutes: 60
     steps:
       - name: Download llama.cpp release package
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
@@ -72,8 +72,5 @@ jobs:
 
           ldd "$prefix/bin/test-backend-ops"
           for backend in HRX0 Vulkan0; do
-            "$prefix/bin/test-backend-ops" test \
-              -o MUL_MAT \
-              -b "$backend" \
-              -p "type_a=f16,type_b=f32,m=64,n=2,k=128"
+            "$prefix/bin/test-backend-ops" test -b "$backend"
           done
