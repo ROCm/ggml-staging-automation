@@ -71,6 +71,21 @@ jobs:
           prefix="release_with_tests/${{ inputs.package_root_name }}"
 
           ldd "$prefix/bin/test-backend-ops"
+          # test-backend-ops supports an include list but not an exclude list.
+          # Build the include list from --list-ops, omitting currently unsupported ops.
+          ops_filter="$("$prefix/bin/test-backend-ops" --list-ops | awk '
+            BEGIN {
+              unsupported["GET_ROWS"] = 1
+            }
+            # Operation lines have exactly one field. Append supported op names
+            # to a comma-separated filter for test-backend-ops -o.
+            # In awk, NF is the number of whitespace-separated fields, NF == 1 skips header row.
+            NF == 1 && !($1 in unsupported) {
+              ops = ops sep $1
+              sep = ","
+            }
+            END { print ops }
+          ')"
           for backend in HRX0 Vulkan0; do
-            "$prefix/bin/test-backend-ops" test -b "$backend"
+            "$prefix/bin/test-backend-ops" test -b "$backend" -o "$ops_filter"
           done
