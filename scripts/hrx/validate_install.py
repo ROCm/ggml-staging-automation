@@ -25,6 +25,10 @@ BUNDLED_FILES = (
     "libomp.so",
 )
 
+VULKAN_BUNDLED_FILES = (
+    "libvulkan.so.1",
+)
+
 
 def command_output(args: list[str | os.PathLike[str]]) -> str:
     result = subprocess.run(
@@ -67,6 +71,12 @@ def ldd_paths(binary: Path) -> dict[str, Path]:
     return deps
 
 
+def is_under(path: Path, root: Path) -> bool:
+    root = root.resolve()
+    path = path.resolve()
+    return root == path or root in path.parents
+
+
 def rpath_text(binary: Path) -> str:
     output = command_output(["readelf", "-d", binary])
     return "\n".join(
@@ -74,7 +84,12 @@ def rpath_text(binary: Path) -> str:
     )
 
 
-def validate_tree(root: Path, rocm_root: Path) -> None:
+def validate_tree(
+    root: Path,
+    rocm_root: Path,
+    *,
+    require_vulkan_loader: bool = False,
+) -> None:
     if not root.exists():
         raise SystemExit(f"Missing tree: {root}")
     files = dynamic_files(root)
@@ -102,16 +117,31 @@ def validate_tree(root: Path, rocm_root: Path) -> None:
             + "\n  ".join(missing)
         )
     bundle_roots = [path for path in (root / "bin", root / "lib", root) if path.exists()]
+    bundled_files = BUNDLED_FILES
+    if require_vulkan_loader:
+        bundled_files = (*bundled_files, *VULKAN_BUNDLED_FILES)
     missing_bundled = [
         filename
-        for filename in BUNDLED_FILES
+        for filename in bundled_files
         if not any((base / filename).exists() for base in bundle_roots)
     ]
     if missing_bundled:
         raise SystemExit(
-            f"{root} did not contain expected bundled ROCm runtime files:\n  "
+            f"{root} did not contain expected bundled runtime files:\n  "
             + "\n  ".join(missing_bundled)
         )
+    if require_vulkan_loader:
+        vulkan_loader = all_deps.get("libvulkan.so.1")
+        if vulkan_loader is None:
+            raise SystemExit(
+                f"{root} did not expose expected Vulkan loader dependency via ldd:\n  "
+                "libvulkan.so.1"
+            )
+        if not is_under(vulkan_loader, root):
+            raise SystemExit(
+                f"{root} resolves the Vulkan loader outside the install tree:\n  "
+                f"libvulkan.so.1 => {vulkan_loader}"
+            )
 
     escaped = rocm_root.resolve()
     bad = [
@@ -132,9 +162,18 @@ def validate_tree(root: Path, rocm_root: Path) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     add_common_path_args(parser)
+    parser.add_argument(
+        "--require-vulkan-loader",
+        action="store_true",
+        help="require libvulkan.so.1 to be bundled and resolved from the install tree",
+    )
     args = parser.parse_args()
     validate_tree(args.llama_build_dir.resolve(), args.rocm_root.resolve())
-    validate_tree(args.llama_install_dir.resolve(), args.rocm_root.resolve())
+    validate_tree(
+        args.llama_install_dir.resolve(),
+        args.rocm_root.resolve(),
+        require_vulkan_loader=args.require_vulkan_loader,
+    )
     return 0
 
 

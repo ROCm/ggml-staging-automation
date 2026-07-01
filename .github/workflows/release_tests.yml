@@ -1,0 +1,91 @@
+# Copyright 2026 The HRX Authors
+#
+# Licensed under the Apache License v2.0 with LLVM Exceptions.
+# See https://llvm.org/LICENSE.txt for license information.
+# SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+
+name: Test llama.cpp Release Linux
+
+on:
+  workflow_call:
+    inputs:
+      name:
+        type: string
+        default: Release tests
+      release_artifact_name:
+        type: string
+        required: true
+      test_artifact_name:
+        type: string
+        default: llama-cpp-linux-x86_64-tests
+      package_root_name:
+        type: string
+        default: llama.cpp-install
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  test_llama_cpp_release_linux:
+    name: ${{ inputs.name }} (${{ matrix.gpu_target }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: gfx1151_strix-halo
+            gpu_target: gfx1151
+            runs_on: linux-gfx1151-gpu-rocm
+          - name: gfx1201_9070
+            gpu_target: gfx1201
+            runs_on: linux-gfx120X-gpu-rocm
+    runs-on: ${{ matrix.runs_on }}
+    timeout-minutes: 20
+    steps:
+      - name: Download llama.cpp release package
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: ${{ inputs.release_artifact_name }}
+          path: artifacts
+
+      - name: Download llama.cpp test package
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: ${{ inputs.test_artifact_name }}
+          path: artifacts
+
+      - name: Extract package artifacts
+        run: |
+          release_package="artifacts/${{ inputs.release_artifact_name }}.tar.gz"
+          test_package="artifacts/${{ inputs.test_artifact_name }}.tar.gz"
+          extract_dir="release_with_tests"
+
+          rm -rf "$extract_dir"
+          mkdir -p "$extract_dir"
+
+          tar -xzf "$release_package" -C "$extract_dir"
+          tar -xzf "$test_package" -C "$extract_dir"
+
+      - name: Run installed GPU tests
+        run: |
+          prefix="release_with_tests/${{ inputs.package_root_name }}"
+
+          ldd "$prefix/bin/test-backend-ops"
+          # test-backend-ops supports an include list but not an exclude list.
+          # Build the include list from --list-ops, omitting currently unsupported ops.
+          ops_filter="$("$prefix/bin/test-backend-ops" --list-ops | awk '
+            BEGIN {
+              unsupported["GET_ROWS"] = 1
+            }
+            # Operation lines have exactly one field. Append supported op names
+            # to a comma-separated filter for test-backend-ops -o.
+            # In awk, NF is the number of whitespace-separated fields, NF == 1 skips header row.
+            NF == 1 && !($1 in unsupported) {
+              ops = ops sep $1
+              sep = ","
+            }
+            END { print ops }
+          ')"
+          for backend in HRX0 Vulkan0; do
+            "$prefix/bin/test-backend-ops" test -b "$backend" -o "$ops_filter"
+          done

@@ -17,6 +17,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: release-${{ github.ref }}
@@ -62,6 +63,24 @@ jobs:
       build_type: Release
       hrx_build_type: Release
       upload_artifact: true
+      build_test_package: true
+      test_artifact_name: ${{ needs.prepare_release.outputs.artifact_name }}-tests
+
+  llama_cpp_release_tests:
+    name: Linux / HRX release tests
+    continue-on-error: true
+    needs:
+      - prepare_release
+      - llama_cpp_manylinux_hrx
+    uses: ./.github/workflows/release_tests.yml
+    permissions:
+      contents: read
+      actions: read
+    with:
+      name: Release tests
+      release_artifact_name: ${{ needs.prepare_release.outputs.artifact_name }}
+      test_artifact_name: ${{ needs.prepare_release.outputs.artifact_name }}-tests
+      package_root_name: llama-${{ needs.prepare_release.outputs.version }}
 
   publish_release:
     name: Publish

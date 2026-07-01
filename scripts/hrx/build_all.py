@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from pathlib import Path
 
 from hrx_build import REPO_ROOT, add_common_path_args, python_executable, run
 
@@ -15,6 +16,20 @@ def main() -> int:
     parser.add_argument("--skip-validate", action="store_true")
     parser.add_argument("--build-type", default="Release", help="llama.cpp build type")
     parser.add_argument("--hrx-build-type", default="Release", help="hrx-system build type")
+    parser.add_argument(
+        "--vulkan-sdk-dir",
+        type=Path,
+        default=None,
+        help=(
+            "Vulkan SDK install root with include, lib, and bin subdirectories; "
+            "omit to build llama.cpp without Vulkan"
+        ),
+    )
+    parser.add_argument(
+        "--build-test-package",
+        action="store_true",
+        help="also install llama.cpp test binaries into the llama.cpp install tree",
+    )
     args, extra_args = parser.parse_known_args()
 
     common = [
@@ -30,7 +45,12 @@ def main() -> int:
         args.llama_build_dir.resolve(),
         "--llama-install-dir",
         args.llama_install_dir.resolve(),
+        "--package-dir",
+        args.package_dir.resolve(),
     ]
+    vulkan_sdk_args = []
+    if args.vulkan_sdk_dir is not None:
+        vulkan_sdk_args = ["--vulkan-sdk-dir", args.vulkan_sdk_dir.resolve()]
     if not args.skip_fetch:
         run([python_executable(), REPO_ROOT / "scripts" / "hrx" / "fetch_rocm.py", *common])
     run(
@@ -50,10 +70,20 @@ def main() -> int:
             *common,
             "--build-type",
             args.build_type,
+            *vulkan_sdk_args,
+            *(["--build-installed-tests"] if args.build_test_package else []),
         ]
     )
     if not args.skip_validate:
-        run([python_executable(), REPO_ROOT / "scripts" / "hrx" / "validate_install.py", *common])
+        validate_args = ["--require-vulkan-loader"] if args.vulkan_sdk_dir is not None else []
+        run(
+            [
+                python_executable(),
+                REPO_ROOT / "scripts" / "hrx" / "validate_install.py",
+                *common,
+                *validate_args,
+            ]
+        )
     return 0
 
 
