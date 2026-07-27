@@ -3,5 +3,5 @@
 	url = https://github.com/ROCm/hrx-system.git
 [submodule "llama.cpp"]
 	path = llama.cpp
-	url = https://github.com/ROCm/llama.cpp.git
-	branch = hrx-integration
+	url = https://github.com/AaronStGeorge/llama.cpp.git
+	branch = hrx-api-updates
