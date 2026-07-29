@@ -1,10 +1,8 @@
-# ggml-staging-release
+# ggml-staging-automation
 
-Release management repo for AMD staging ggml project branches (prior to upstreaming).
-
-## CI
-
-TODO
+Temporary staging ground for AMD experimental ggml project branches; projects
+here will be upstreamed or removed. This is not a stable distribution channel
+and should not be relied on as one.
 
 ## Building
 
@@ -19,7 +17,7 @@ Initialize the submodules first:
 git submodule update --init hrx-system llama.cpp
 ```
 
-Set the ROCm artifact pin in `rocm-version.json`:
+The ROCm artifact pin lives in `rocm-version.json`:
 
 ```json
 {
@@ -66,7 +64,7 @@ python3 scripts/hrx/validate_install.py
 ```
 
 The default build type is `Release` for both `hrx-system` and `llama.cpp`. The
-llama.cpp build enables CPU, Vulkan, and HRX for `gfx1100`, `gfx1151`, and
+llama.cpp build enables CPU, HRX, and optionally Vulkan for `gfx1100`, `gfx1151`, and
 `gfx1201`. When `GGML_HRX_EMBED_ROCM_LIBS` is enabled by the script, HRX, Loom,
 and the required shared ROCm runtime libraries are copied next to the HRX backend
 in the build and install trees with `$ORIGIN` RPATHs. ROCm sysdeps are preserved
@@ -75,3 +73,18 @@ under an adjacent `rocm_sysdeps/lib` directory.
 Windows support is intentionally not implemented yet. The scripts and CMake
 layout keep runtime libraries adjacent so the later Windows flow can use the
 same basic packaging model with DLL copying instead of ELF RPATHs.
+
+## CI
+
+The `CI` workflow (`.github/workflows/ci.yml`) runs on pull requests and pushes
+to `main`. It builds the release package and runs tests against the packaged
+artifacts on supported GPU platforms.
+
+## Releases
+
+The `Release` workflow (`.github/workflows/release.yml`) is dispatched manually.
+It runs the same build and GPU tests as CI (test failures do not block
+publishing), then publishes a GitHub prerelease with
+`llama-<version>-bin-manylinux-hrx-x64.tar.gz` attached. The archive unpacks to
+`llama-<version>/` and is self-contained: the required ROCm runtime libraries
+ship alongside the binaries, so no ROCm install is needed on the target machine.
