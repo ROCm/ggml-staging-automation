@@ -120,6 +120,9 @@ def build_llama_cpp(
         r"-DCMAKE_BUILD_RPATH=$ORIGIN",
         r"-DCMAKE_INSTALL_RPATH=$ORIGIN;$ORIGIN/../lib",
         "-DGGML_CPU=ON",
+        # Don't assume CPU instructions available on the build machine are
+        # available on the host running this build.
+        "-DGGML_NATIVE=OFF",
         f"-DGGML_VULKAN={'ON' if vulkan_sdk_dir is not None else 'OFF'}",
         "-DGGML_HRX=ON",
         "-DGGML_HRX_EMBED_ROCM_LIBS=ON",
