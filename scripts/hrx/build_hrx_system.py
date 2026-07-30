@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright Advanced Micro Devices, Inc.
+# SPDX-License-Identifier: MIT
 """Configure, build, and install hrx-system for llama.cpp consumption."""
 
 from __future__ import annotations

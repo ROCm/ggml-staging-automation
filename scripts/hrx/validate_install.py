@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright Advanced Micro Devices, Inc.
+# SPDX-License-Identifier: MIT
 """Validate HRX/ROCm runtime library layout for llama.cpp build/install trees."""
 
 from __future__ import annotations

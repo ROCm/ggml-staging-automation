@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright Advanced Micro Devices, Inc.
+# SPDX-License-Identifier: MIT
 """Create release and test overlay archives from a llama.cpp install tree."""
 
 from __future__ import annotations
