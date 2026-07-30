@@ -37,6 +37,9 @@ on:
         type: string
         default: llama-cpp-linux-x86_64-tests
 
+permissions:
+  contents: read
+
 jobs:
   build_llama_cpp_linux:
     name: ${{ inputs.name }}
@@ -50,6 +53,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
 
       - name: Adjust git config
         run: git config --global --add safe.directory "$PWD"
@@ -64,16 +69,20 @@ jobs:
         run: python3 scripts/hrx/build_vulkan_sdk.py --vulkan-sdk-dir "$PWD/build/vulkan-sdk"
 
       - name: Build and validate llama.cpp
+        env:
+          BUILD_TEST_PACKAGE: ${{ inputs.build_test_package }}
+          BUILD_TYPE: ${{ inputs.build_type }}
+          HRX_BUILD_TYPE: ${{ inputs.hrx_build_type }}
         run: |
           test_package_args=()
-          if [ "${{ inputs.build_test_package }}" = "true" ]; then
+          if [ "$BUILD_TEST_PACKAGE" = "true" ]; then
             test_package_args=(
               --build-test-package
             )
           fi
           python3 scripts/hrx/build_all.py \
-            --build-type "${{ inputs.build_type }}" \
-            --hrx-build-type "${{ inputs.hrx_build_type }}" \
+            --build-type "$BUILD_TYPE" \
+            --hrx-build-type "$HRX_BUILD_TYPE" \
             --vulkan-sdk-dir "$PWD/build/vulkan-sdk" \
             "${test_package_args[@]}"
 
