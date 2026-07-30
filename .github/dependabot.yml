@@ -1,0 +1,35 @@
+# Copyright Advanced Micro Devices, Inc.
+# SPDX-License-Identifier: MIT
+#
+# Based on ROCm/TheRock@6d754c2 (.github/dependabot.yml); extended with
+# the pip ecosystem (root requirements.txt) and 7-day cooldowns (zizmor
+# dependabot-cooldown audit). Not a direct copy.
+
+version: 2
+updates:
+
+  # Check for updates to GitHub Actions. Dependabot understands the
+  # "full commit SHA with the tag in a comment" pinning style used in
+  # the workflows.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 7
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+
+  # Root requirements.txt.
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 7
+    groups:
+      pip:
+        patterns:
+          - "*"
