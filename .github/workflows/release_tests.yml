@@ -55,9 +55,12 @@ jobs:
           path: artifacts
 
       - name: Extract package artifacts
+        env:
+          RELEASE_ARTIFACT_NAME: ${{ inputs.release_artifact_name }}
+          TEST_ARTIFACT_NAME: ${{ inputs.test_artifact_name }}
         run: |
-          release_package="artifacts/${{ inputs.release_artifact_name }}.tar.gz"
-          test_package="artifacts/${{ inputs.test_artifact_name }}.tar.gz"
+          release_package="artifacts/${RELEASE_ARTIFACT_NAME}.tar.gz"
+          test_package="artifacts/${TEST_ARTIFACT_NAME}.tar.gz"
           extract_dir="release_with_tests"
 
           rm -rf "$extract_dir"
@@ -67,8 +70,10 @@ jobs:
           tar -xzf "$test_package" -C "$extract_dir"
 
       - name: Run installed GPU tests
+        env:
+          PACKAGE_ROOT_NAME: ${{ inputs.package_root_name }}
         run: |
-          prefix="release_with_tests/${{ inputs.package_root_name }}"
+          prefix="release_with_tests/${PACKAGE_ROOT_NAME}"
 
           ldd "$prefix/bin/test-backend-ops"
           # test-backend-ops supports an include list but not an exclude list.
