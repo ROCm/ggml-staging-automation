@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright Advanced Micro Devices, Inc.
+# SPDX-License-Identifier: MIT
 """Fetch and build the Vulkan build dependencies needed by llama.cpp."""
 
 from __future__ import annotations

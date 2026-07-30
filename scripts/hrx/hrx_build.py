@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright Advanced Micro Devices, Inc.
+# SPDX-License-Identifier: MIT
 """Shared helpers for local HRX/llama.cpp build scripts."""
 
 from __future__ import annotations

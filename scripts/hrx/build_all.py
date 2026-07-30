@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright Advanced Micro Devices, Inc.
+# SPDX-License-Identifier: MIT
 """Run the pinned ROCm fetch plus HRX and llama.cpp build/install steps."""
 
 from __future__ import annotations

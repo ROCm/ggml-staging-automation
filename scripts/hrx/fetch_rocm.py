@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright Advanced Micro Devices, Inc.
+# SPDX-License-Identifier: MIT
 """Fetch the pinned minimal ROCm build root from TheRock artifacts."""
 
 from __future__ import annotations
