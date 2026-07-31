@@ -29,10 +29,13 @@ def vulkan_cmake_args(vulkan_sdk_dir: Path) -> list[str]:
     include_dir = vulkan_sdk_dir / "include"
     library = vulkan_sdk_dir / "lib" / "libvulkan.so"
     glslc = vulkan_sdk_dir / "bin" / "glslc"
+    spirv_headers_dir = vulkan_sdk_dir / "share" / "cmake" / "SPIRV-Headers"
     required = [
         include_dir / "vulkan" / "vulkan.h",
+        include_dir / "spirv" / "unified1" / "spirv.hpp",
         library,
         glslc,
+        spirv_headers_dir / "SPIRV-HeadersConfig.cmake",
     ]
     missing = [path for path in required if not path.exists()]
     if missing:
@@ -44,6 +47,7 @@ def vulkan_cmake_args(vulkan_sdk_dir: Path) -> list[str]:
         f"-DVulkan_INCLUDE_DIR={include_dir}",
         f"-DVulkan_LIBRARY={library}",
         f"-DVulkan_GLSLC_EXECUTABLE={glslc}",
+        f"-DSPIRV-Headers_DIR={spirv_headers_dir}",
     ]
 
 
