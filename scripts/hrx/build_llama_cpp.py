@@ -21,7 +21,6 @@ from hrx_build import (
     rocm_env,
     remove_tree,
     run,
-    targets_cmake_list,
 )
 
 
@@ -131,11 +130,8 @@ def build_llama_cpp(
         "-DGGML_NATIVE=OFF",
         f"-DGGML_VULKAN={'ON' if vulkan_sdk_dir is not None else 'OFF'}",
         "-DGGML_HRX=ON",
-        "-DGGML_HRX_EMBED_ROCM_LIBS=ON",
-        f"-DGGML_HRX_ROCM_PATH={rocm_root}",
-        f"-DGGML_HRX_AMDGPU_TARGETS={targets_cmake_list()}",
-        f"-DGGML_HRX_EMBED_LIBRARY_DIRS={hrx_install / 'lib'};{rocm_root / 'lib'};{rocm_root / 'lib' / 'llvm' / 'lib'}",
-        "-DGGML_HRX_BUILD_HIP_BENCHES=OFF",
+        "-DGGML_HRX_BUNDLE_RUNTIME_LIBS=ON",
+        f"-DGGML_HRX_BUNDLE_LIBRARY_DIRS={hrx_install / 'lib'};{rocm_root / 'lib'};{rocm_root / 'lib' / 'llvm' / 'lib'}",
         f"-DGGML_BUILD_TESTS={'ON' if ggml_build_tests else 'OFF'}",
         f"-DGGML_BUILD_EXAMPLES={'ON' if build_examples else 'OFF'}",
         f"-DLLAMA_BUILD_TESTS={'ON' if llama_build_tests else 'OFF'}",

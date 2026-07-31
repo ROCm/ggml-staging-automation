@@ -65,7 +65,7 @@ python3 scripts/hrx/validate_install.py
 
 The default build type is `Release` for both `hrx-system` and `llama.cpp`. The
 llama.cpp build enables CPU, HRX, and optionally Vulkan for `gfx1100`, `gfx1151`, and
-`gfx1201`. When `GGML_HRX_EMBED_ROCM_LIBS` is enabled by the script, HRX, Loom,
+`gfx1201`. When `GGML_HRX_BUNDLE_RUNTIME_LIBS` is enabled by the script, HRX, Loom,
 and the required shared ROCm runtime libraries are copied next to the HRX backend
 in the build and install trees with `$ORIGIN` RPATHs. ROCm sysdeps are preserved
 under an adjacent `rocm_sysdeps/lib` directory.

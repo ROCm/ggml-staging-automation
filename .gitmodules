@@ -1,7 +1,8 @@
 [submodule "hrx-system"]
 	path = hrx-system
 	url = https://github.com/ROCm/hrx-system.git
+	branch = users/benvanik/loom/qwen3-30b
 [submodule "llama.cpp"]
 	path = llama.cpp
-	url = https://github.com/ROCm/llama.cpp.git
-	branch = hrx-integration
+	url = https://github.com/ROCm/llama-cpp-temp-fork.git
+	branch = hrx-graph-develop
