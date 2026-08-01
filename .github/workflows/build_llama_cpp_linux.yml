@@ -46,10 +46,12 @@ jobs:
     runs-on: aws-linux-scale-rocm-prod
     timeout-minutes: 90
     container:
-      image: ghcr.io/rocm/therock_build_manylinux_x86_64@sha256:702a5133851e6d1daf1207d2c9fbb01c2667914a5b6dc5a01faeb3ce66ea6421
+      image: quay.io/pypa/manylinux_2_34_x86_64@sha256:d53167459147625634b49200f780617700ade2a8d64934a3b3a3b07ac840593d
     env:
       PIP_CACHE_DIR: ${{ github.workspace }}/build/caches/pip
       CCACHE_DIR: ${{ github.workspace }}/build/caches/ccache
+      CPLUS_INCLUDE_PATH: /opt/rh/gcc-toolset-14/root/usr/include/c++/14:/opt/rh/gcc-toolset-14/root/usr/include/c++/14/x86_64-redhat-linux:/opt/rh/gcc-toolset-14/root/usr/include/c++/14/backward
+      LIBRARY_PATH: /opt/rh/gcc-toolset-14/root/usr/lib/gcc/x86_64-redhat-linux/14:/opt/rh/gcc-toolset-14/root/usr/lib64:/opt/rh/gcc-toolset-14/root/usr/lib
     steps:
       - name: Checkout repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -61,6 +63,9 @@ jobs:
 
       - name: Initialize submodules
         run: git submodule update --init hrx-system llama.cpp
+
+      - name: Select Python 3.12
+        run: echo "/opt/python/cp312-cp312/bin" >> "$GITHUB_PATH"
 
       - name: Install Python dependencies
         run: python3 -m pip install --upgrade -r requirements.txt cmake==3.31.6 ninja
