@@ -1,6 +1,10 @@
 # Copyright Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 # Copied from ROCm/rocm-tests@5df70ce (.github/workflows/gitleaks.yml).
+# Deviations: removed the callee's top-level `permissions` block. GitHub treats
+# caller permissions as an upper bound that a callee can only preserve or
+# reduce; additional caller permissions do not flow through a narrower callee
+# declaration.
 #
 name: Gitleaks
 
@@ -41,10 +45,6 @@ on:
         required: false
         type: string
         default: "."
-# Reusable workflows declare the *minimum* permissions every caller
-# must grant.
-permissions:
-  contents: read
 
 jobs:
   scan:
