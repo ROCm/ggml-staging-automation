@@ -54,7 +54,7 @@ jobs:
       LIBRARY_PATH: /opt/rh/gcc-toolset-14/root/usr/lib/gcc/x86_64-redhat-linux/14:/opt/rh/gcc-toolset-14/root/usr/lib64:/opt/rh/gcc-toolset-14/root/usr/lib
     steps:
       - name: Checkout repository
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
