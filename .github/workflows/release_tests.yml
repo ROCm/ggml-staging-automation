@@ -21,6 +21,10 @@ on:
       package_root_name:
         type: string
         default: llama.cpp-install
+      continue_on_error:
+        description: Whether the calling workflow should continue when tests fail.
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -29,6 +33,7 @@ permissions:
 jobs:
   test_llama_cpp_release_linux:
     name: ${{ inputs.name }} (${{ matrix.gpu_target }})
+    continue-on-error: ${{ inputs.continue_on_error }}
     strategy:
       fail-fast: false
       matrix:
