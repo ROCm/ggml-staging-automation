@@ -91,8 +91,22 @@ def build_vulkan_loader(source_dir: Path, build_dir: Path, install_dir: Path) ->
     run(["cmake", "--build", build_dir, "--target", "install"])
 
 
-def build_glslc(source_dir: Path, build_dir: Path, install_dir: Path) -> None:
+def sync_shaderc_deps(source_dir: Path) -> None:
     run(["python3", "utils/git-sync-deps"], cwd=source_dir)
+
+
+def build_spirv_headers(source_dir: Path, build_dir: Path, install_dir: Path) -> None:
+    cmake_configure(
+        source_dir,
+        build_dir,
+        install_dir,
+        "-DSPIRV_HEADERS_ENABLE_TESTS=OFF",
+        "-DSPIRV_HEADERS_ENABLE_INSTALL=ON",
+    )
+    run(["cmake", "--build", build_dir, "--target", "install"])
+
+
+def build_glslc(source_dir: Path, build_dir: Path, install_dir: Path) -> None:
     cmake_configure(
         source_dir,
         build_dir,
@@ -143,16 +157,25 @@ def main() -> int:
     clone_or_update(VULKAN_HEADERS_REPO, VULKAN_HEADERS_TAG, headers_src)
     clone_or_update(VULKAN_LOADER_REPO, VULKAN_LOADER_TAG, loader_src)
     clone_or_update(SHADERC_REPO, SHADERC_TAG, shaderc_src)
+    sync_shaderc_deps(shaderc_src)
 
     build_vulkan_headers(headers_src, build_dir / "Vulkan-Headers", install_dir)
     build_vulkan_loader(loader_src, build_dir / "Vulkan-Loader", install_dir)
+    build_spirv_headers(
+        shaderc_src / "third_party" / "spirv-headers",
+        build_dir / "SPIRV-Headers",
+        install_dir,
+    )
     build_glslc(shaderc_src, build_dir / "shaderc", install_dir)
 
+    spirv_headers_dir = install_dir / "share" / "cmake" / "SPIRV-Headers"
     required = [
         install_dir / "include" / "vulkan" / "vulkan.h",
+        install_dir / "include" / "spirv" / "unified1" / "spirv.hpp",
         install_dir / "bin" / "glslc",
         install_dir / "lib" / "libvulkan.so",
         install_dir / "lib" / "libvulkan.so.1",
+        spirv_headers_dir / "SPIRV-HeadersConfig.cmake",
     ]
     missing = [path for path in required if not path.exists()]
     if missing:

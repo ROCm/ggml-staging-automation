@@ -34,7 +34,7 @@ def fetch_extra_build_artifacts(
         return
 
     sys.path.insert(0, os.fspath(hrx_system))
-    from build_tools import ci_core_linux as ci
+    from build_tools import ci_core_common as ci
 
     s3 = ci.create_s3_client()
     bucket = ci.release_bucket(release_type, "artifacts")
