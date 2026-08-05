@@ -21,6 +21,10 @@ on:
       package_root_name:
         type: string
         default: llama.cpp-install
+      allow_failure:
+        description: Allow release validation jobs to fail without failing the calling workflow.
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -29,6 +33,7 @@ permissions:
 jobs:
   test_llama_cpp_release_linux:
     name: ${{ inputs.name }} (${{ matrix.gpu_target }})
+    continue-on-error: ${{ inputs.allow_failure }}
     strategy:
       fail-fast: false
       matrix:
