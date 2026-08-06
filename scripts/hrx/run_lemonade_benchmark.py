@@ -18,6 +18,10 @@ from pathlib import Path
 from typing import Any
 
 
+class BenchmarkValidationError(RuntimeError):
+    """Raised when a benchmark does not match the required result schema."""
+
+
 def initialize_outputs(args: argparse.Namespace) -> None:
     metadata = {
         "schema_version": 1,
@@ -189,6 +193,66 @@ def stream_benchmark(
     return return_code
 
 
+def require_nonempty_list(value: object, location: str) -> list[Any]:
+    if not isinstance(value, list) or not value:
+        raise BenchmarkValidationError(f"{location} must be a nonempty array")
+    return value
+
+
+def validate_benchmark(data: object) -> int:
+    if not isinstance(data, dict):
+        raise BenchmarkValidationError("benchmark root must be an object")
+
+    models = require_nonempty_list(data.get("models"), "models")
+    scenario_count = 0
+    for model_index, model in enumerate(models):
+        model_location = f"models[{model_index}]"
+        if not isinstance(model, dict):
+            raise BenchmarkValidationError(f"{model_location} must be an object")
+
+        results = require_nonempty_list(
+            model.get("results"), f"{model_location}.results"
+        )
+        for result_index, result in enumerate(results):
+            result_location = f"{model_location}.results[{result_index}]"
+            if not isinstance(result, dict):
+                raise BenchmarkValidationError(f"{result_location} must be an object")
+
+            scenarios = require_nonempty_list(
+                result.get("scenarios"), f"{result_location}.scenarios"
+            )
+            for scenario_index, scenario in enumerate(scenarios):
+                scenario_location = f"{result_location}.scenarios[{scenario_index}]"
+                if not isinstance(scenario, dict):
+                    raise BenchmarkValidationError(
+                        f"{scenario_location} must be an object"
+                    )
+
+                name = scenario.get("name")
+                if not isinstance(name, str) or not name.strip():
+                    raise BenchmarkValidationError(
+                        f"{scenario_location}.name must be a nonempty string"
+                    )
+
+                failed_runs = scenario.get("failed_runs")
+                if isinstance(failed_runs, bool) or not isinstance(failed_runs, int):
+                    raise BenchmarkValidationError(
+                        f"{scenario_location}.failed_runs must be an integer"
+                    )
+                if failed_runs != 0:
+                    raise BenchmarkValidationError(
+                        f"{scenario_location} ({name!r}) reported "
+                        f"{failed_runs} failed run(s)"
+                    )
+                if scenario.get("all_runs_failed") is True:
+                    raise BenchmarkValidationError(
+                        f"{scenario_location} ({name!r}) reports that all runs failed"
+                    )
+                scenario_count += 1
+
+    return scenario_count
+
+
 def run_benchmark(
     executable: Path,
     output: Path,
@@ -212,12 +276,18 @@ def run_benchmark(
     if return_code != 0 or not output.is_file():
         return return_code, "", False
 
-    table = format_markdown_results(output)
+    data = json.loads(output.read_text(encoding="utf-8"))
+    scenario_count = validate_benchmark(data)
+    print(
+        f"Validated {scenario_count} successful Lemonade benchmark scenario(s) "
+        f"in {output}",
+        flush=True,
+    )
+    table = format_markdown_results(data)
     return return_code, table, append_summary(table)
 
 
-def format_markdown_results(benchmark_json: Path) -> str:
-    data = json.loads(benchmark_json.read_text(encoding="utf-8"))
+def format_markdown_results(data: dict[str, Any]) -> str:
     lines = ["## Lemonade benchmark results", ""]
 
     for model in data["models"]:
@@ -441,7 +511,12 @@ def main() -> int:
     args = parser.parse_args()
     try:
         return int(args.handler(args))
-    except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
+    except (
+        OSError,
+        RuntimeError,
+        json.JSONDecodeError,
+        subprocess.SubprocessError,
+    ) as exc:
         print(f"Lemonade benchmark {args.command} failed: {exc}", file=sys.stderr)
         return 1
 

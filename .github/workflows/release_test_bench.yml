@@ -78,35 +78,16 @@ jobs:
           path: artifacts
 
       - name: Extract release package
-        id: release
         env:
-          PACKAGE_ROOT_NAME: ${{ inputs.package_root_name }}
           RELEASE_ARTIFACT_NAME: ${{ inputs.release_artifact_name }}
         run: |
-          set -euo pipefail
-          release_package="$PWD/artifacts/${RELEASE_ARTIFACT_NAME}.tar.gz"
-          extract_dir="$PWD/release-package"
-          test -f "$release_package"
-          if [ -e "$extract_dir" ]; then
-            echo "Refusing to reuse existing extraction directory: $extract_dir" >&2
-            exit 1
-          fi
-          mkdir "$extract_dir"
-          tar -xzf "$release_package" -C "$extract_dir"
+          release_package="artifacts/${RELEASE_ARTIFACT_NAME}.tar.gz"
+          extract_dir="release"
 
-          extract_root="$(realpath -e "$extract_dir")"
-          llama_server="$(realpath -e "$extract_root/${PACKAGE_ROOT_NAME}/bin/llama-server")"
-          case "$llama_server" in
-            "$extract_root"/*) ;;
-            *)
-              echo "llama-server resolved outside the extraction root: $llama_server" >&2
-              exit 1
-              ;;
-          esac
-          test -f "$llama_server"
-          test -x "$llama_server"
-          echo "release_package=$release_package" >> "$GITHUB_OUTPUT"
-          echo "llama_server=$llama_server" >> "$GITHUB_OUTPUT"
+          rm -rf "$extract_dir"
+          mkdir -p "$extract_dir"
+
+          tar -xzf "$release_package" -C "$extract_dir"
 
       - name: Build Lemonade
         run: |
@@ -119,11 +100,11 @@ jobs:
           HRX_SYSTEM_COMMIT: ${{ steps.sources.outputs.hrx_system }}
           LEMONADE_COMMIT: ${{ steps.sources.outputs.lemonade }}
           LLAMA_CPP_COMMIT: ${{ steps.sources.outputs.llama_cpp }}
-          LLAMA_SERVER: ${{ steps.release.outputs.llama_server }}
+          PACKAGE_ROOT_NAME: ${{ inputs.package_root_name }}
         run: |
           python3 scripts/hrx/run_lemonade_benchmark.py run \
             --lemonade-build-dir "$PWD/lemonade-source/build" \
-            --llama-server "$LLAMA_SERVER" \
+            --llama-server "$PWD/release/$PACKAGE_ROOT_NAME/bin/llama-server" \
             --state-root "$RUNNER_TEMP/$BENCHMARK_STATE_NAME" \
             --output "$PWD/lemonade-benchmark/benchmark.json" \
             --metadata-output "$PWD/lemonade-benchmark/metadata.json" \
@@ -132,9 +113,6 @@ jobs:
             --llama-cpp-commit "$LLAMA_CPP_COMMIT" \
             --hrx-system-commit "$HRX_SYSTEM_COMMIT" \
             --lemonade-commit "$LEMONADE_COMMIT"
-
-      - name: Validate Lemonade benchmark
-        run: python3 scripts/hrx/validate_lemonade_benchmark.py lemonade-benchmark/benchmark.json
 
       - name: Clean Lemonade benchmark state
         if: ${{ always() }}
