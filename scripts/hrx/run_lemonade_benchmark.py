@@ -228,6 +228,7 @@ def set_lemonade_config_values(
         f"llamacpp.vulkan_bin={llama_server}",
         f"llamacpp.device={device}",
         "no_fetch_executables=true",
+        "log_level=debug",
     ]
     log("++ " + " ".join(command))
     subprocess.run(command, env=env, check=True)
@@ -237,13 +238,14 @@ def set_lemonade_config_values(
         or Path(config["llamacpp"]["vulkan_bin"]).resolve() != llama_server
         or config["llamacpp"]["device"] != device
         or config["no_fetch_executables"] is not True
+        or config["log_level"] != "debug"
     ):
         raise RuntimeError("Lemonade did not retain the requested configuration")
     log(
         "Verified Lemonade configuration: "
         f"llamacpp.hrx_bin={llama_server}, "
         f"llamacpp.vulkan_bin={llama_server}, "
-        f"llamacpp.device={device}, no_fetch_executables=true"
+        f"llamacpp.device={device}, no_fetch_executables=true, log_level=debug"
     )
 
 
@@ -263,9 +265,9 @@ def verify_configured_executable(
     )
     managed_backend_dir = cache_dir / "bin" / "llamacpp" / phase.backend
     used_configured_executable = positive_text in log_text
-    used_selected_device = phase.device in log_text
+    used_selected_device = f"--device {phase.device}" in log_text
     used_other_device = any(
-        other_phase.device in log_text
+        f"--device {other_phase.device}" in log_text
         for index, other_phase in enumerate(phases)
         if index != phase_index
     )
