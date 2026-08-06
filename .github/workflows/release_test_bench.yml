@@ -48,7 +48,7 @@ jobs:
           # - gpu_target: gfx1201
           #   runs_on: linux-gfx120X-gpu-rocm
     runs-on: ${{ matrix.runs_on }}
-    timeout-minutes: 60
+    timeout-minutes: 120
     env:
       BENCHMARK_ARTIFACT_NAME: lemonade-bench-${{ matrix.gpu_target }}
       BENCHMARK_STATE_NAME: lemonade-bench-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.gpu_target }}
@@ -110,7 +110,7 @@ jobs:
             --hrx-system-commit "$HRX_SYSTEM_COMMIT" \
             --lemonade-commit "$LEMONADE_COMMIT"
 
-      - name: Run Lemonade HRX benchmark
+      - name: Run Lemonade HRX and Vulkan benchmarks
         env:
           LEMONADE_MODELS: ${{ inputs.models }}
           PACKAGE_ROOT_NAME: ${{ inputs.package_root_name }}
@@ -120,25 +120,41 @@ jobs:
             --lemonade-build-dir "$PWD/lemonade-source/build" \
             --llama-server "$PWD/release/$PACKAGE_ROOT_NAME/bin/llama-server" \
             --state-root "$RUNNER_TEMP/$BENCHMARK_STATE_NAME" \
-            --output "$PWD/lemonade-benchmark/benchmark.json" \
-            --server-log "$PWD/lemonade-benchmark-debug/lemond.log" \
+            --hrx-output "$PWD/lemonade-benchmark/benchmark-hrx.json" \
+            --vulkan-output "$PWD/lemonade-benchmark/benchmark-vulkan.json" \
+            --hrx-server-log "$PWD/lemonade-benchmark-debug/lemond-hrx.log" \
+            --vulkan-server-log "$PWD/lemonade-benchmark-debug/lemond-vulkan.log" \
+            --hrx-response-log "$PWD/lemonade-benchmark-debug/responses-hrx.jsonl" \
+            --vulkan-response-log "$PWD/lemonade-benchmark-debug/responses-vulkan.jsonl" \
             --models "${models[@]}"
 
+      - name: Write Lemonade benchmark report
+        run: |
+          python3 scripts/hrx/write_lemonade_benchmark_report.py \
+            "$PWD/lemonade-benchmark/benchmark-hrx.json" \
+            "$PWD/lemonade-benchmark/benchmark-vulkan.json" \
+            >> "$GITHUB_STEP_SUMMARY"
+
       - name: Upload Lemonade benchmark
-        if: ${{ success() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ${{ env.BENCHMARK_ARTIFACT_NAME }}
           path: |
-            lemonade-benchmark/benchmark.json
+            lemonade-benchmark/benchmark-hrx.json
+            lemonade-benchmark/benchmark-vulkan.json
             lemonade-benchmark/metadata.json
           if-no-files-found: error
-          retention-days: 90
+          retention-days: 45
 
-      - name: Upload Lemonade debug log
-        if: ${{ failure() }}
+      - name: Upload Lemonade debug logs
+        # Preserve diagnostics when the benchmark or report step fails.
+        if: ${{ always() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: lemonade-bench-debug-log-${{ matrix.gpu_target }}
-          path: lemonade-benchmark-debug/lemond.log
+          path: |
+            lemonade-benchmark-debug/lemond-hrx.log
+            lemonade-benchmark-debug/lemond-vulkan.log
+            lemonade-benchmark-debug/responses-hrx.jsonl
+            lemonade-benchmark-debug/responses-vulkan.jsonl
           if-no-files-found: warn
