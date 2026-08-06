@@ -92,7 +92,16 @@ def main() -> int:
         cwd=source_dir,
     )
     run(
-        ["cmake", "--build", build_dir, "--target", "lemond", "lemonade"],
+        [
+            "cmake",
+            "--build",
+            build_dir,
+            "--target",
+            "lemond",
+            "lemonade",
+            "--parallel",
+            "4",
+        ],
         cwd=source_dir,
     )
 
