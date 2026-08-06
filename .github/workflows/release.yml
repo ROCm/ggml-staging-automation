@@ -104,6 +104,7 @@ jobs:
       release_artifact_name: ${{ needs.prepare_release.outputs.artifact_name }}
       test_artifact_name: ${{ needs.prepare_release.outputs.artifact_name }}-tests
       package_root_name: llama-${{ needs.prepare_release.outputs.version }}
+      models: Qwen3-30B-A3B-Instruct-2507-GGUF
       allow_failure: true
 
   publish_release:

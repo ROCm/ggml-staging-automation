@@ -21,6 +21,11 @@ on:
       package_root_name:
         type: string
         default: llama.cpp-install
+      # WARNING: All models listed here will be pulled from Hugging Face during the benchmark.
+      models:
+        description: Space-separated Lemonade model names to benchmark.
+        type: string
+        default: Qwen3-30B-A3B-Instruct-2507-GGUF
       allow_failure:
         description: Allow release validation jobs to fail without failing the calling workflow.
         type: boolean
@@ -107,15 +112,18 @@ jobs:
 
       - name: Run Lemonade HRX benchmark
         env:
+          LEMONADE_MODELS: ${{ inputs.models }}
           PACKAGE_ROOT_NAME: ${{ inputs.package_root_name }}
         run: |
+          read -r -a models <<< "$LEMONADE_MODELS"
           python3 scripts/hrx/run_lemonade_benchmark.py \
             --lemonade-build-dir "$PWD/lemonade-source/build" \
             --llama-server "$PWD/release/$PACKAGE_ROOT_NAME/bin/llama-server" \
             --state-root "$RUNNER_TEMP/$BENCHMARK_STATE_NAME" \
             --output "$PWD/lemonade-benchmark/benchmark.json" \
             --server-log "$PWD/lemonade-benchmark-debug/lemond.log" \
-            --benchmark-log "$PWD/lemonade-benchmark-debug/benchmark.log"
+            --benchmark-log "$PWD/lemonade-benchmark-debug/benchmark.log" \
+            --models "${models[@]}"
 
       - name: Upload Lemonade benchmark
         if: ${{ success() }}

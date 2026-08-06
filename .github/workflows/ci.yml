@@ -45,3 +45,4 @@ jobs:
       release_artifact_name: llama-cpp-linux-x86_64
       test_artifact_name: llama-cpp-linux-x86_64-tests
       package_root_name: llama.cpp-install
+      models: Qwen3-30B-A3B-Instruct-2507-GGUF

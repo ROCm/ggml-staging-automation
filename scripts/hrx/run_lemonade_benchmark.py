@@ -220,6 +220,7 @@ def validate_benchmark(data: object) -> int:
 def run_benchmark(
     executable: Path,
     output: Path,
+    models: list[str],
     *,
     env: dict[str, str],
     log_path: Path,
@@ -235,7 +236,7 @@ def run_benchmark(
         "--auto-pull",
         "--output",
         os.fspath(output),
-        "Qwen3-30B-A3B-Instruct-2507-GGUF",
+        *models,
     ]
     return_code = stream_benchmark(command, env=env, log_path=log_path)
     if return_code != 0:
@@ -407,6 +408,7 @@ def run(args: argparse.Namespace) -> int:
         run_benchmark(
             lemonade,
             output,
+            args.models,
             env=env,
             log_path=args.benchmark_log,
         )
@@ -436,6 +438,7 @@ def main() -> int:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--server-log", type=Path, required=True)
     parser.add_argument("--benchmark-log", type=Path, required=True)
+    parser.add_argument("--models", nargs="+", required=True)
     args = parser.parse_args()
     try:
         return run(args)
