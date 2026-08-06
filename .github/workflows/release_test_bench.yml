@@ -38,11 +38,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: gfx1151_strix-halo
-            gpu_target: gfx1151
+          - gpu_target: gfx1151
             runs_on: linux-gfx1151-gpu-rocm
-          # - name: gfx1201_9070
-          #   gpu_target: gfx1201
+          # - gpu_target: gfx1201
           #   runs_on: linux-gfx120X-gpu-rocm
     runs-on: ${{ matrix.runs_on }}
     timeout-minutes: 60
@@ -102,7 +100,7 @@ jobs:
           LLAMA_CPP_COMMIT: ${{ steps.sources.outputs.llama_cpp }}
           PACKAGE_ROOT_NAME: ${{ inputs.package_root_name }}
         run: |
-          python3 scripts/hrx/run_lemonade_benchmark.py run \
+          python3 scripts/hrx/run_lemonade_benchmark.py \
             --lemonade-build-dir "$PWD/lemonade-source/build" \
             --llama-server "$PWD/release/$PACKAGE_ROOT_NAME/bin/llama-server" \
             --state-root "$RUNNER_TEMP/$BENCHMARK_STATE_NAME" \
@@ -113,12 +111,6 @@ jobs:
             --llama-cpp-commit "$LLAMA_CPP_COMMIT" \
             --hrx-system-commit "$HRX_SYSTEM_COMMIT" \
             --lemonade-commit "$LEMONADE_COMMIT"
-
-      - name: Clean Lemonade benchmark state
-        if: ${{ always() }}
-        run: |
-          python3 scripts/hrx/run_lemonade_benchmark.py cleanup \
-            --state-root "$RUNNER_TEMP/$BENCHMARK_STATE_NAME"
 
       - name: Upload Lemonade benchmark
         if: ${{ success() }}

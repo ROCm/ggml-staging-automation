@@ -7,51 +7,9 @@ from __future__ import annotations
 
 import argparse
 import os
-import subprocess
 from pathlib import Path
 
 from hrx_build import cmake_build_type_arg, cmake_generator_args, run
-
-
-def require_lemonade_checkout(source_dir: Path) -> None:
-    if not source_dir.is_dir():
-        raise SystemExit(f"Missing Lemonade checkout: {source_dir}")
-
-    required = (
-        source_dir / "setup.sh",
-        source_dir / "CMakeLists.txt",
-        source_dir / "CMakePresets.json",
-    )
-    missing = [path for path in required if not path.is_file()]
-    if missing:
-        raise SystemExit(
-            "Lemonade checkout is missing required files:\n  "
-            + "\n  ".join(os.fspath(path) for path in missing)
-        )
-
-    result = subprocess.run(
-        ["git", "-C", os.fspath(source_dir), "rev-parse", "--show-toplevel"],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode != 0:
-        detail = result.stderr.strip() or "git rev-parse failed"
-        raise SystemExit(f"Lemonade source is not a Git checkout: {detail}")
-
-    checkout_root = Path(result.stdout.strip()).resolve()
-    if checkout_root != source_dir:
-        raise SystemExit(
-            f"Lemonade source must be the Git checkout root: "
-            f"expected {source_dir}, got {checkout_root}"
-        )
-    if not os.access(source_dir / "setup.sh", os.X_OK):
-        raise SystemExit(f"Lemonade setup script is not executable: {source_dir / 'setup.sh'}")
-
-
-def require_executable(path: Path) -> None:
-    if not path.is_file() or not os.access(path, os.X_OK):
-        raise SystemExit(f"Lemonade build did not produce an executable: {path}")
 
 
 def main() -> int:
@@ -72,7 +30,6 @@ def main() -> int:
 
     source_dir = args.source_dir.resolve()
     build_dir = args.build_dir.resolve()
-    require_lemonade_checkout(source_dir)
 
     setup_env = dict(os.environ)
     setup_env["LEMONADE_SKIP_FRONTEND_DEPS"] = "1"
@@ -105,14 +62,6 @@ def main() -> int:
         cwd=source_dir,
     )
 
-    executables = (build_dir / "lemond", build_dir / "lemonade")
-    for executable in executables:
-        require_executable(executable)
-    print(
-        "Lemonade executables:\n  "
-        + "\n  ".join(os.fspath(path) for path in executables),
-        flush=True,
-    )
     return 0
 
 
