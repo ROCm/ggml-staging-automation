@@ -122,7 +122,6 @@ jobs:
             --state-root "$RUNNER_TEMP/$BENCHMARK_STATE_NAME" \
             --output "$PWD/lemonade-benchmark/benchmark.json" \
             --server-log "$PWD/lemonade-benchmark-debug/lemond.log" \
-            --benchmark-log "$PWD/lemonade-benchmark-debug/benchmark.log" \
             --models "${models[@]}"
 
       - name: Upload Lemonade benchmark
@@ -136,12 +135,10 @@ jobs:
           if-no-files-found: error
           retention-days: 90
 
-      - name: Upload Lemonade debug logs
+      - name: Upload Lemonade debug log
         if: ${{ failure() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: lemonade-bench-debug-logs-${{ matrix.gpu_target }}
-          path: |
-            lemonade-benchmark-debug/lemond.log
-            lemonade-benchmark-debug/benchmark.log
+          name: lemonade-bench-debug-log-${{ matrix.gpu_target }}
+          path: lemonade-benchmark-debug/lemond.log
           if-no-files-found: warn

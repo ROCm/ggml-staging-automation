@@ -132,31 +132,6 @@ def start_lemond(
         )
 
 
-def stream_benchmark(
-    command: list[str], *, env: dict[str, str], log_path: Path
-) -> int:
-    """Show benchmark progress in CI while retaining the same output for debugging."""
-    print("++", " ".join(command), flush=True)
-    log_path = log_path.resolve()
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-    with log_path.open("w", encoding="utf-8") as log_file:
-        process = subprocess.Popen(
-            command,
-            env=env,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            errors="replace",
-            bufsize=1,
-        )
-        for line in process.stdout:
-            print(line, end="", flush=True)
-            log_file.write(line)
-            log_file.flush()
-        return_code = process.wait()
-    return return_code
-
-
 def require_nonempty_list(value: object, location: str) -> list[Any]:
     if not isinstance(value, list) or not value:
         raise BenchmarkValidationError(f"{location} must be a nonempty array")
@@ -223,7 +198,6 @@ def run_benchmark(
     models: list[str],
     *,
     env: dict[str, str],
-    log_path: Path,
 ) -> None:
     """Run the user-facing HRX workload and reject invalid results before upload."""
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -238,9 +212,8 @@ def run_benchmark(
         os.fspath(output),
         *models,
     ]
-    return_code = stream_benchmark(command, env=env, log_path=log_path)
-    if return_code != 0:
-        raise RuntimeError(f"Lemonade benchmark failed with status {return_code}")
+    print("++", " ".join(command), flush=True)
+    subprocess.run(command, env=env, check=True)
     if not output.is_file():
         raise RuntimeError("Lemonade benchmark did not write benchmark.json")
 
@@ -366,10 +339,9 @@ def run(args: argparse.Namespace) -> int:
     benchmark_succeeded = False
 
     try:
-        # Precreate both files so early startup failures still have a debug artifact.
-        for log_path in (args.server_log, args.benchmark_log):
-            log_path.parent.mkdir(parents=True, exist_ok=True)
-            log_path.write_text("", encoding="utf-8")
+        # Precreate the file so early startup failures still have a debug artifact.
+        args.server_log.parent.mkdir(parents=True, exist_ok=True)
+        args.server_log.write_text("", encoding="utf-8")
         cache_dir, hf_home, runtime_dir = prepare_state(args.state_root)
 
         lemonade_build = args.lemonade_build_dir.resolve()
@@ -410,7 +382,6 @@ def run(args: argparse.Namespace) -> int:
             output,
             args.models,
             env=env,
-            log_path=args.benchmark_log,
         )
         benchmark_succeeded = True
     finally:
@@ -437,7 +408,6 @@ def main() -> int:
     parser.add_argument("--state-root", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--server-log", type=Path, required=True)
-    parser.add_argument("--benchmark-log", type=Path, required=True)
     parser.add_argument("--models", nargs="+", required=True)
     args = parser.parse_args()
     try:
