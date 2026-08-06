@@ -18,12 +18,6 @@ from pathlib import Path
 from typing import Any
 
 
-MODEL = "Qwen3-30B-A3B-Instruct-2507-GGUF"
-BACKEND = "hrx"
-SERVER_PORT = 13305
-FORBIDDEN_HRX_INSTALL_SIGNATURE = "Installing llama-server"
-
-
 def initialize(args: argparse.Namespace) -> int:
     metadata = {
         "schema_version": 1,
@@ -125,6 +119,34 @@ def stop_server(process: subprocess.Popen[str] | None) -> int | None:
         return process.wait(timeout=5)
 
 
+def start_lemond(
+    lemonade_build_dir: Path,
+    cache_dir: Path,
+    log_path: Path,
+    env: dict[str, str],
+    port: int,
+) -> subprocess.Popen[str]:
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    command = [
+        os.fspath(lemonade_build_dir / "lemond"),
+        os.fspath(cache_dir),
+        "--host",
+        "127.0.0.1",
+        "--port",
+        str(port),
+    ]
+    print("++", " ".join(command), flush=True)
+    with log_path.open("w", encoding="utf-8") as log_handle:
+        return subprocess.Popen(
+            command,
+            env=env,
+            stdout=log_handle,
+            stderr=subprocess.STDOUT,
+            text=True,
+            start_new_session=True,
+        )
+
+
 def run_captured(
     command: list[str], *, env: dict[str, str], description: str
 ) -> None:
@@ -166,6 +188,33 @@ def stream_benchmark(
             log_file.flush()
         return_code = process.wait()
     return return_code
+
+
+def run_benchmark(
+    executable: Path,
+    output: Path,
+    *,
+    env: dict[str, str],
+    log_path: Path,
+) -> tuple[int, str, bool]:
+    model = "Qwen3-30B-A3B-Instruct-2507-GGUF"
+    backend = "hrx"
+    command = [
+        os.fspath(executable),
+        "bench",
+        "--backend",
+        backend,
+        "--auto-pull",
+        "--output",
+        os.fspath(output),
+        model,
+    ]
+    return_code = stream_benchmark(command, env=env, log_path=log_path)
+    if return_code != 0 or not output.is_file():
+        return return_code, "", False
+
+    table = format_markdown_results(output)
+    return return_code, table, append_summary(table)
 
 
 def format_markdown_results(benchmark_json: Path) -> str:
@@ -221,9 +270,38 @@ def verify_config(config: dict[str, Any], llama_server: Path) -> None:
         raise RuntimeError("Lemonade did not retain the requested configuration")
 
 
+def set_lemonade_config_values(
+    executable: Path,
+    llama_server: Path,
+    env: dict[str, str],
+    port: int,
+) -> None:
+    command = [
+        os.fspath(executable),
+        "--host",
+        "127.0.0.1",
+        "--port",
+        str(port),
+        "config",
+        "set",
+        f"llamacpp.hrx_bin={llama_server}",
+        "no_fetch_executables=true",
+    ]
+    run_captured(command, env=env, description="Lemonade configuration")
+    config = request_json(port, "/internal/config")
+    verify_config(config, llama_server)
+    print(
+        "Verified Lemonade configuration: "
+        f"llamacpp.hrx_bin={llama_server}, "
+        "no_fetch_executables=true",
+        flush=True,
+    )
+
+
 def used_configured_executable(
     *, server_log: Path, state: dict[str, Path], llama_server: Path
 ) -> bool:
+    forbidden_install_signature = "Installing llama-server"
     log_text = server_log.read_text(encoding="utf-8", errors="replace")
     positive_text = (
         "Fetching executable artifacts is disabled; using installed "
@@ -233,13 +311,13 @@ def used_configured_executable(
     return (
         positive_text in log_text
         and not managed_hrx_dir.exists()
-        and FORBIDDEN_HRX_INSTALL_SIGNATURE not in log_text
+        and forbidden_install_signature not in log_text
     )
 
 
-def run_benchmark(args: argparse.Namespace) -> int:
+def run(args: argparse.Namespace) -> int:
+    port = 13305
     server_process: subprocess.Popen[str] | None = None
-    server_log_handle = None
     state: dict[str, Path] | None = None
     benchmark_return_code: int | None = None
     no_download = False
@@ -250,7 +328,6 @@ def run_benchmark(args: argparse.Namespace) -> int:
         state = prepare_state(args.state_root)
 
         lemonade_build = args.lemonade_build_dir.resolve()
-        lemond = lemonade_build / "lemond"
         lemonade = lemonade_build / "lemonade"
         llama_server = args.llama_server.resolve()
         output = args.output.resolve()
@@ -258,7 +335,6 @@ def run_benchmark(args: argparse.Namespace) -> int:
         if output.exists():
             output.unlink()
 
-        port = SERVER_PORT
         env = dict(os.environ)
         env.update(
             {
@@ -271,73 +347,32 @@ def run_benchmark(args: argparse.Namespace) -> int:
             }
         )
 
-        server_log = args.server_log.resolve()
-        server_log.parent.mkdir(parents=True, exist_ok=True)
-        server_log_handle = server_log.open("w", encoding="utf-8")
-        server_command = [
-            os.fspath(lemond),
-            os.fspath(state["cache"]),
-            "--host",
-            "127.0.0.1",
-            "--port",
-            str(port),
-        ]
-        print("++", " ".join(server_command), flush=True)
-        server_process = subprocess.Popen(
-            server_command,
+        server_process = start_lemond(
+            lemonade_build,
+            state["cache"],
+            args.server_log.resolve(),
             env=env,
-            stdout=server_log_handle,
-            stderr=subprocess.STDOUT,
-            text=True,
-            start_new_session=True,
+            port=port,
         )
         wait_for_live(server_process, port)
 
-        config_command = [
-            os.fspath(lemonade),
-            "--host",
-            "127.0.0.1",
-            "--port",
-            str(port),
-            "config",
-            "set",
-            f"llamacpp.hrx_bin={llama_server}",
-            "no_fetch_executables=true",
-        ]
-        run_captured(config_command, env=env, description="Lemonade configuration")
-        config = request_json(port, "/internal/config")
-        verify_config(config, llama_server)
-        print(
-            "Verified Lemonade configuration: "
-            f"llamacpp.hrx_bin={llama_server}, "
-            "no_fetch_executables=true",
-            flush=True,
+        set_lemonade_config_values(
+            lemonade,
+            llama_server,
+            env=env,
+            port=port,
         )
 
-        command = [
-            os.fspath(lemonade),
-            "bench",
-            "--backend",
-            BACKEND,
-            "--auto-pull",
-            "--output",
-            os.fspath(output),
-            MODEL,
-        ]
-        benchmark_return_code = stream_benchmark(
-            command,
+        benchmark_return_code, table, summary_written = run_benchmark(
+            lemonade,
+            output,
             env=env,
             log_path=args.benchmark_log,
         )
-        if benchmark_return_code == 0 and output.is_file():
-            table = format_markdown_results(output)
-            summary_written = append_summary(table)
     finally:
         server_return_code = stop_server(server_process)
-        if server_log_handle is not None:
-            server_log_handle.close()
         print(f"lemond stopped with status {server_return_code}", flush=True)
-        if state is not None and server_log_handle is not None:
+        if state is not None and server_process is not None:
             no_download = used_configured_executable(
                 server_log=args.server_log,
                 state=state,
@@ -395,7 +430,7 @@ def add_run_parser(subparsers: Any) -> None:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--server-log", type=Path, required=True)
     parser.add_argument("--benchmark-log", type=Path, required=True)
-    parser.set_defaults(handler=run_benchmark)
+    parser.set_defaults(handler=run)
 
 
 def add_cleanup_parser(subparsers: Any) -> None:
