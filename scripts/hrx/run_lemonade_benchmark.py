@@ -11,7 +11,6 @@ import json
 import os
 import shutil
 import signal
-import socket
 import subprocess
 import sys
 import time
@@ -21,6 +20,7 @@ from typing import Any
 
 MODEL = "Qwen3-30B-A3B-Instruct-2507-GGUF"
 BACKEND = "hrx"
+SERVER_PORT = 13305
 FORBIDDEN_HRX_INSTALL_SIGNATURE = "Installing llama-server"
 
 
@@ -63,26 +63,22 @@ def prepare_state(state_root: Path) -> dict[str, Path]:
     }
 
 
-def choose_port() -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
-        listener.bind(("127.0.0.1", 0))
-        return int(listener.getsockname()[1])
-
-
-def request_json(port: int, path: str, timeout: float = 10.0) -> dict[str, Any]:
+def request(port: int, path: str, timeout: float = 10.0) -> tuple[int, bytes]:
     connection = http.client.HTTPConnection("127.0.0.1", port, timeout=timeout)
     try:
         connection.request("GET", path)
         response = connection.getresponse()
         payload = response.read()
-        if response.status != 200:
-            raise RuntimeError(
-                f"GET {path} returned HTTP {response.status}: "
-                f"{payload.decode('utf-8', errors='replace')}"
-            )
-        value = json.loads(payload.decode("utf-8"))
     finally:
         connection.close()
+    return response.status, payload
+
+
+def request_json(port: int, path: str) -> dict[str, Any]:
+    status, payload = request(port, path)
+    if status != 200:
+        raise RuntimeError(f"GET {path} returned HTTP {status}")
+    value = json.loads(payload.decode("utf-8"))
     if not isinstance(value, dict):
         raise RuntimeError(f"Expected a JSON object from GET {path}")
     return value
@@ -98,15 +94,13 @@ def wait_for_live(process: subprocess.Popen[str], port: int) -> None:
                 f"lemond exited with status {return_code} before becoming ready"
             )
         try:
-            response = request_json(port, "/live", timeout=2.0)
-            if response.get("status") == "ok":
+            status, _ = request(port, "/live", timeout=2.0)
+            if status == 200:
                 return
-            last_error = f"unexpected response: {response!r}"
+            last_error = f"GET /live returned HTTP {status}"
         except (
             OSError,
-            RuntimeError,
             http.client.HTTPException,
-            json.JSONDecodeError,
         ) as exc:
             last_error = str(exc)
         time.sleep(0.5)
@@ -152,11 +146,10 @@ def run_captured(
 
 def stream_benchmark(
     command: list[str], *, env: dict[str, str], log_path: Path
-) -> tuple[int, str]:
+) -> int:
     print("++", " ".join(command), flush=True)
     log_path = log_path.resolve()
     log_path.parent.mkdir(parents=True, exist_ok=True)
-    output_lines: list[str] = []
     with log_path.open("w", encoding="utf-8") as log_file:
         process = subprocess.Popen(
             command,
@@ -171,9 +164,41 @@ def stream_benchmark(
             print(line, end="", flush=True)
             log_file.write(line)
             log_file.flush()
-            output_lines.append(line.rstrip("\n"))
         return_code = process.wait()
-    return return_code, "\n".join(output_lines)
+    return return_code
+
+
+def format_markdown_results(benchmark_json: Path) -> str:
+    data = json.loads(benchmark_json.read_text(encoding="utf-8"))
+    lines = ["## Lemonade benchmark results", ""]
+
+    for model in data["models"]:
+        lines.extend([f"### `{model['model']}`", ""])
+        for result in model["results"]:
+            backend = f"{result['recipe']}/{result['backend']}"
+            lines.extend(
+                [
+                    f"**Backend:** `{backend}` · "
+                    f"**Context:** `{result['ctx_size']}` tokens",
+                    "",
+                    "| Scenario | TTFT mean (ms) | TTFT min (ms) | "
+                    "TTFT max (ms) | TPS mean | TPS min | TPS max | "
+                    "VRAM peak (GB) |",
+                    "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+                ]
+            )
+            for scenario in result["scenarios"]:
+                ttft = scenario["ttft_ms"]
+                tps = scenario["tps"]
+                lines.append(
+                    f"| {scenario['name']} | {ttft['mean']:.1f} | "
+                    f"{ttft['min']:.1f} | {ttft['max']:.1f} | "
+                    f"{tps['mean']:.1f} | {tps['min']:.1f} | "
+                    f"{tps['max']:.1f} | {scenario['vram_peak_gb']:.1f} |"
+                )
+            lines.append("")
+
+    return "\n".join(lines).rstrip()
 
 
 def append_summary(table: str) -> bool:
@@ -233,7 +258,7 @@ def run_benchmark(args: argparse.Namespace) -> int:
         if output.exists():
             output.unlink()
 
-        port = choose_port()
+        port = SERVER_PORT
         env = dict(os.environ)
         env.update(
             {
@@ -299,14 +324,14 @@ def run_benchmark(args: argparse.Namespace) -> int:
             os.fspath(output),
             MODEL,
         ]
-        benchmark_return_code, benchmark_output = stream_benchmark(
+        benchmark_return_code = stream_benchmark(
             command,
             env=env,
             log_path=args.benchmark_log,
         )
-        table_start = benchmark_output.find("Benchmark: ")
-        table = benchmark_output[table_start:] if table_start >= 0 else ""
-        summary_written = bool(table) and append_summary(table)
+        if benchmark_return_code == 0 and output.is_file():
+            table = format_markdown_results(output)
+            summary_written = append_summary(table)
     finally:
         server_return_code = stop_server(server_process)
         if server_log_handle is not None:
@@ -326,7 +351,7 @@ def run_benchmark(args: argparse.Namespace) -> int:
     if not args.output.is_file():
         raise RuntimeError("Lemonade benchmark did not write benchmark.json")
     if not table:
-        raise RuntimeError("Lemonade benchmark did not print its result table")
+        raise RuntimeError("Lemonade benchmark did not produce its summary table")
     if os.environ.get("GITHUB_ACTIONS") == "true" and not summary_written:
         raise RuntimeError("Lemonade benchmark table was not written to the job summary")
     if not no_download:
