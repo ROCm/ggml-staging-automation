@@ -27,9 +27,84 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  check_source_changes:
+    name: Check source changes
+    runs-on: ubuntu-latest
+    outputs:
+      should_publish: ${{ steps.check.outputs.should_publish }}
+    steps:
+      - name: Compare with latest release
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            echo "should_publish=true" >> "$GITHUB_OUTPUT"
+            {
+              echo "### Release source check"
+              echo
+              echo "Manual dispatch: publishing was explicitly requested."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          latest_tag="$(
+            gh release list \
+              --repo "$GITHUB_REPOSITORY" \
+              --exclude-drafts \
+              --limit 1 \
+              --json tagName \
+              --jq '.[0].tagName // empty'
+          )"
+
+          if [[ -z "$latest_tag" ]]; then
+            echo "should_publish=true" >> "$GITHUB_OUTPUT"
+            {
+              echo "### Release source check"
+              echo
+              echo "No existing release was found; publishing the initial release."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          released_sha="$(
+            gh release view "$latest_tag" \
+              --repo "$GITHUB_REPOSITORY" \
+              --json targetCommitish \
+              --jq '.targetCommitish'
+          )"
+
+          if [[ ! "$released_sha" =~ ^[0-9a-fA-F]{40}$ ]]; then
+            echo "Release $latest_tag does not record an exact commit SHA: $released_sha" >&2
+            exit 1
+          fi
+
+          if [[ "$GITHUB_SHA" == "$released_sha" ]]; then
+            should_publish=false
+            decision="No source change; skipping build, tests, and publishing."
+          else
+            should_publish=true
+            decision="Source changed; continuing with the release."
+          fi
+
+          echo "should_publish=$should_publish" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Release source check"
+            echo
+            printf -- '- Latest release: `%s`\n' "$latest_tag"
+            printf -- '- Released source commit: `%s`\n' "$released_sha"
+            printf -- '- Current source commit: `%s`\n' "$GITHUB_SHA"
+            echo
+            echo "$decision"
+          } >> "$GITHUB_STEP_SUMMARY"
+
   prepare_release:
     name: Prepare
     runs-on: ubuntu-latest
+    needs: check_source_changes
+    if: needs.check_source_changes.outputs.should_publish == 'true'
     outputs:
       version: ${{ steps.version.outputs.version }}
       artifact_name: ${{ steps.version.outputs.artifact_name }}
