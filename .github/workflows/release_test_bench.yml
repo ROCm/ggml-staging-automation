@@ -1,0 +1,171 @@
+# Copyright 2026 The HRX Authors
+#
+# Licensed under the Apache License v2.0 with LLVM Exceptions.
+# See https://llvm.org/LICENSE.txt for license information.
+# SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+
+name: Benchmark llama.cpp Release Linux
+
+on:
+  workflow_call:
+    inputs:
+      name:
+        type: string
+        default: Release tests
+      release_artifact_name:
+        type: string
+        required: true
+      test_artifact_name:
+        type: string
+        default: llama-cpp-linux-x86_64-tests
+      package_root_name:
+        type: string
+        default: llama.cpp-install
+      allow_failure:
+        description: Allow release validation jobs to fail without failing the calling workflow.
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  benchmark_llama_cpp_release_linux:
+    name: ${{ inputs.name }} (${{ matrix.gpu_target }})
+    continue-on-error: ${{ inputs.allow_failure }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: gfx1151_strix-halo
+            gpu_target: gfx1151
+            runs_on: linux-gfx1151-gpu-rocm
+          # - name: gfx1201_9070
+          #   gpu_target: gfx1201
+          #   runs_on: linux-gfx120X-gpu-rocm
+    runs-on: ${{ matrix.runs_on }}
+    timeout-minutes: 60
+    env:
+      BENCHMARK_ARTIFACT_NAME: lemonade-bench-${{ matrix.gpu_target }}
+      BENCHMARK_STATE_NAME: lemonade-bench-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.gpu_target }}
+    steps:
+      - name: Checkout automation repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Checkout Lemonade HRX integration
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: AaronStGeorge/lemonade
+          ref: hrx-integration
+          path: lemonade-source
+          persist-credentials: false
+
+      - name: Record source commits
+        id: sources
+        run: |
+          set -euo pipefail
+          echo "llama_cpp=$(git rev-parse HEAD:llama.cpp)" >> "$GITHUB_OUTPUT"
+          echo "hrx_system=$(git rev-parse HEAD:hrx-system)" >> "$GITHUB_OUTPUT"
+          echo "lemonade=$(git -C lemonade-source rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Download llama.cpp release package
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ inputs.release_artifact_name }}
+          path: artifacts
+
+      - name: Extract release package
+        id: release
+        env:
+          PACKAGE_ROOT_NAME: ${{ inputs.package_root_name }}
+          RELEASE_ARTIFACT_NAME: ${{ inputs.release_artifact_name }}
+        run: |
+          set -euo pipefail
+          release_package="$PWD/artifacts/${RELEASE_ARTIFACT_NAME}.tar.gz"
+          extract_dir="$PWD/release-package"
+          test -f "$release_package"
+          if [ -e "$extract_dir" ]; then
+            echo "Refusing to reuse existing extraction directory: $extract_dir" >&2
+            exit 1
+          fi
+          mkdir "$extract_dir"
+          tar -xzf "$release_package" -C "$extract_dir"
+
+          extract_root="$(realpath -e "$extract_dir")"
+          llama_server="$(realpath -e "$extract_root/${PACKAGE_ROOT_NAME}/bin/llama-server")"
+          case "$llama_server" in
+            "$extract_root"/*) ;;
+            *)
+              echo "llama-server resolved outside the extraction root: $llama_server" >&2
+              exit 1
+              ;;
+          esac
+          test -f "$llama_server"
+          test -x "$llama_server"
+          echo "release_package=$release_package" >> "$GITHUB_OUTPUT"
+          echo "llama_server=$llama_server" >> "$GITHUB_OUTPUT"
+
+      - name: Initialize benchmark outputs
+        env:
+          HRX_SYSTEM_COMMIT: ${{ steps.sources.outputs.hrx_system }}
+          LEMONADE_COMMIT: ${{ steps.sources.outputs.lemonade }}
+          LLAMA_CPP_COMMIT: ${{ steps.sources.outputs.llama_cpp }}
+        run: |
+          python3 scripts/hrx/run_lemonade_benchmark.py initialize \
+            --metadata-output lemonade-benchmark/metadata.json \
+            --server-log lemonade-benchmark-debug/lemond.log \
+            --benchmark-log lemonade-benchmark-debug/benchmark.log \
+            --llama-cpp-commit "$LLAMA_CPP_COMMIT" \
+            --hrx-system-commit "$HRX_SYSTEM_COMMIT" \
+            --lemonade-commit "$LEMONADE_COMMIT"
+
+      - name: Build Lemonade
+        run: |
+          python3 scripts/hrx/build_lemonade.py \
+            --source-dir "$PWD/lemonade-source" \
+            --build-dir "$PWD/lemonade-source/build"
+
+      - name: Run Lemonade HRX benchmark
+        env:
+          LLAMA_SERVER: ${{ steps.release.outputs.llama_server }}
+        run: |
+          python3 scripts/hrx/run_lemonade_benchmark.py run \
+            --lemonade-build-dir "$PWD/lemonade-source/build" \
+            --llama-server "$LLAMA_SERVER" \
+            --state-root "$RUNNER_TEMP/$BENCHMARK_STATE_NAME" \
+            --output "$PWD/lemonade-benchmark/benchmark.json" \
+            --server-log "$PWD/lemonade-benchmark-debug/lemond.log" \
+            --benchmark-log "$PWD/lemonade-benchmark-debug/benchmark.log"
+
+      - name: Validate Lemonade benchmark
+        run: python3 scripts/hrx/validate_lemonade_benchmark.py lemonade-benchmark/benchmark.json
+
+      - name: Clean Lemonade benchmark state
+        if: ${{ always() }}
+        run: |
+          python3 scripts/hrx/run_lemonade_benchmark.py cleanup \
+            --state-root "$RUNNER_TEMP/$BENCHMARK_STATE_NAME"
+
+      - name: Upload Lemonade benchmark
+        if: ${{ success() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ env.BENCHMARK_ARTIFACT_NAME }}
+          path: |
+            lemonade-benchmark/benchmark.json
+            lemonade-benchmark/metadata.json
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Upload Lemonade debug logs
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: lemonade-bench-debug-logs-${{ matrix.gpu_target }}
+          path: |
+            lemonade-benchmark-debug/lemond.log
+            lemonade-benchmark-debug/benchmark.log
+          if-no-files-found: warn

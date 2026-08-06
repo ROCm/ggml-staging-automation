@@ -1,0 +1,397 @@
+#!/usr/bin/env python3
+# Copyright Advanced Micro Devices, Inc.
+# SPDX-License-Identifier: MIT
+"""Run the release benchmark through an isolated Lemonade daemon."""
+
+from __future__ import annotations
+
+import argparse
+import http.client
+import json
+import os
+import shutil
+import signal
+import socket
+import subprocess
+import sys
+import time
+from pathlib import Path
+from typing import Any
+
+
+MODEL = "Qwen3-30B-A3B-Instruct-2507-GGUF"
+BACKEND = "hrx"
+FORBIDDEN_HRX_INSTALL_SIGNATURE = "Installing llama-server"
+
+
+def initialize(args: argparse.Namespace) -> int:
+    metadata = {
+        "schema_version": 1,
+        "llama_cpp": args.llama_cpp_commit,
+        "hrx_system": args.hrx_system_commit,
+        "lemonade": args.lemonade_commit,
+    }
+
+    args.metadata_output.parent.mkdir(parents=True, exist_ok=True)
+    args.metadata_output.write_text(
+        json.dumps(metadata, indent=2) + "\n", encoding="utf-8"
+    )
+    for log_path in (args.server_log, args.benchmark_log):
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        log_path.write_text("", encoding="utf-8")
+    print(f"Wrote benchmark metadata to {args.metadata_output}", flush=True)
+    return 0
+
+
+def remove_state_root(state_root: Path) -> None:
+    if state_root.exists():
+        shutil.rmtree(state_root)
+
+
+def prepare_state(state_root: Path) -> dict[str, Path]:
+    remove_state_root(state_root)
+    cache_dir = state_root / "lemonade"
+    hf_home = state_root / "huggingface"
+    runtime_dir = state_root / "runtime"
+    for path in (cache_dir, hf_home, runtime_dir):
+        path.mkdir(parents=True)
+    runtime_dir.chmod(0o700)
+    return {
+        "cache": cache_dir,
+        "hf_home": hf_home,
+        "runtime": runtime_dir,
+    }
+
+
+def choose_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
+        listener.bind(("127.0.0.1", 0))
+        return int(listener.getsockname()[1])
+
+
+def request_json(port: int, path: str, timeout: float = 10.0) -> dict[str, Any]:
+    connection = http.client.HTTPConnection("127.0.0.1", port, timeout=timeout)
+    try:
+        connection.request("GET", path)
+        response = connection.getresponse()
+        payload = response.read()
+        if response.status != 200:
+            raise RuntimeError(
+                f"GET {path} returned HTTP {response.status}: "
+                f"{payload.decode('utf-8', errors='replace')}"
+            )
+        value = json.loads(payload.decode("utf-8"))
+    finally:
+        connection.close()
+    if not isinstance(value, dict):
+        raise RuntimeError(f"Expected a JSON object from GET {path}")
+    return value
+
+
+def wait_for_live(process: subprocess.Popen[str], port: int) -> None:
+    deadline = time.monotonic() + 60.0
+    last_error = "server did not answer"
+    while time.monotonic() < deadline:
+        return_code = process.poll()
+        if return_code is not None:
+            raise RuntimeError(
+                f"lemond exited with status {return_code} before becoming ready"
+            )
+        try:
+            response = request_json(port, "/live", timeout=2.0)
+            if response.get("status") == "ok":
+                return
+            last_error = f"unexpected response: {response!r}"
+        except (
+            OSError,
+            RuntimeError,
+            http.client.HTTPException,
+            json.JSONDecodeError,
+        ) as exc:
+            last_error = str(exc)
+        time.sleep(0.5)
+    raise RuntimeError(f"lemond did not become ready within 60 seconds: {last_error}")
+
+
+def stop_server(process: subprocess.Popen[str] | None) -> int | None:
+    if process is None:
+        return None
+    if process.poll() is not None:
+        return process.returncode
+
+    process.send_signal(signal.SIGTERM)
+    try:
+        return process.wait(timeout=20)
+    except subprocess.TimeoutExpired:
+        os.killpg(process.pid, signal.SIGTERM)
+    try:
+        return process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        os.killpg(process.pid, signal.SIGKILL)
+        return process.wait(timeout=5)
+
+
+def run_captured(
+    command: list[str], *, env: dict[str, str], description: str
+) -> None:
+    print("++", " ".join(command), flush=True)
+    result = subprocess.run(
+        command,
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if result.stdout:
+        print(result.stdout, end="" if result.stdout.endswith("\n") else "\n")
+    if result.stderr:
+        print(result.stderr, end="" if result.stderr.endswith("\n") else "\n", file=sys.stderr)
+    if result.returncode != 0:
+        raise RuntimeError(f"{description} failed with status {result.returncode}")
+
+
+def stream_benchmark(
+    command: list[str], *, env: dict[str, str], log_path: Path
+) -> tuple[int, str]:
+    print("++", " ".join(command), flush=True)
+    log_path = log_path.resolve()
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    output_lines: list[str] = []
+    with log_path.open("w", encoding="utf-8") as log_file:
+        process = subprocess.Popen(
+            command,
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            errors="replace",
+            bufsize=1,
+        )
+        for line in process.stdout:
+            print(line, end="", flush=True)
+            log_file.write(line)
+            log_file.flush()
+            output_lines.append(line.rstrip("\n"))
+        return_code = process.wait()
+    return return_code, "\n".join(output_lines)
+
+
+def append_summary(table: str) -> bool:
+    summary_value = os.environ.get("GITHUB_STEP_SUMMARY", "").strip()
+    if not summary_value:
+        return False
+    summary_path = Path(summary_value)
+    summary_path.parent.mkdir(parents=True, exist_ok=True)
+    with summary_path.open("a", encoding="utf-8") as summary:
+        summary.write(table)
+        summary.write("\n")
+    return True
+
+
+def verify_config(config: dict[str, Any], llama_server: Path) -> None:
+    if (
+        Path(config["llamacpp"]["hrx_bin"]).resolve() != llama_server
+        or config["no_fetch_executables"] is not True
+    ):
+        raise RuntimeError("Lemonade did not retain the requested configuration")
+
+
+def used_configured_executable(
+    *, server_log: Path, state: dict[str, Path], llama_server: Path
+) -> bool:
+    log_text = server_log.read_text(encoding="utf-8", errors="replace")
+    positive_text = (
+        "Fetching executable artifacts is disabled; using installed "
+        f"llamacpp:hrx backend at {llama_server}"
+    )
+    managed_hrx_dir = state["cache"] / "bin" / "llamacpp" / "hrx"
+    return (
+        positive_text in log_text
+        and not managed_hrx_dir.exists()
+        and FORBIDDEN_HRX_INSTALL_SIGNATURE not in log_text
+    )
+
+
+def run_benchmark(args: argparse.Namespace) -> int:
+    server_process: subprocess.Popen[str] | None = None
+    server_log_handle = None
+    state: dict[str, Path] | None = None
+    benchmark_return_code: int | None = None
+    no_download = False
+    summary_written = False
+    table = ""
+
+    try:
+        state = prepare_state(args.state_root)
+
+        lemonade_build = args.lemonade_build_dir.resolve()
+        lemond = lemonade_build / "lemond"
+        lemonade = lemonade_build / "lemonade"
+        llama_server = args.llama_server.resolve()
+        output = args.output.resolve()
+        output.parent.mkdir(parents=True, exist_ok=True)
+        if output.exists():
+            output.unlink()
+
+        port = choose_port()
+        env = dict(os.environ)
+        env.update(
+            {
+                "HF_HOME": os.fspath(state["hf_home"]),
+                "HF_HUB_CACHE": os.fspath(state["hf_home"] / "hub"),
+                "LEMONADE_CACHE_DIR": os.fspath(state["cache"]),
+                "LEMONADE_HOST": "127.0.0.1",
+                "LEMONADE_PORT": str(port),
+                "XDG_RUNTIME_DIR": os.fspath(state["runtime"]),
+            }
+        )
+
+        server_log = args.server_log.resolve()
+        server_log.parent.mkdir(parents=True, exist_ok=True)
+        server_log_handle = server_log.open("w", encoding="utf-8")
+        server_command = [
+            os.fspath(lemond),
+            os.fspath(state["cache"]),
+            "--host",
+            "127.0.0.1",
+            "--port",
+            str(port),
+        ]
+        print("++", " ".join(server_command), flush=True)
+        server_process = subprocess.Popen(
+            server_command,
+            env=env,
+            stdout=server_log_handle,
+            stderr=subprocess.STDOUT,
+            text=True,
+            start_new_session=True,
+        )
+        wait_for_live(server_process, port)
+
+        config_command = [
+            os.fspath(lemonade),
+            "--host",
+            "127.0.0.1",
+            "--port",
+            str(port),
+            "config",
+            "set",
+            f"llamacpp.hrx_bin={llama_server}",
+            "no_fetch_executables=true",
+        ]
+        run_captured(config_command, env=env, description="Lemonade configuration")
+        config = request_json(port, "/internal/config")
+        verify_config(config, llama_server)
+        print(
+            "Verified Lemonade configuration: "
+            f"llamacpp.hrx_bin={llama_server}, "
+            "no_fetch_executables=true",
+            flush=True,
+        )
+
+        command = [
+            os.fspath(lemonade),
+            "bench",
+            "--backend",
+            BACKEND,
+            "--auto-pull",
+            "--output",
+            os.fspath(output),
+            MODEL,
+        ]
+        benchmark_return_code, benchmark_output = stream_benchmark(
+            command,
+            env=env,
+            log_path=args.benchmark_log,
+        )
+        table_start = benchmark_output.find("Benchmark: ")
+        table = benchmark_output[table_start:] if table_start >= 0 else ""
+        summary_written = bool(table) and append_summary(table)
+    finally:
+        server_return_code = stop_server(server_process)
+        if server_log_handle is not None:
+            server_log_handle.close()
+        print(f"lemond stopped with status {server_return_code}", flush=True)
+        if state is not None and server_log_handle is not None:
+            no_download = used_configured_executable(
+                server_log=args.server_log,
+                state=state,
+                llama_server=args.llama_server.resolve(),
+            )
+
+    if benchmark_return_code != 0:
+        raise RuntimeError(
+            f"Lemonade benchmark failed with status {benchmark_return_code}"
+        )
+    if not args.output.is_file():
+        raise RuntimeError("Lemonade benchmark did not write benchmark.json")
+    if not table:
+        raise RuntimeError("Lemonade benchmark did not print its result table")
+    if os.environ.get("GITHUB_ACTIONS") == "true" and not summary_written:
+        raise RuntimeError("Lemonade benchmark table was not written to the job summary")
+    if not no_download:
+        raise RuntimeError(
+            "Could not prove that Lemonade used the configured HRX executable "
+            "without installing another backend"
+        )
+
+    print(
+        "Verified Lemonade used the extracted llama-server without installing "
+        "another backend.",
+        flush=True,
+    )
+    return 0
+
+
+def cleanup(args: argparse.Namespace) -> int:
+    remove_state_root(args.state_root)
+    print(f"Cleaned benchmark state: {args.state_root}", flush=True)
+    return 0
+
+
+def add_initialize_parser(subparsers: Any) -> None:
+    parser = subparsers.add_parser(
+        "initialize", help="write benchmark metadata and initialize debug logs"
+    )
+    parser.add_argument("--metadata-output", type=Path, required=True)
+    parser.add_argument("--server-log", type=Path, required=True)
+    parser.add_argument("--benchmark-log", type=Path, required=True)
+    parser.add_argument("--llama-cpp-commit", required=True)
+    parser.add_argument("--hrx-system-commit", required=True)
+    parser.add_argument("--lemonade-commit", required=True)
+    parser.set_defaults(handler=initialize)
+
+
+def add_run_parser(subparsers: Any) -> None:
+    parser = subparsers.add_parser("run", help="run the isolated Lemonade benchmark")
+    parser.add_argument("--lemonade-build-dir", type=Path, required=True)
+    parser.add_argument("--llama-server", type=Path, required=True)
+    parser.add_argument("--state-root", type=Path, required=True)
+    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--server-log", type=Path, required=True)
+    parser.add_argument("--benchmark-log", type=Path, required=True)
+    parser.set_defaults(handler=run_benchmark)
+
+
+def add_cleanup_parser(subparsers: Any) -> None:
+    parser = subparsers.add_parser("cleanup", help="remove isolated benchmark state")
+    parser.add_argument("--state-root", type=Path, required=True)
+    parser.set_defaults(handler=cleanup)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    subparsers = parser.add_subparsers(dest="command", required=True)
+    add_initialize_parser(subparsers)
+    add_run_parser(subparsers)
+    add_cleanup_parser(subparsers)
+    args = parser.parse_args()
+    try:
+        return int(args.handler(args))
+    except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
+        print(f"Lemonade benchmark {args.command} failed: {exc}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

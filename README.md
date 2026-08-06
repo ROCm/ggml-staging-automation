@@ -77,8 +77,34 @@ same basic packaging model with DLL copying instead of ELF RPATHs.
 ## CI
 
 The `CI` workflow (`.github/workflows/ci.yml`) runs on pull requests and pushes
-to `main`. It builds the release package and runs tests against the packaged
-artifacts on supported GPU platforms.
+to `main`. It builds the release package, extracts its `llama-server`, and runs
+the following HRX-only Lemonade benchmark on `gfx1151`:
+
+```bash
+lemonade bench --backend hrx --auto-pull --output benchmark.json Qwen3-30B-A3B-Instruct-2507-GGUF
+```
+
+The workflow builds `AaronStGeorge/lemonade@hrx-integration` without its web
+application and configures it to use the extracted same-run `llama-server`.
+Executable downloads are disabled, so Lemonade cannot fall back to the bundled
+HRX executable. Lemonade's current model registry, benchmark scenarios, and
+other user-facing defaults are intentionally left unpinned. Long-context and
+Vulkan workloads are not part of this benchmark.
+
+A successful run uploads `lemonade-bench-gfx1151` for 90 days. The artifact has
+two files at its root:
+
+- `benchmark.json` is Lemonade's untouched output and the stable input for
+  future benchmark comparisons.
+- `metadata.json` records its schema version and the exact `llama.cpp`,
+  `hrx-system`, and Lemonade commits.
+
+Failed scenarios, malformed output, or any nonzero `failed_runs` prevent this
+baseline artifact from being published. The daemon and benchmark logs are
+uploaded in a separate `lemonade-bench-debug-logs-gfx1151` failure artifact
+instead. The build continues to produce the existing test package with one-day
+retention for compatibility, although the benchmark workflow no longer
+downloads or executes its op tests.
 
 ## Releases
 

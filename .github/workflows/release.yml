@@ -90,17 +90,17 @@ jobs:
       build_test_package: true
       test_artifact_name: ${{ needs.prepare_release.outputs.artifact_name }}-tests
 
-  llama_cpp_release_tests:
-    name: Linux / HRX release tests
+  llama_cpp_release_bench:
+    name: Linux / HRX release benchmark
     needs:
       - prepare_release
       - llama_cpp_manylinux_hrx
-    uses: ./.github/workflows/release_tests.yml
+    uses: ./.github/workflows/release_test_bench.yml
     permissions:
       contents: read
       actions: read
     with:
-      name: Release tests
+      name: Release benchmark
       release_artifact_name: ${{ needs.prepare_release.outputs.artifact_name }}
       test_artifact_name: ${{ needs.prepare_release.outputs.artifact_name }}-tests
       package_root_name: llama-${{ needs.prepare_release.outputs.version }}
