@@ -108,20 +108,6 @@ jobs:
           echo "release_package=$release_package" >> "$GITHUB_OUTPUT"
           echo "llama_server=$llama_server" >> "$GITHUB_OUTPUT"
 
-      - name: Initialize benchmark outputs
-        env:
-          HRX_SYSTEM_COMMIT: ${{ steps.sources.outputs.hrx_system }}
-          LEMONADE_COMMIT: ${{ steps.sources.outputs.lemonade }}
-          LLAMA_CPP_COMMIT: ${{ steps.sources.outputs.llama_cpp }}
-        run: |
-          python3 scripts/hrx/run_lemonade_benchmark.py initialize \
-            --metadata-output lemonade-benchmark/metadata.json \
-            --server-log lemonade-benchmark-debug/lemond.log \
-            --benchmark-log lemonade-benchmark-debug/benchmark.log \
-            --llama-cpp-commit "$LLAMA_CPP_COMMIT" \
-            --hrx-system-commit "$HRX_SYSTEM_COMMIT" \
-            --lemonade-commit "$LEMONADE_COMMIT"
-
       - name: Build Lemonade
         run: |
           python3 scripts/hrx/build_lemonade.py \
@@ -130,6 +116,9 @@ jobs:
 
       - name: Run Lemonade HRX benchmark
         env:
+          HRX_SYSTEM_COMMIT: ${{ steps.sources.outputs.hrx_system }}
+          LEMONADE_COMMIT: ${{ steps.sources.outputs.lemonade }}
+          LLAMA_CPP_COMMIT: ${{ steps.sources.outputs.llama_cpp }}
           LLAMA_SERVER: ${{ steps.release.outputs.llama_server }}
         run: |
           python3 scripts/hrx/run_lemonade_benchmark.py run \
@@ -137,8 +126,12 @@ jobs:
             --llama-server "$LLAMA_SERVER" \
             --state-root "$RUNNER_TEMP/$BENCHMARK_STATE_NAME" \
             --output "$PWD/lemonade-benchmark/benchmark.json" \
+            --metadata-output "$PWD/lemonade-benchmark/metadata.json" \
             --server-log "$PWD/lemonade-benchmark-debug/lemond.log" \
-            --benchmark-log "$PWD/lemonade-benchmark-debug/benchmark.log"
+            --benchmark-log "$PWD/lemonade-benchmark-debug/benchmark.log" \
+            --llama-cpp-commit "$LLAMA_CPP_COMMIT" \
+            --hrx-system-commit "$HRX_SYSTEM_COMMIT" \
+            --lemonade-commit "$LEMONADE_COMMIT"
 
       - name: Validate Lemonade benchmark
         run: python3 scripts/hrx/validate_lemonade_benchmark.py lemonade-benchmark/benchmark.json

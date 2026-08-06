@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any
 
 
-def initialize(args: argparse.Namespace) -> int:
+def initialize_outputs(args: argparse.Namespace) -> None:
     metadata = {
         "schema_version": 1,
         "llama_cpp": args.llama_cpp_commit,
@@ -34,7 +34,6 @@ def initialize(args: argparse.Namespace) -> int:
         log_path.parent.mkdir(parents=True, exist_ok=True)
         log_path.write_text("", encoding="utf-8")
     print(f"Wrote benchmark metadata to {args.metadata_output}", flush=True)
-    return 0
 
 
 def remove_state_root(state_root: Path) -> None:
@@ -324,6 +323,8 @@ def run(args: argparse.Namespace) -> int:
     summary_written = False
     table = ""
 
+    initialize_outputs(args)
+
     try:
         state = prepare_state(args.state_root)
 
@@ -409,27 +410,20 @@ def cleanup(args: argparse.Namespace) -> int:
     return 0
 
 
-def add_initialize_parser(subparsers: Any) -> None:
+def add_run_parser(subparsers: Any) -> None:
     parser = subparsers.add_parser(
-        "initialize", help="write benchmark metadata and initialize debug logs"
+        "run", help="initialize outputs and run the isolated Lemonade benchmark"
     )
+    parser.add_argument("--lemonade-build-dir", type=Path, required=True)
+    parser.add_argument("--llama-server", type=Path, required=True)
+    parser.add_argument("--state-root", type=Path, required=True)
+    parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--metadata-output", type=Path, required=True)
     parser.add_argument("--server-log", type=Path, required=True)
     parser.add_argument("--benchmark-log", type=Path, required=True)
     parser.add_argument("--llama-cpp-commit", required=True)
     parser.add_argument("--hrx-system-commit", required=True)
     parser.add_argument("--lemonade-commit", required=True)
-    parser.set_defaults(handler=initialize)
-
-
-def add_run_parser(subparsers: Any) -> None:
-    parser = subparsers.add_parser("run", help="run the isolated Lemonade benchmark")
-    parser.add_argument("--lemonade-build-dir", type=Path, required=True)
-    parser.add_argument("--llama-server", type=Path, required=True)
-    parser.add_argument("--state-root", type=Path, required=True)
-    parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--server-log", type=Path, required=True)
-    parser.add_argument("--benchmark-log", type=Path, required=True)
     parser.set_defaults(handler=run)
 
 
@@ -442,7 +436,6 @@ def add_cleanup_parser(subparsers: Any) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
-    add_initialize_parser(subparsers)
     add_run_parser(subparsers)
     add_cleanup_parser(subparsers)
     args = parser.parse_args()
