@@ -88,6 +88,6 @@ as CI (test failures do not block publishing), then publishes a GitHub
 prerelease with `llama-<version>-bin-manylinux-hrx-x64.tar.gz` attached. The
 archive unpacks to `llama-<version>/` and is self-contained: the required ROCm
 runtime libraries ship alongside the binaries, so no ROCm install is needed on
-the target machine. Before a scheduled build, the workflow compares the current
+the target machine. Before a build, the workflow compares the current
 repository commit with the commit targeted by the most recent release and skips
-the build, tests, and publishing when they match. Manual dispatches always run.
+the build, tests, and publishing when they match.
