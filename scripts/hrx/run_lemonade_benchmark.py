@@ -22,30 +22,13 @@ class BenchmarkValidationError(RuntimeError):
     """Raised when a benchmark does not match the required result schema."""
 
 
-def initialize_outputs(args: argparse.Namespace) -> None:
-    metadata = {
-        "schema_version": 1,
-        "llama_cpp": args.llama_cpp_commit,
-        "hrx_system": args.hrx_system_commit,
-        "lemonade": args.lemonade_commit,
-    }
-
-    args.metadata_output.parent.mkdir(parents=True, exist_ok=True)
-    args.metadata_output.write_text(
-        json.dumps(metadata, indent=2) + "\n", encoding="utf-8"
-    )
-    for log_path in (args.server_log, args.benchmark_log):
-        log_path.parent.mkdir(parents=True, exist_ok=True)
-        log_path.write_text("", encoding="utf-8")
-    print(f"Wrote benchmark metadata to {args.metadata_output}", flush=True)
-
-
 def remove_state_root(state_root: Path) -> None:
     if state_root.exists():
         shutil.rmtree(state_root)
 
 
 def prepare_state(state_root: Path) -> tuple[Path, Path, Path]:
+    """Keep Lemonade and model caches under one disposable root for cleanup."""
     remove_state_root(state_root)
     cache_dir = state_root / "lemonade"
     hf_home = state_root / "huggingface"
@@ -78,6 +61,7 @@ def request_json(port: int, path: str) -> dict[str, Any]:
 
 
 def wait_for_live(process: subprocess.Popen[str], port: int) -> None:
+    """Avoid racing Lemonade CLI requests against daemon startup."""
     deadline = time.monotonic() + 60.0
     last_error = "server did not answer"
     while time.monotonic() < deadline:
@@ -101,6 +85,7 @@ def wait_for_live(process: subprocess.Popen[str], port: int) -> None:
 
 
 def stop_server(process: subprocess.Popen[str] | None) -> int | None:
+    """Stop the daemon and flush its log before verification and state removal."""
     if process is None:
         return None
     if process.poll() is not None:
@@ -125,6 +110,7 @@ def start_lemond(
     env: dict[str, str],
     port: int,
 ) -> subprocess.Popen[str]:
+    """Start the daemon that owns Lemonade configuration and backend processes."""
     log_path.parent.mkdir(parents=True, exist_ok=True)
     command = [
         os.fspath(lemonade_build_dir / "lemond"),
@@ -149,6 +135,7 @@ def start_lemond(
 def stream_benchmark(
     command: list[str], *, env: dict[str, str], log_path: Path
 ) -> int:
+    """Show benchmark progress in CI while retaining the same output for debugging."""
     print("++", " ".join(command), flush=True)
     log_path = log_path.resolve()
     log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -237,6 +224,7 @@ def run_benchmark(
     env: dict[str, str],
     log_path: Path,
 ) -> None:
+    """Run the user-facing HRX workload and reject invalid results before upload."""
     output.parent.mkdir(parents=True, exist_ok=True)
     output.unlink(missing_ok=True)
     command = [
@@ -298,6 +286,7 @@ def format_markdown_results(data: dict[str, Any]) -> str:
 
 
 def append_summary(table: str) -> None:
+    """Publish readable results and fail CI if Actions cannot record the summary."""
     summary_value = os.environ.get("GITHUB_STEP_SUMMARY", "").strip()
     if not summary_value:
         if os.environ.get("GITHUB_ACTIONS") == "true":
@@ -316,6 +305,7 @@ def set_lemonade_config_values(
     env: dict[str, str],
     port: int,
 ) -> None:
+    """Pin the extracted llama-server and prevent fallback executable downloads."""
     command = [
         os.fspath(executable),
         "--host",
@@ -346,6 +336,7 @@ def set_lemonade_config_values(
 def verify_configured_executable(
     *, server_log: Path, cache_dir: Path, llama_server: Path
 ) -> None:
+    """Confirm Lemonade honored the pinned executable before deleting its state."""
     log_text = server_log.read_text(encoding="utf-8", errors="replace")
     positive_text = (
         "Fetching executable artifacts is disabled; using installed "
@@ -374,7 +365,10 @@ def run(args: argparse.Namespace) -> int:
     benchmark_succeeded = False
 
     try:
-        initialize_outputs(args)
+        # Precreate both files so early startup failures still have a debug artifact.
+        for log_path in (args.server_log, args.benchmark_log):
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            log_path.write_text("", encoding="utf-8")
         cache_dir, hf_home, runtime_dir = prepare_state(args.state_root)
 
         lemonade_build = args.lemonade_build_dir.resolve()
@@ -440,12 +434,8 @@ def main() -> int:
     parser.add_argument("--llama-server", type=Path, required=True)
     parser.add_argument("--state-root", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--metadata-output", type=Path, required=True)
     parser.add_argument("--server-log", type=Path, required=True)
     parser.add_argument("--benchmark-log", type=Path, required=True)
-    parser.add_argument("--llama-cpp-commit", required=True)
-    parser.add_argument("--hrx-system-commit", required=True)
-    parser.add_argument("--lemonade-commit", required=True)
     args = parser.parse_args()
     try:
         return run(args)

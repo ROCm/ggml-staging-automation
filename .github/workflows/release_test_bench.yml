@@ -93,11 +93,20 @@ jobs:
             --source-dir "$PWD/lemonade-source" \
             --build-dir "$PWD/lemonade-source/build"
 
-      - name: Run Lemonade HRX benchmark
+      - name: Write benchmark metadata
         env:
           HRX_SYSTEM_COMMIT: ${{ steps.sources.outputs.hrx_system }}
           LEMONADE_COMMIT: ${{ steps.sources.outputs.lemonade }}
           LLAMA_CPP_COMMIT: ${{ steps.sources.outputs.llama_cpp }}
+        run: |
+          python3 scripts/hrx/write_benchmark_metadata.py \
+            --output "$PWD/lemonade-benchmark/metadata.json" \
+            --llama-cpp-commit "$LLAMA_CPP_COMMIT" \
+            --hrx-system-commit "$HRX_SYSTEM_COMMIT" \
+            --lemonade-commit "$LEMONADE_COMMIT"
+
+      - name: Run Lemonade HRX benchmark
+        env:
           PACKAGE_ROOT_NAME: ${{ inputs.package_root_name }}
         run: |
           python3 scripts/hrx/run_lemonade_benchmark.py \
@@ -105,12 +114,8 @@ jobs:
             --llama-server "$PWD/release/$PACKAGE_ROOT_NAME/bin/llama-server" \
             --state-root "$RUNNER_TEMP/$BENCHMARK_STATE_NAME" \
             --output "$PWD/lemonade-benchmark/benchmark.json" \
-            --metadata-output "$PWD/lemonade-benchmark/metadata.json" \
             --server-log "$PWD/lemonade-benchmark-debug/lemond.log" \
-            --benchmark-log "$PWD/lemonade-benchmark-debug/benchmark.log" \
-            --llama-cpp-commit "$LLAMA_CPP_COMMIT" \
-            --hrx-system-commit "$HRX_SYSTEM_COMMIT" \
-            --lemonade-commit "$LEMONADE_COMMIT"
+            --benchmark-log "$PWD/lemonade-benchmark-debug/benchmark.log"
 
       - name: Upload Lemonade benchmark
         if: ${{ success() }}
