@@ -33,3 +33,26 @@ updates:
       pip:
         patterns:
           - "*"
+
+  # Track the integration branches configured in .gitmodules. Group any
+  # available updates into a single PR so they are validated together.
+  - package-ecosystem: "gitsubmodule"
+    directory: "/"
+    target-branch: "main"
+    schedule:
+      interval: "cron"
+      cronjob: "0 */2 * * *"
+      timezone: "UTC"
+    allow:
+      - dependency-name: "hrx-system"
+      - dependency-name: "llama.cpp"
+    cooldown:
+      default-days: 7
+      exclude:
+        - "hrx-system"
+        - "llama.cpp"
+    groups:
+      integration-submodules:
+        patterns:
+          - "hrx-system"
+          - "llama.cpp"
