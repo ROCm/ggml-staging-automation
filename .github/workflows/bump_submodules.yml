@@ -1,0 +1,71 @@
+# Copyright 2026 The HRX Authors
+#
+# Licensed under the Apache License v2.0 with LLVM Exceptions.
+# See https://llvm.org/LICENSE.txt for license information.
+# SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+
+name: Bump integration submodules
+
+on:
+  schedule:
+    - cron: "0 */2 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bump-integration-submodules
+  cancel-in-progress: false
+
+jobs:
+  bump:
+    name: Update submodule pins
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify pull request token
+        # GITHUB_TOKEN-created pull requests do not trigger pull_request CI.
+        env:
+          SUBMODULE_BUMP_TOKEN: ${{ secrets.SUBMODULE_BUMP_TOKEN }}
+        run: |
+          if [[ -z "${SUBMODULE_BUMP_TOKEN}" ]]; then
+            echo "::error::SUBMODULE_BUMP_TOKEN requires Contents: Read and write and Pull requests: Read and write"
+            exit 1
+          fi
+
+      - name: Update submodules
+        run: |
+          git submodule sync -- hrx-system llama.cpp
+          git submodule update --init --remote --checkout -- hrx-system llama.cpp
+
+      - name: Create or update pull request
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+        with:
+          token: ${{ secrets.SUBMODULE_BUMP_TOKEN }}
+          add-paths: |
+            hrx-system
+            llama.cpp
+          commit-message: Bump integration submodules
+          committer: github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>
+          author: github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>
+          branch: users/automation/bump-submodules
+          delete-branch: true
+          base: main
+          title: Bump integration submodules
+          body: |
+            Automated update of the integration submodules:
+
+            - `hrx-system` to the latest commit on `main`
+            - `llama.cpp` to the latest commit on `hrx-graph-develop`
+
+            This pull request is refreshed by `.github/workflows/bump_submodules.yml`
+            and will not be merged automatically.
