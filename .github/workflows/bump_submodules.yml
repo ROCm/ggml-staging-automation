@@ -12,7 +12,8 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
+  pull-requests: write
 
 concurrency:
   group: bump-integration-submodules
@@ -32,16 +33,6 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Verify pull request token
-        # GITHUB_TOKEN-created pull requests do not trigger pull_request CI.
-        env:
-          SUBMODULE_BUMP_TOKEN: ${{ secrets.SUBMODULE_BUMP_TOKEN }}
-        run: |
-          if [[ -z "${SUBMODULE_BUMP_TOKEN}" ]]; then
-            echo "::error::SUBMODULE_BUMP_TOKEN requires Contents: Read and write and Pull requests: Read and write"
-            exit 1
-          fi
-
       - name: Update submodules
         run: |
           git submodule sync -- hrx-system llama.cpp
@@ -50,7 +41,9 @@ jobs:
       - name: Create or update pull request
         uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
         with:
-          token: ${{ secrets.SUBMODULE_BUMP_TOKEN }}
+          # A PAT triggers PR CI automatically. GITHUB_TOKEN is the fallback;
+          # close and reopen its PR to trigger CI manually.
+          token: ${{ secrets.SUBMODULE_BUMP_TOKEN || github.token }}
           add-paths: |
             hrx-system
             llama.cpp
@@ -69,3 +62,6 @@ jobs:
 
             This pull request is refreshed by `.github/workflows/bump_submodules.yml`
             and will not be merged automatically.
+
+            If CI does not start automatically, close and immediately reopen this
+            pull request to trigger it.
