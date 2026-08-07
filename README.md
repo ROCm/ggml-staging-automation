@@ -74,12 +74,6 @@ Windows support is intentionally not implemented yet. The scripts and CMake
 layout keep runtime libraries adjacent so the later Windows flow can use the
 same basic packaging model with DLL copying instead of ELF RPATHs.
 
-## CI
-
-The `CI` workflow (`.github/workflows/ci.yml`) runs on pull requests and pushes
-to `main`. It builds the release package and runs tests against the packaged
-artifacts on supported GPU platforms.
-
 ## Releases
 
 The `Release` workflow (`.github/workflows/release.yml`) runs nightly and can

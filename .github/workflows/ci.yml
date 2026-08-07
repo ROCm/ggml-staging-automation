@@ -33,15 +33,16 @@ jobs:
       build_test_package: true
       test_artifact_name: llama-cpp-linux-x86_64-tests
 
-  llama_cpp_release_tests:
-    name: Linux / HRX release tests
+  llama_cpp_release_bench:
+    name: Linux / HRX release benchmark
     needs: llama_cpp_linux
-    uses: ./.github/workflows/release_tests.yml
+    uses: ./.github/workflows/release_test_bench.yml
     permissions:
       contents: read
       actions: read
     with:
-      name: Release tests
+      name: Release benchmark
       release_artifact_name: llama-cpp-linux-x86_64
       test_artifact_name: llama-cpp-linux-x86_64-tests
       package_root_name: llama.cpp-install
+      models: Qwen3-30B-A3B-Instruct-2507-GGUF
