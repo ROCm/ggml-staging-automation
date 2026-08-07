@@ -34,15 +34,33 @@ jobs:
           persist-credentials: false
 
       - name: Update submodules
+        id: submodules
         run: |
+          hrx_from="$(git rev-parse HEAD:hrx-system)"
+          llama_from="$(git rev-parse HEAD:llama.cpp)"
+
           git submodule sync -- hrx-system llama.cpp
           git submodule update --init --remote --checkout -- hrx-system llama.cpp
+
+          hrx_to="$(git -C hrx-system rev-parse HEAD)"
+          llama_to="$(git -C llama.cpp rev-parse HEAD)"
+
+          {
+            echo "hrx_from=${hrx_from}"
+            echo "hrx_from_short=${hrx_from:0:12}"
+            echo "hrx_to=${hrx_to}"
+            echo "hrx_to_short=${hrx_to:0:12}"
+            echo "llama_from=${llama_from}"
+            echo "llama_from_short=${llama_from:0:12}"
+            echo "llama_to=${llama_to}"
+            echo "llama_to_short=${llama_to:0:12}"
+          } >> "${GITHUB_OUTPUT}"
 
       - name: Create or update pull request
         uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
         with:
-          # An explicit PAT or GitHub App token triggers PR CI automatically.
-          # GITHUB_TOKEN is the fallback; close and reopen its PR to trigger CI.
+          # A token is required to trigger PR CI automatically. GITHUB_TOKEN is
+          # the fallback; close and reopen its PR to trigger CI.
           token: ${{ secrets.SUBMODULE_BUMP_TOKEN || github.token }}
           add-paths: |
             hrx-system
@@ -57,11 +75,10 @@ jobs:
           body: |
             Automated update of the integration submodules:
 
-            - `hrx-system` to the latest commit on `main`
-            - `llama.cpp` to the latest commit on `hrx-graph-develop`
-
-            This pull request is refreshed by `.github/workflows/bump_submodules.yml`
-            and will not be merged automatically.
+            | Submodule | Branch | From | To |
+            | --- | --- | --- | --- |
+            | [`hrx-system`](https://github.com/ROCm/hrx-system) | `main` | [`${{ steps.submodules.outputs.hrx_from_short }}`](https://github.com/ROCm/hrx-system/commit/${{ steps.submodules.outputs.hrx_from }}) | [`${{ steps.submodules.outputs.hrx_to_short }}`](https://github.com/ROCm/hrx-system/commit/${{ steps.submodules.outputs.hrx_to }}) |
+            | [`llama.cpp`](https://github.com/ROCm/llama-cpp-temp-fork) | `hrx-graph-develop` | [`${{ steps.submodules.outputs.llama_from_short }}`](https://github.com/ROCm/llama-cpp-temp-fork/commit/${{ steps.submodules.outputs.llama_from }}) | [`${{ steps.submodules.outputs.llama_to_short }}`](https://github.com/ROCm/llama-cpp-temp-fork/commit/${{ steps.submodules.outputs.llama_to }}) |
 
             If CI does not start automatically, close and immediately reopen this
             pull request to trigger it.
