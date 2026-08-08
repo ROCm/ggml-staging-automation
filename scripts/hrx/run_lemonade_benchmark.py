@@ -290,6 +290,26 @@ def verify_configured_executable(
     )
 
 
+def bundled_vulkan_icd_manifest(llama_server: Path) -> Path | None:
+    """Locate the ICD manifest bundled in the llama.cpp install tree."""
+    install_root = llama_server.parent.parent
+    manifest = install_root / "share" / "vulkan" / "icd.d" / "radeon_icd.x86_64.json"
+    return manifest if manifest.is_file() else None
+
+
+def log_llama_server_devices(llama_server: Path, env: dict[str, str]) -> None:
+    """Record the devices llama-server enumerates before benchmarking."""
+    result = subprocess.run(
+        [os.fspath(llama_server), "--list-devices"],
+        env=env,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+    )
+    log(f"llama-server --list-devices (exit {result.returncode}):")
+    log(result.stdout.rstrip())
+
+
 def run(args: argparse.Namespace) -> int:
     port = 13305
     lemonade_build = args.lemonade_build_dir.resolve()
@@ -337,6 +357,19 @@ def run(args: argparse.Namespace) -> int:
                 "XDG_RUNTIME_DIR": os.fspath(runtime_dir),
             }
         )
+
+        # Use the Vulkan driver bundled in the install tree so the benchmark
+        # does not depend on a host ICD.
+        icd_manifest = bundled_vulkan_icd_manifest(llama_server)
+        if icd_manifest is not None:
+            env["VK_DRIVER_FILES"] = os.fspath(icd_manifest)
+            log(f"Using bundled Vulkan ICD manifest: {icd_manifest}")
+        else:
+            log(
+                "No bundled Vulkan ICD manifest found; relying on host Vulkan "
+                "drivers"
+            )
+        log_llama_server_devices(llama_server, env)
 
         # Run benchmarks
         for phase_index, phase in enumerate(phases):
