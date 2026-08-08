@@ -19,6 +19,7 @@ RELEASE_INSTALL_GLOBS = (
     "include/*.h",
     "lib/**/*.cmake",
     "lib/**/*.pc",
+    "share/vulkan/icd.d/*.json",
 )
 
 RELEASE_REPO_FILES = (

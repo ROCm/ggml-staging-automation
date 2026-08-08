@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
 import subprocess
@@ -29,7 +30,12 @@ BUNDLED_FILES = (
 
 VULKAN_BUNDLED_FILES = (
     "libvulkan.so.1",
+    "libvulkan_radeon.so",
+    "libdrm.so.2",
+    "libdrm_amdgpu.so.1",
 )
+
+VULKAN_ICD_MANIFEST = Path("share") / "vulkan" / "icd.d" / "radeon_icd.x86_64.json"
 
 
 def command_output(args: list[str | os.PathLike[str]]) -> str:
@@ -143,6 +149,17 @@ def validate_tree(
             raise SystemExit(
                 f"{root} resolves the Vulkan loader outside the install tree:\n  "
                 f"libvulkan.so.1 => {vulkan_loader}"
+            )
+        manifest_path = root / VULKAN_ICD_MANIFEST
+        if not manifest_path.exists():
+            raise SystemExit(f"Missing bundled Vulkan ICD manifest: {manifest_path}")
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        library_path = manifest["ICD"]["library_path"]
+        driver = (manifest_path.parent / library_path).resolve()
+        if not driver.exists() or not is_under(driver, root):
+            raise SystemExit(
+                f"{manifest_path} does not resolve to a bundled Vulkan driver:\n  "
+                f"library_path {library_path} => {driver}"
             )
 
     escaped = rocm_root.resolve()

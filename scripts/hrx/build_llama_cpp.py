@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import shutil
 from pathlib import Path
@@ -50,24 +51,51 @@ def vulkan_cmake_args(vulkan_sdk_dir: Path) -> list[str]:
     ]
 
 
-def copy_vulkan_loader(vulkan_sdk_dir: Path, dest_dir: Path) -> None:
+VULKAN_RUNTIME_GLOBS = (
+    # Vulkan loader
+    "libvulkan.so*",
+    # RADV driver and its libdrm dependencies; the loader discovers the driver
+    # through the bundled ICD manifest (VK_DRIVER_FILES).
+    "libvulkan_radeon.so",
+    "libdrm.so*",
+    "libdrm_amdgpu.so*",
+)
+
+VULKAN_ICD_MANIFEST = Path("share") / "vulkan" / "icd.d" / "radeon_icd.x86_64.json"
+
+
+def copy_vulkan_runtime(vulkan_sdk_dir: Path, dest_dir: Path) -> None:
     lib_dir = vulkan_sdk_dir / "lib"
-    required_loader = lib_dir / "libvulkan.so.1"
-    if not required_loader.exists():
-        raise SystemExit(f"Missing Vulkan loader: {required_loader}")
+    for required in ("libvulkan.so.1", "libvulkan_radeon.so", "libdrm_amdgpu.so.1"):
+        if not (lib_dir / required).exists():
+            raise SystemExit(f"Missing Vulkan runtime library: {lib_dir / required}")
 
     dest_dir.mkdir(parents=True, exist_ok=True)
-    for source in sorted(lib_dir.glob("libvulkan.so*")):
-        dest = dest_dir / source.name
-        if dest.exists() or dest.is_symlink():
-            remove_tree(dest)
-        shutil.copy2(source, dest, follow_symlinks=False)
+    for pattern in VULKAN_RUNTIME_GLOBS:
+        for source in sorted(lib_dir.glob(pattern)):
+            dest = dest_dir / source.name
+            if dest.exists() or dest.is_symlink():
+                remove_tree(dest)
+            shutil.copy2(source, dest, follow_symlinks=False)
+
+
+def write_vulkan_icd_manifest(vulkan_sdk_dir: Path, install_dir: Path) -> None:
+    """Write an ICD manifest whose library_path resolves inside the install tree."""
+    sdk_manifest = vulkan_sdk_dir / VULKAN_ICD_MANIFEST
+    if not sdk_manifest.exists():
+        raise SystemExit(f"Missing Vulkan ICD manifest: {sdk_manifest}")
+    manifest = json.loads(sdk_manifest.read_text(encoding="utf-8"))
+    # Relative library paths are resolved against the manifest's directory.
+    manifest["ICD"]["library_path"] = "../../../lib/libvulkan_radeon.so"
+    dest = install_dir / VULKAN_ICD_MANIFEST
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text(json.dumps(manifest, indent=4) + "\n", encoding="utf-8")
 
 
 def remove_vulkan_artifacts(dest_dir: Path) -> None:
     if not dest_dir.exists():
         return
-    for pattern in ("libvulkan.so*", "libggml-vulkan.so*"):
+    for pattern in (*VULKAN_RUNTIME_GLOBS, "libggml-vulkan.so*"):
         for dest in dest_dir.glob(pattern):
             remove_tree(dest)
 
@@ -147,7 +175,7 @@ def build_llama_cpp(
     if vulkan_sdk_dir is not None:
         # llama.cpp globally configures cmake to put .so files under bin in the
         # build directory. During install it uses a more standard lib layout.
-        copy_vulkan_loader(vulkan_sdk_dir, build_dir / "bin")
+        copy_vulkan_runtime(vulkan_sdk_dir, build_dir / "bin")
     else:
         remove_vulkan_artifacts(build_dir / "bin")
     if install:
@@ -164,7 +192,8 @@ def build_llama_cpp(
             env=env,
         )
         if vulkan_sdk_dir is not None:
-            copy_vulkan_loader(vulkan_sdk_dir, install_dir / "lib")
+            copy_vulkan_runtime(vulkan_sdk_dir, install_dir / "lib")
+            write_vulkan_icd_manifest(vulkan_sdk_dir, install_dir)
 
 
 def main() -> int:
