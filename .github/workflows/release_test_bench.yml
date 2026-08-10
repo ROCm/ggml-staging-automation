@@ -49,13 +49,12 @@ jobs:
           #   runs_on: linux-gfx120X-gpu-rocm
     runs-on: ${{ matrix.runs_on }}
     timeout-minutes: 120
-    # ROCm-less test image; the job installs the Vulkan driver below and the
-    # release package bundles the ROCm userspace runtime. The kernel drivers
-    # come from the host via the device mappings.
     container:
       image: ghcr.io/rocm/no_rocm_image_ubuntu24_04@sha256:f6741eb54c20d3219bdcd25742dbaa2c6b14394253671bf018be89b324b31a48
-      # The image defaults to the unprivileged tester user, which cannot write
-      # the runner-owned workspace mounts.
+      # The image defaults to the unprivileged tester user (uid 1001). The
+      # runner pre-creates its per-step state files (GITHUB_OUTPUT etc.) and
+      # the workspace on the host as the host runner user, so a mismatched
+      # container uid gets EACCES writing them; root bypasses that.
       options: >-
         --user root
         --device /dev/kfd
