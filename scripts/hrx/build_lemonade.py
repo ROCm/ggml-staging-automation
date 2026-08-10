@@ -33,6 +33,10 @@ def main() -> int:
 
     setup_env = dict(os.environ)
     setup_env["LEMONADE_SKIP_FRONTEND_DEPS"] = "1"
+    # setup.sh only installs missing dependencies non-interactively when it
+    # detects CI; the variable is not always propagated into containerized
+    # runner steps.
+    setup_env["CI"] = "1"
     run(["./setup.sh"], cwd=source_dir, env=setup_env)
 
     run(
