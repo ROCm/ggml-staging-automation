@@ -52,9 +52,10 @@ jobs:
     container:
       image: ghcr.io/rocm/no_rocm_image_ubuntu24_04@sha256:f6741eb54c20d3219bdcd25742dbaa2c6b14394253671bf018be89b324b31a48
       # The image defaults to the unprivileged tester user (uid 1001). The
-      # runner pre-creates its per-step state files (GITHUB_OUTPUT etc.) and
-      # the workspace on the host as the host runner user, so a mismatched
-      # container uid gets EACCES writing them; root bypasses that.
+      # runner pre-creates its per-step state files (GITHUB_OUTPUT etc.) and the
+      # workspace on the host as the host runner user, so a mismatched container
+      # uid gets EACCES writing them. Runners from different fleets have been
+      # observed to have different host UIDs; root bypasses that.
       options: >-
         --user root
         --device /dev/kfd
@@ -62,8 +63,7 @@ jobs:
         --ipc=host
         --group-add video
         --group-add render
-    # The runner defaults container job steps to sh; several steps use bash
-    # features (pipefail, read -a).
+    # The runner defaults container job steps to sh.
     defaults:
       run:
         shell: bash
@@ -88,7 +88,7 @@ jobs:
           persist-credentials: false
 
       - name: Adjust git config
-        # The container step user does not necessarily match the checkout
+        # actions/checkout The container step user does not necessarily match the checkout
         # owner; without this git rev-parse fails with dubious ownership.
         run: |
           git config --global --add safe.directory "$PWD"
