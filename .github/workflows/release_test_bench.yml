@@ -53,6 +53,13 @@ jobs:
       BENCHMARK_ARTIFACT_NAME: lemonade-bench-${{ matrix.gpu_target }}
       BENCHMARK_STATE_NAME: lemonade-bench-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.gpu_target }}
     steps:
+      - name: Install Vulkan driver
+        # llama.cpp bundles the Vulkan loader but discovers the GPU through
+        # the host ICD, so the runner must provide one.
+        run: |
+          sudo -n apt-get update
+          sudo -n apt-get install -y --no-install-recommends mesa-vulkan-drivers
+
       - name: Checkout automation repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -70,9 +77,12 @@ jobs:
         id: sources
         run: |
           set -euo pipefail
-          echo "llama_cpp=$(git rev-parse HEAD:llama.cpp)" >> "$GITHUB_OUTPUT"
-          echo "hrx_system=$(git rev-parse HEAD:hrx-system)" >> "$GITHUB_OUTPUT"
-          echo "lemonade=$(git -C lemonade-source rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          llama_cpp=$(git rev-parse HEAD:llama.cpp)
+          hrx_system=$(git rev-parse HEAD:hrx-system)
+          lemonade=$(git -C lemonade-source rev-parse HEAD)
+          echo "llama_cpp=$llama_cpp" >> "$GITHUB_OUTPUT"
+          echo "hrx_system=$hrx_system" >> "$GITHUB_OUTPUT"
+          echo "lemonade=$lemonade" >> "$GITHUB_OUTPUT"
 
       - name: Download llama.cpp release package
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1

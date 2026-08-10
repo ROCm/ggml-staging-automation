@@ -290,6 +290,19 @@ def verify_configured_executable(
     )
 
 
+def log_llama_server_devices(llama_server: Path, env: dict[str, str]) -> None:
+    """Record the devices llama-server enumerates before benchmarking."""
+    result = subprocess.run(
+        [os.fspath(llama_server), "--list-devices"],
+        env=env,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+    )
+    log(f"llama-server --list-devices (exit {result.returncode}):")
+    log(result.stdout.rstrip())
+
+
 def run(args: argparse.Namespace) -> int:
     port = 13305
     lemonade_build = args.lemonade_build_dir.resolve()
@@ -337,6 +350,8 @@ def run(args: argparse.Namespace) -> int:
                 "XDG_RUNTIME_DIR": os.fspath(runtime_dir),
             }
         )
+
+        log_llama_server_devices(llama_server, env)
 
         # Run benchmarks
         for phase_index, phase in enumerate(phases):
