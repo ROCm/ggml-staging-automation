@@ -60,6 +60,11 @@ jobs:
         --ipc=host
         --group-add video
         --group-add render
+    # The runner defaults container job steps to sh; several steps use bash
+    # features (pipefail, read -a).
+    defaults:
+      run:
+        shell: bash
     env:
       BENCHMARK_ARTIFACT_NAME: lemonade-bench-${{ matrix.gpu_target }}
       BENCHMARK_STATE_NAME: lemonade-bench-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.gpu_target }}
