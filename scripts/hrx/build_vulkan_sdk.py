@@ -22,10 +22,6 @@ VULKAN_LOADER_REPO = "https://github.com/KhronosGroup/Vulkan-Loader.git"
 VULKAN_LOADER_TAG = "v1.3.296"
 SHADERC_REPO = "https://github.com/google/shaderc.git"
 SHADERC_TAG = "v2024.3"
-LIBDRM_REPO = "https://gitlab.freedesktop.org/mesa/drm.git"
-LIBDRM_TAG = "libdrm-2.4.124"
-MESA_REPO = "https://gitlab.freedesktop.org/mesa/mesa.git"
-MESA_TAG = "mesa-25.1.5"
 
 
 def run(
@@ -110,120 +106,6 @@ def build_spirv_headers(source_dir: Path, build_dir: Path, install_dir: Path) ->
     run(["cmake", "--build", build_dir, "--target", "install"])
 
 
-def build_glslang_standalone(source_dir: Path, build_dir: Path, install_dir: Path) -> None:
-    """Build the glslangValidator binary Mesa needs to compile driver shaders."""
-    cmake_configure(
-        source_dir,
-        build_dir,
-        install_dir,
-        "-DENABLE_OPT=OFF",
-        "-DENABLE_HLSL=OFF",
-        "-DBUILD_EXTERNAL=OFF",
-        "-DGLSLANG_TESTS=OFF",
-        "-DBUILD_SHARED_LIBS=OFF",
-    )
-    run(["cmake", "--build", build_dir, "--target", "glslang-standalone"])
-    glslang = build_dir / "StandAlone" / "glslang"
-    if not glslang.exists():
-        raise SystemExit(f"glslang build did not produce standalone binary: {glslang}")
-    bin_dir = install_dir / "bin"
-    bin_dir.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(glslang, bin_dir / "glslangValidator")
-
-
-def meson_executable() -> str:
-    meson = shutil.which("meson")
-    if meson is None:
-        raise SystemExit("meson is required to build libdrm and Mesa RADV")
-    return meson
-
-
-def meson_install(
-    source_dir: Path,
-    build_dir: Path,
-    install_dir: Path,
-    *extra_args: str,
-) -> None:
-    meson = meson_executable()
-    env = dict(os.environ)
-    env["PKG_CONFIG_PATH"] = os.pathsep.join(
-        [
-            os.fspath(install_dir / "lib" / "pkgconfig"),
-            env.get("PKG_CONFIG_PATH", ""),
-        ]
-    ).rstrip(os.pathsep)
-    env["PATH"] = os.pathsep.join([os.fspath(install_dir / "bin"), env["PATH"]])
-    reconfigure = ["--reconfigure"] if (build_dir / "meson-private").exists() else []
-    run(
-        [
-            meson,
-            "setup",
-            *reconfigure,
-            build_dir,
-            source_dir,
-            "--prefix",
-            install_dir,
-            "--libdir",
-            "lib",
-            "--buildtype",
-            "release",
-            # Resolve bundled dependencies (libdrm) from the same directory
-            # when these libraries are shipped inside the llama.cpp install
-            # tree.
-            "-Dc_link_args=-Wl,-rpath,$ORIGIN",
-            *extra_args,
-        ],
-        env=env,
-    )
-    run([meson, "install", "-C", build_dir], env=env)
-
-
-def build_libdrm(source_dir: Path, build_dir: Path, install_dir: Path) -> None:
-    meson_install(
-        source_dir,
-        build_dir,
-        install_dir,
-        "-Damdgpu=enabled",
-        "-Dradeon=disabled",
-        "-Dintel=disabled",
-        "-Dnouveau=disabled",
-        "-Dvmwgfx=disabled",
-        "-Dfreedreno=disabled",
-        "-Dvc4=disabled",
-        "-Detnaviv=disabled",
-        "-Dexynos=disabled",
-        "-Domap=disabled",
-        "-Dtegra=disabled",
-        "-Dcairo-tests=disabled",
-        "-Dman-pages=disabled",
-        "-Dvalgrind=disabled",
-        "-Dtests=false",
-        "-Dudev=false",
-    )
-
-
-def build_mesa_radv(source_dir: Path, build_dir: Path, install_dir: Path) -> None:
-    """Build only the RADV Vulkan driver, without X11/Wayland or LLVM."""
-    meson_install(
-        source_dir,
-        build_dir,
-        install_dir,
-        "-Dcpp_link_args=-Wl,-rpath,$ORIGIN",
-        "-Dvulkan-drivers=amd",
-        "-Dgallium-drivers=",
-        "-Dplatforms=",
-        "-Dglx=disabled",
-        "-Degl=disabled",
-        "-Dgbm=disabled",
-        "-Dllvm=disabled",
-        "-Dzstd=disabled",
-        "-Dtools=",
-        "-Dbuild-tests=false",
-        "-Dvalgrind=disabled",
-        "-Dlibunwind=disabled",
-    )
-
-
 def build_glslc(source_dir: Path, build_dir: Path, install_dir: Path) -> None:
     cmake_configure(
         source_dir,
@@ -271,14 +153,10 @@ def main() -> int:
     headers_src = source_dir / "Vulkan-Headers"
     loader_src = source_dir / "Vulkan-Loader"
     shaderc_src = source_dir / "shaderc"
-    libdrm_src = source_dir / "drm"
-    mesa_src = source_dir / "mesa"
 
     clone_or_update(VULKAN_HEADERS_REPO, VULKAN_HEADERS_TAG, headers_src)
     clone_or_update(VULKAN_LOADER_REPO, VULKAN_LOADER_TAG, loader_src)
     clone_or_update(SHADERC_REPO, SHADERC_TAG, shaderc_src)
-    clone_or_update(LIBDRM_REPO, LIBDRM_TAG, libdrm_src)
-    clone_or_update(MESA_REPO, MESA_TAG, mesa_src)
     sync_shaderc_deps(shaderc_src)
 
     build_vulkan_headers(headers_src, build_dir / "Vulkan-Headers", install_dir)
@@ -289,13 +167,6 @@ def main() -> int:
         install_dir,
     )
     build_glslc(shaderc_src, build_dir / "shaderc", install_dir)
-    build_glslang_standalone(
-        shaderc_src / "third_party" / "glslang",
-        build_dir / "glslang",
-        install_dir,
-    )
-    build_libdrm(libdrm_src, build_dir / "drm", install_dir)
-    build_mesa_radv(mesa_src, build_dir / "mesa", install_dir)
 
     spirv_headers_dir = install_dir / "share" / "cmake" / "SPIRV-Headers"
     required = [
@@ -304,10 +175,6 @@ def main() -> int:
         install_dir / "bin" / "glslc",
         install_dir / "lib" / "libvulkan.so",
         install_dir / "lib" / "libvulkan.so.1",
-        install_dir / "lib" / "libdrm.so.2",
-        install_dir / "lib" / "libdrm_amdgpu.so.1",
-        install_dir / "lib" / "libvulkan_radeon.so",
-        install_dir / "share" / "vulkan" / "icd.d" / "radeon_icd.x86_64.json",
         spirv_headers_dir / "SPIRV-HeadersConfig.cmake",
     ]
     missing = [path for path in required if not path.exists()]
