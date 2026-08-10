@@ -49,30 +49,21 @@ jobs:
           #   runs_on: linux-gfx120X-gpu-rocm
     runs-on: ${{ matrix.runs_on }}
     timeout-minutes: 120
-    container:
-      image: ghcr.io/rocm/no_rocm_image_ubuntu24_04@sha256:f6741eb54c20d3219bdcd25742dbaa2c6b14394253671bf018be89b324b31a48
-      # The image defaults to the unprivileged tester user (uid 1001). The
-      # runner pre-creates its per-step state files (GITHUB_OUTPUT etc.) and the
-      # workspace on the host as the host runner user, so a mismatched container
-      # uid gets EACCES writing them. Runners from different fleets have been
-      # observed to have different host UIDs; root bypasses that.
-      options: >-
-        --user root
-        --device /dev/kfd
-        --device /dev/dri
-        --ipc=host
-        --group-add video
-        --group-add render
-    # The runner defaults container job steps to sh.
-    defaults:
-      run:
-        shell: bash
     env:
       BENCHMARK_ARTIFACT_NAME: lemonade-bench-${{ matrix.gpu_target }}
       BENCHMARK_STATE_NAME: lemonade-bench-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.gpu_target }}
     steps:
       - name: Install Vulkan driver
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends mesa-vulkan-drivers
+        # llama.cpp bundles the Vulkan loader but discovers the GPU through
+        # the host ICD, so the runner must provide one.
+        run: |
+          set -euo pipefail
+          SUDO=""
+          if [ "$(id -u)" -ne 0 ]; then
+            SUDO="sudo -n"
+          fi
+          $SUDO apt-get update
+          $SUDO apt-get install -y --no-install-recommends mesa-vulkan-drivers
 
       - name: Checkout automation repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -86,13 +77,6 @@ jobs:
           ref: hrx-integration
           path: lemonade-source
           persist-credentials: false
-
-      - name: Adjust git config
-        # actions/checkout The container step user does not necessarily match the checkout
-        # owner; without this git rev-parse fails with dubious ownership.
-        run: |
-          git config --global --add safe.directory "$PWD"
-          git config --global --add safe.directory "$PWD/lemonade-source"
 
       - name: Record source commits
         id: sources
