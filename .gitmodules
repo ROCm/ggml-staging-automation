@@ -4,5 +4,5 @@
 	branch = main
 [submodule "llama.cpp"]
 	path = llama.cpp
-	url = https://github.com/ROCm/llama-cpp-temp-fork.git
-	branch = hrx-graph-develop
+	url = https://github.com/AaronStGeorge/llama.cpp.git
+	branch = users/astgeorg/fix-launch-config-api
