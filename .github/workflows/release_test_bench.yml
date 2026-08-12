@@ -138,12 +138,50 @@ jobs:
             --vulkan-response-log "$PWD/lemonade-benchmark-debug/responses-vulkan.jsonl" \
             --models "${models[@]}"
 
-      - name: Write Lemonade benchmark report
+      - name: Find latest main benchmark
+        id: main_benchmark
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
-          python3 scripts/hrx/write_lemonade_benchmark_report.py \
+          python3 build_tools/github_actions/find_main_benchmark.py \
+            --repository "$GITHUB_REPOSITORY" \
+            --workflow ci.yml \
+            --branch main \
+            --artifact "$BENCHMARK_ARTIFACT_NAME"
+
+      - name: Download latest main benchmark
+        id: download_main_benchmark
+        if: ${{ steps.main_benchmark.outputs.artifact_id != '' }}
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ steps.main_benchmark.outputs.artifact_id }}
+          path: ${{ runner.temp }}/lemonade-main-benchmark-${{ matrix.gpu_target }}
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ steps.main_benchmark.outputs.run_id }}
+
+      - name: Write Lemonade benchmark report
+        env:
+          BASELINE_BENCHMARK_DIR: ${{ runner.temp }}/lemonade-main-benchmark-${{ matrix.gpu_target }}
+          BASELINE_DOWNLOAD_OUTCOME: ${{ steps.download_main_benchmark.outcome }}
+          BASELINE_RUN_URL: ${{ steps.main_benchmark.outputs.run_url }}
+        run: |
+          set -euo pipefail
+          report_args=(
             "$PWD/lemonade-benchmark/benchmark-hrx.json" \
-            "$PWD/lemonade-benchmark/benchmark-vulkan.json" \
-            >> "$GITHUB_STEP_SUMMARY"
+            "$PWD/lemonade-benchmark/benchmark-vulkan.json"
+          )
+          if [[ "$BASELINE_DOWNLOAD_OUTCOME" == "success" ]]; then
+            report_args+=(
+              --baseline-hrx-benchmark "$BASELINE_BENCHMARK_DIR/benchmark-hrx.json"
+              --baseline-vulkan-benchmark "$BASELINE_BENCHMARK_DIR/benchmark-vulkan.json"
+              --baseline-run-url "$BASELINE_RUN_URL"
+            )
+          fi
+          python3 scripts/hrx/write_lemonade_benchmark_report.py \
+            "${report_args[@]}" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload Lemonade benchmark
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

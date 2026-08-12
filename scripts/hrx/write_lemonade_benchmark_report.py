@@ -16,6 +16,9 @@ from typing import Any
 Benchmark = dict[str, Any]
 ComparisonKey = tuple[str, str, int, str, str]
 ComparisonMatch = tuple[ComparisonKey, Benchmark, Benchmark]
+BASELINE_UNAVAILABLE_MESSAGE = (
+    "No usable main benchmark artifact is available for comparison."
+)
 
 
 class BenchmarkReportError(RuntimeError):
@@ -69,41 +72,46 @@ def index_scenarios(
 
 
 def match_scenarios(
-    hrx_benchmark: Benchmark, vulkan_benchmark: Benchmark
+    left_benchmark: Benchmark,
+    right_benchmark: Benchmark,
+    *,
+    left_backend_label: str = "HRX",
+    right_backend_label: str = "Vulkan",
 ) -> list[ComparisonMatch]:
-    """Match HRX and Vulkan scenarios and enforce comparison integrity."""
-    hrx_scenarios = index_scenarios(hrx_benchmark, "HRX")
-    vulkan_scenarios = index_scenarios(vulkan_benchmark, "Vulkan")
+    """Match two benchmark result sets and enforce comparison integrity."""
+    left_scenarios = index_scenarios(left_benchmark, left_backend_label)
+    right_scenarios = index_scenarios(right_benchmark, right_backend_label)
 
-    missing_vulkan = [key for key in hrx_scenarios if key not in vulkan_scenarios]
-    missing_hrx = [key for key in vulkan_scenarios if key not in hrx_scenarios]
-    if missing_vulkan or missing_hrx:
+    missing_right = [key for key in left_scenarios if key not in right_scenarios]
+    missing_left = [key for key in right_scenarios if key not in left_scenarios]
+    if missing_right or missing_left:
         details = []
-        if missing_vulkan:
+        if missing_right:
             details.append(
-                "missing from Vulkan: "
-                + "; ".join(describe_key(key) for key in missing_vulkan)
+                f"missing from {right_backend_label}: "
+                + "; ".join(describe_key(key) for key in missing_right)
             )
-        if missing_hrx:
+        if missing_left:
             details.append(
-                "missing from HRX: "
-                + "; ".join(describe_key(key) for key in missing_hrx)
+                f"missing from {left_backend_label}: "
+                + "; ".join(describe_key(key) for key in missing_left)
             )
         raise BenchmarkReportError(
             "Benchmark counterparts do not match: " + " | ".join(details)
         )
 
     matches: list[ComparisonMatch] = []
-    for key, hrx_scenario in hrx_scenarios.items():
-        vulkan_scenario = vulkan_scenarios[key]
-        hrx_tokens = hrx_scenario["output_tokens"]
-        vulkan_tokens = vulkan_scenario["output_tokens"]
-        if hrx_tokens != vulkan_tokens:
+    for key, left_scenario in left_scenarios.items():
+        right_scenario = right_scenarios[key]
+        left_tokens = left_scenario["output_tokens"]
+        right_tokens = right_scenario["output_tokens"]
+        if left_tokens != right_tokens:
             raise BenchmarkReportError(
                 f"Output-token count mismatch for {describe_key(key)}: "
-                f"HRX={hrx_tokens}, Vulkan={vulkan_tokens}"
+                f"{left_backend_label}={left_tokens}, "
+                f"{right_backend_label}={right_tokens}"
             )
-        matches.append((key, hrx_scenario, vulkan_scenario))
+        matches.append((key, left_scenario, right_scenario))
     return matches
 
 
@@ -159,19 +167,26 @@ def format_backend_table(benchmark: Benchmark, backend_name: str) -> str:
     return "\n".join(lines).rstrip()
 
 
-def format_tps_parity(hrx_tps: float, vulkan_tps: float) -> str:
-    """Express HRX mean TPS as a percentage of Vulkan mean TPS."""
-    if vulkan_tps == 0:
+def format_tps_parity(left_tps: float, right_tps: float) -> str:
+    """Express the left mean TPS as a percentage of the right mean TPS."""
+    if right_tps == 0:
         return "N/A"
-    return f"{hrx_tps / vulkan_tps * 100:.1f}%"
+    return f"{left_tps / right_tps * 100:.1f}%"
 
 
-def format_comparison_table(matches: Sequence[ComparisonMatch]) -> str:
+def format_comparison_table(
+    matches: Sequence[ComparisonMatch],
+    *,
+    title: str = "Lemonade HRX/Vulkan comparison",
+    left_backend_label: str = "HRX",
+    right_backend_label: str = "Vulkan",
+) -> str:
     """Format already-matched results without performing I/O or validation."""
     lines = [
-        "## Lemonade HRX/Vulkan comparison",
+        f"## {title}",
         "",
-        "TPS parity is HRX mean TPS as a percentage of Vulkan mean TPS.",
+        f"TPS parity is {left_backend_label} mean TPS as a percentage of "
+        f"{right_backend_label} mean TPS.",
         "",
     ]
     previous_model: str | None = None
@@ -194,9 +209,12 @@ def format_comparison_table(matches: Sequence[ComparisonMatch]) -> str:
                     f"**Context:** {format_code(context)} tokens · "
                     f"**Backend arguments:** {arguments}",
                     "",
-                    "| Scenario | Output tokens | HRX TPS mean | Vulkan TPS mean | "
-                    "TPS parity | HRX TTFT mean (ms) | Vulkan TTFT mean (ms) | "
-                    "HRX VRAM peak (GB) | Vulkan VRAM peak (GB) |",
+                    f"| Scenario | Output tokens | {left_backend_label} TPS mean | "
+                    f"{right_backend_label} TPS mean | TPS parity | "
+                    f"{left_backend_label} TTFT mean (ms) | "
+                    f"{right_backend_label} TTFT mean (ms) | "
+                    f"{left_backend_label} VRAM peak (GB) | "
+                    f"{right_backend_label} VRAM peak (GB) |",
                     "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
                 ]
             )
@@ -217,6 +235,51 @@ def format_comparison_table(matches: Sequence[ComparisonMatch]) -> str:
     return "\n".join(lines).rstrip()
 
 
+def format_main_comparisons(
+    current_hrx_benchmark: Benchmark,
+    current_vulkan_benchmark: Benchmark,
+    main_hrx_benchmark: Benchmark,
+    main_vulkan_benchmark: Benchmark,
+    baseline_run_url: str | None = None,
+) -> str:
+    """Format both current-versus-main comparisons atomically."""
+    hrx_matches = match_scenarios(
+        current_hrx_benchmark,
+        main_hrx_benchmark,
+        left_backend_label="Current HRX",
+        right_backend_label="Main HRX",
+    )
+    vulkan_matches = match_scenarios(
+        current_vulkan_benchmark,
+        main_vulkan_benchmark,
+        left_backend_label="Current Vulkan",
+        right_backend_label="Main Vulkan",
+    )
+
+    sections = []
+    if baseline_run_url:
+        sections.append(
+            f"Main benchmark baseline: [CI run on `main`]({baseline_run_url})"
+        )
+    sections.extend(
+        (
+            format_comparison_table(
+                hrx_matches,
+                title="Lemonade current HRX/main HRX comparison",
+                left_backend_label="Current HRX",
+                right_backend_label="Main HRX",
+            ),
+            format_comparison_table(
+                vulkan_matches,
+                title="Lemonade current Vulkan/main Vulkan comparison",
+                left_backend_label="Current Vulkan",
+                right_backend_label="Main Vulkan",
+            ),
+        )
+    )
+    return "\n\n".join(sections)
+
+
 def format_report(hrx_benchmark: Benchmark, vulkan_benchmark: Benchmark) -> str:
     """Match benchmark data, then format all three report sections."""
     matches = match_scenarios(hrx_benchmark, vulkan_benchmark)
@@ -233,6 +296,9 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("hrx_benchmark", type=Path)
     parser.add_argument("vulkan_benchmark", type=Path)
+    parser.add_argument("--baseline-hrx-benchmark", type=Path)
+    parser.add_argument("--baseline-vulkan-benchmark", type=Path)
+    parser.add_argument("--baseline-run-url")
     args = parser.parse_args()
 
     try:
@@ -243,11 +309,52 @@ def main() -> int:
         OSError,
         json.JSONDecodeError,
         BenchmarkReportError,
+        IndexError,
         KeyError,
+        OverflowError,
         TypeError,
+        ValueError,
     ) as exc:
         print(f"Could not write Lemonade benchmark report: {exc}", file=sys.stderr)
         return 1
+
+    baseline_paths = (
+        args.baseline_hrx_benchmark,
+        args.baseline_vulkan_benchmark,
+    )
+    if all(path is not None for path in baseline_paths):
+        try:
+            main_hrx_benchmark = load_benchmark(args.baseline_hrx_benchmark)
+            main_vulkan_benchmark = load_benchmark(args.baseline_vulkan_benchmark)
+            main_comparisons = format_main_comparisons(
+                hrx_benchmark,
+                vulkan_benchmark,
+                main_hrx_benchmark,
+                main_vulkan_benchmark,
+                args.baseline_run_url,
+            )
+        except (
+            OSError,
+            json.JSONDecodeError,
+            BenchmarkReportError,
+            IndexError,
+            KeyError,
+            OverflowError,
+            TypeError,
+            ValueError,
+        ) as exc:
+            print(f"Could not compare with main benchmark: {exc}", file=sys.stderr)
+            report = f"{report}\n\n{BASELINE_UNAVAILABLE_MESSAGE}"
+        else:
+            report = f"{report}\n\n{main_comparisons}"
+    else:
+        if any(path is not None for path in baseline_paths):
+            print(
+                "Could not compare with main benchmark: both baseline benchmark "
+                "paths are required",
+                file=sys.stderr,
+            )
+        report = f"{report}\n\n{BASELINE_UNAVAILABLE_MESSAGE}"
 
     print(report)
     return 0
