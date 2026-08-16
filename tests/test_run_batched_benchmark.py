@@ -287,6 +287,39 @@ class ValidationAndPlanningTest(unittest.TestCase):
                         model, urlopen=lambda *_args, response=response, **_kwargs: response
                     )
 
+    def test_remote_validation_retries_transient_metadata_failure(self) -> None:
+        model = make_model("model-a", b"payload", 0)
+        payload = json.dumps(
+            {
+                "sha": model.revision,
+                "siblings": [
+                    {
+                        "rfilename": model.filename,
+                        "lfs": {
+                            "size": model.size_bytes,
+                            "sha256": model.sha256,
+                        },
+                    }
+                ],
+            }
+        ).encode("utf-8")
+        calls = 0
+
+        def urlopen(*_args: object, **_kwargs: object) -> FakeResponse:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise OSError("transient metadata failure")
+            return FakeResponse(payload)
+
+        batcher.validate_remote_model(
+            model,
+            urlopen=urlopen,
+            attempts=2,
+            retry_delay=0,
+        )
+        self.assertEqual(calls, 2)
+
 
 class DownloadTest(unittest.TestCase):
     def test_fresh_download_has_no_range_and_is_published_atomically(self) -> None:

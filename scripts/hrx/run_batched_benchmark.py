@@ -30,6 +30,7 @@ from typing import Any, Callable
 GIB = 1024**3
 RESERVED_BYTES = 2 * GIB
 MAX_CONCURRENT_DOWNLOADS = 2
+REMOTE_VALIDATION_ATTEMPTS = 3
 DOWNLOAD_ATTEMPTS = 3
 HF_BASE_URL = "https://huggingface.co"
 
@@ -363,6 +364,8 @@ def validate_remote_model(
     *,
     urlopen: Callable[..., Any] | None = None,
     timeout: float = 30.0,
+    attempts: int = REMOTE_VALIDATION_ATTEMPTS,
+    retry_delay: float = 1.0,
 ) -> None:
     """Validate the immutable revision and LFS identity before downloading."""
     opener = urlopen or urllib.request.urlopen
@@ -370,13 +373,23 @@ def validate_remote_model(
         model.api_url,
         headers={"Accept": "application/json", "User-Agent": "hrx-benchmark/1"},
     )
-    try:
-        with opener(request, timeout=timeout) as response:
-            payload = response.read()
-    except (OSError, http.client.HTTPException) as exc:
-        raise RemoteValidationError(
-            f"Could not read pinned metadata for {model.id}: {exc}"
-        ) from exc
+    for attempt in range(1, attempts + 1):
+        try:
+            with opener(request, timeout=timeout) as response:
+                payload = response.read()
+        except (OSError, http.client.HTTPException) as exc:
+            if attempt == attempts:
+                raise RemoteValidationError(
+                    f"Could not read pinned metadata for {model.id}: {exc}"
+                ) from exc
+            log(
+                f"Remote validation attempt {attempt}/{attempts} failed for "
+                f"{model.id}: {exc}; retrying"
+            )
+            if retry_delay:
+                time.sleep(retry_delay * attempt)
+        else:
+            break
     try:
         data = json.loads(payload.decode("utf-8"))
     except (UnicodeError, json.JSONDecodeError) as exc:
