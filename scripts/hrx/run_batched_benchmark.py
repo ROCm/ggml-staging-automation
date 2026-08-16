@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import http.client
 import json
 import math
 import os
@@ -372,10 +373,15 @@ def validate_remote_model(
     try:
         with opener(request, timeout=timeout) as response:
             payload = response.read()
-        data = json.loads(payload.decode("utf-8"))
-    except Exception as exc:
+    except (OSError, http.client.HTTPException) as exc:
         raise RemoteValidationError(
             f"Could not read pinned metadata for {model.id}: {exc}"
+        ) from exc
+    try:
+        data = json.loads(payload.decode("utf-8"))
+    except (UnicodeError, json.JSONDecodeError) as exc:
+        raise RemoteValidationError(
+            f"Could not parse pinned metadata for {model.id}: {exc}"
         ) from exc
 
     if not isinstance(data, dict) or data.get("sha") != model.revision:
@@ -427,18 +433,16 @@ def validate_remote_models(
     models: list[ModelSpec],
 ) -> tuple[list[ModelSpec], list[dict[str, Any]]]:
     """Validate all selected identities before allowing the first download."""
-    if not models:
-        return [], []
     with ThreadPoolExecutor(
         max_workers=min(MAX_CONCURRENT_DOWNLOADS, len(models))
     ) as executor:
         futures = [executor.submit(validate_remote_model, model) for model in models]
         valid: list[ModelSpec] = []
         failures: list[dict[str, Any]] = []
-        for model, future in zip(models, futures, strict=True):
+        for model, future in zip(models, futures):
             try:
                 future.result()
-            except Exception as exc:
+            except RemoteValidationError as exc:
                 log(f"Remote validation failed for {model.id}: {exc}")
                 failures.append(
                     _failure("remote validation", str(exc), model=model.id)
@@ -459,15 +463,11 @@ def calculate_batch_capacity(max_disk_gib: float, free_bytes: int) -> int:
             f"Only {free_bytes} bytes are free; {RESERVED_BYTES} bytes are reserved"
         )
     capacity = min(maximum_bytes - RESERVED_BYTES, free_bytes - RESERVED_BYTES)
-    if capacity <= 0:
-        raise DiskPlanError("No disk capacity remains after the 2 GiB reserve")
     return capacity
 
 
 def plan_batches(models: list[ModelSpec], capacity_bytes: int) -> list[list[ModelSpec]]:
     """Plan deterministic next-fit batches in descending model-size order."""
-    if capacity_bytes <= 0:
-        raise DiskPlanError("Batch capacity must be positive")
     oversized = [model for model in models if model.size_bytes > capacity_bytes]
     if oversized:
         details = ", ".join(
@@ -572,13 +572,11 @@ def download_model(
     retry_delay: float = 1.0,
 ) -> Path:
     """Download, verify, and atomically publish one model file."""
-    if type(attempts) is not int or attempts <= 0:
-        raise ValueError("attempts must be a positive integer")
     opener = urlopen or urllib.request.urlopen
     model_dir = models_dir / model.directory
     model_dir.mkdir(parents=True, exist_ok=True)
     destination = model_dir / model.filename
-    last_error: Exception | None = None
+    last_error: Exception
 
     for attempt in range(1, attempts + 1):
         temporary_path: Path | None = None
@@ -601,7 +599,7 @@ def download_model(
             os.replace(temporary_path, destination)
             log(f"Downloaded and verified {model.id}")
             return destination
-        except Exception as exc:
+        except (DownloadError, OSError, http.client.HTTPException) as exc:
             last_error = exc
             if temporary_path is not None:
                 try:
@@ -627,18 +625,16 @@ def download_batch(
     models: list[ModelSpec], models_dir: Path
 ) -> tuple[list[ModelSpec], list[dict[str, Any]]]:
     """Download at most two models concurrently, preserving planned order."""
-    if not models:
-        return [], []
     with ThreadPoolExecutor(
         max_workers=min(MAX_CONCURRENT_DOWNLOADS, len(models))
     ) as executor:
         futures = [executor.submit(download_model, model, models_dir) for model in models]
         resident: list[ModelSpec] = []
         failures: list[dict[str, Any]] = []
-        for model, future in zip(models, futures, strict=True):
+        for model, future in zip(models, futures):
             try:
                 future.result()
-            except Exception as exc:
+            except DownloadError as exc:
                 log(f"Download failed for {model.id}: {exc}")
                 failures.append(_failure("download", str(exc), model=model.id))
             else:
@@ -806,7 +802,7 @@ def run(args: argparse.Namespace) -> int:
                     log("++ " + shlex.join(command))
                     try:
                         completed = subprocess.run(command, check=False)
-                    except Exception as exc:
+                    except OSError as exc:
                         log(
                             f"Benchmark {benchmark.id} batch {batch_number} "
                             f"failed to run: {exc}"
@@ -834,7 +830,7 @@ def run(args: argparse.Namespace) -> int:
                                     benchmark=benchmark.id,
                                 )
                             )
-            except Exception as exc:
+            except OSError as exc:
                 log(f"Batch {batch_number} failed: {exc}")
                 failures.append(
                     _failure(
@@ -847,7 +843,7 @@ def run(args: argparse.Namespace) -> int:
             finally:
                 try:
                     cleanup_batch(batch_dir, work_root)
-                except Exception as exc:
+                except (BatchBenchmarkError, OSError) as exc:
                     cleanup_exact = False
                     failures.append(
                         _failure("cleanup", str(exc), batch=batch_number)
@@ -860,7 +856,7 @@ def run(args: argparse.Namespace) -> int:
                     log(f"Cleaned batch {batch_number}: {batch_dir}")
             if not cleanup_exact:
                 break
-    except Exception as exc:
+    except (BatchBenchmarkError, OSError) as exc:
         failures.append(_failure("setup", str(exc)))
     finally:
         if work_root is not None and cleanup_exact:
@@ -892,7 +888,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     try:
         return run(parse_args(argv))
-    except (BatchBenchmarkError, OSError, ValueError) as exc:
+    except (BatchBenchmarkError, OSError) as exc:
         print(f"Batched benchmark failed: {exc}", file=sys.stderr)
         return 1
 
