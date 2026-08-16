@@ -20,9 +20,9 @@ on:
         default: llama.cpp-install
       # WARNING: All models listed here will be pulled from Hugging Face during the benchmark.
       models:
-        description: Space-separated Lemonade model names to benchmark.
+        description: Space-separated model manifest IDs to benchmark.
         type: string
-        default: Qwen3-30B-A3B-Instruct-2507-GGUF
+        default: qwen3-30b-a3b-instruct-2507
       allow_failure:
         description: Allow release validation jobs to fail without failing the calling workflow.
         type: boolean
@@ -45,7 +45,7 @@ jobs:
           # - gpu_target: gfx1201
           #   runs_on: linux-gfx120X-gpu-rocm
     runs-on: ${{ matrix.runs_on }}
-    timeout-minutes: 120
+    timeout-minutes: 360
     env:
       BENCHMARK_ARTIFACT_NAME: lemonade-bench-${{ matrix.gpu_target }}
       BENCHMARK_STATE_NAME: lemonade-bench-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.gpu_target }}
@@ -117,23 +117,84 @@ jobs:
             --hrx-system-commit "$HRX_SYSTEM_COMMIT" \
             --lemonade-commit "$LEMONADE_COMMIT"
 
-      - name: Run Lemonade HRX and Vulkan benchmarks
+      - name: Run batched Lemonade HRX and Vulkan benchmarks
+        id: lemonade_benchmark
+        continue-on-error: true
         env:
           LEMONADE_MODELS: ${{ inputs.models }}
           PACKAGE_ROOT_NAME: ${{ inputs.package_root_name }}
         run: |
+          set -euo pipefail
           read -r -a models <<< "$LEMONADE_MODELS"
-          python3 scripts/hrx/run_lemonade_benchmark.py \
-            --lemonade-build-dir "$PWD/lemonade-source/build" \
-            --llama-server "$PWD/release/$PACKAGE_ROOT_NAME/bin/llama-server" \
-            --state-root "$RUNNER_TEMP/$BENCHMARK_STATE_NAME" \
-            --hrx-output "$PWD/lemonade-benchmark/benchmark-hrx.json" \
-            --vulkan-output "$PWD/lemonade-benchmark/benchmark-vulkan.json" \
-            --hrx-server-log "$PWD/lemonade-benchmark-debug/lemond-hrx.log" \
-            --vulkan-server-log "$PWD/lemonade-benchmark-debug/lemond-vulkan.log" \
-            --hrx-response-log "$PWD/lemonade-benchmark-debug/responses-hrx.jsonl" \
-            --vulkan-response-log "$PWD/lemonade-benchmark-debug/responses-vulkan.jsonl" \
-            --models "${models[@]}"
+          benchmark_spec="$RUNNER_TEMP/${BENCHMARK_STATE_NAME}-spec.json"
+          python3 - "$benchmark_spec" \
+            "$PWD/scripts/hrx/run_lemonade_benchmark.py" \
+            "$PWD/lemonade-source/build" \
+            "$PWD/release/$PACKAGE_ROOT_NAME/bin/llama-server" \
+            "$RUNNER_TEMP/${BENCHMARK_STATE_NAME}-lemonade-state" \
+            "$PWD/lemonade-benchmark/benchmark-hrx.json" \
+            "$PWD/lemonade-benchmark/benchmark-vulkan.json" \
+            "$PWD/lemonade-benchmark-debug/lemond-hrx.log" \
+            "$PWD/lemonade-benchmark-debug/lemond-vulkan.log" \
+            "$PWD/lemonade-benchmark-debug/responses-hrx.jsonl" \
+            "$PWD/lemonade-benchmark-debug/responses-vulkan.jsonl" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          (
+              output_path,
+              benchmark_script,
+              lemonade_build_dir,
+              llama_server,
+              state_root,
+              hrx_output,
+              vulkan_output,
+              hrx_server_log,
+              vulkan_server_log,
+              hrx_response_log,
+              vulkan_response_log,
+          ) = sys.argv[1:]
+          spec = {
+              "schema_version": 1,
+              "benchmarks": [
+                  {
+                      "id": "lemonade",
+                      "argv": [
+                          "python3",
+                          benchmark_script,
+                          "--lemonade-build-dir",
+                          lemonade_build_dir,
+                          "--llama-server",
+                          llama_server,
+                          "--state-root",
+                          state_root,
+                          "--hrx-output",
+                          hrx_output,
+                          "--vulkan-output",
+                          vulkan_output,
+                          "--hrx-server-log",
+                          hrx_server_log,
+                          "--vulkan-server-log",
+                          vulkan_server_log,
+                          "--hrx-response-log",
+                          hrx_response_log,
+                          "--vulkan-response-log",
+                          vulkan_response_log,
+                      ],
+                  }
+              ],
+          }
+          Path(output_path).write_text(
+              json.dumps(spec, indent=2) + "\n", encoding="utf-8"
+          )
+          PY
+          python3 scripts/hrx/run_batched_benchmark.py \
+            --benchmark-spec "$benchmark_spec" \
+            --model-manifest "$PWD/scripts/hrx/lemonade_model_manifest.json" \
+            --models "${models[@]}" \
+            --work-root "$RUNNER_TEMP/$BENCHMARK_STATE_NAME" \
+            --max-disk-gib 40
 
       - name: Find latest main benchmark
         id: main_benchmark
@@ -181,6 +242,7 @@ jobs:
             "${report_args[@]}" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload Lemonade benchmark
+        if: ${{ always() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ${{ env.BENCHMARK_ARTIFACT_NAME }}
@@ -203,3 +265,9 @@ jobs:
             lemonade-benchmark-debug/responses-hrx.jsonl
             lemonade-benchmark-debug/responses-vulkan.jsonl
           if-no-files-found: warn
+
+      - name: Fail incomplete Lemonade benchmark
+        if: ${{ always() && steps.lemonade_benchmark.outcome == 'failure' }}
+        run: |
+          echo "One or more Lemonade benchmark batches failed." >&2
+          exit 1
