@@ -575,7 +575,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--lemonade-build-dir", type=Path, required=True)
     parser.add_argument("--llama-server", type=Path, required=True)
-    parser.add_argument("--state-root", type=Path, required=True)
+    parser.add_argument("--state-root", type=Path)
     parser.add_argument("--models-dir", type=Path)
     parser.add_argument("--batched", action="store_true")
     parser.add_argument("--batch-number", type=int)
@@ -593,6 +593,28 @@ def main() -> int:
         parser.error("--batch-number requires --batched")
     if args.batch_number is not None and args.batch_number < 1:
         parser.error("--batch-number must be a positive integer")
+    if args.state_root is None:
+        if not args.batched:
+            parser.error("--state-root is required without --batched")
+        if args.models_dir is None:
+            parser.error("--models-dir is required when --state-root is omitted")
+        args.state_root = args.models_dir.parent / "lemonade-state"
+    if args.models_dir is not None:
+        try:
+            state_root = args.state_root.resolve()
+            models_dir = args.models_dir.resolve()
+        except (OSError, RuntimeError) as exc:
+            parser.error(f"Could not resolve state or model path: {exc}")
+        paths_are_equal = state_root == models_dir
+        state_contains_models = state_root in models_dir.parents
+        models_contain_state = models_dir in state_root.parents
+        paths_overlap = (
+            paths_are_equal
+            or state_contains_models
+            or models_contain_state
+        )
+        if paths_overlap:
+            parser.error("--state-root and --models-dir must not overlap")
     try:
         return run(args)
     except (

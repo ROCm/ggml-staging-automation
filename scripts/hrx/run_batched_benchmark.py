@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # Copyright Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
-"""Run a command over verified, disk-bounded batches of downloaded models."""
+"""Run commands over verified, disk-bounded batches of downloaded models."""
 
 from __future__ import annotations
 
@@ -183,59 +183,91 @@ def load_manifest(path: Path) -> list[ModelSpec]:
     return models
 
 
-def load_benchmark_spec(path: Path) -> BenchmarkSpec:
-    """Load the single-command version-one benchmark specification."""
+def load_benchmark_spec(path: Path) -> list[BenchmarkSpec]:
+    """Load an ordered version-one benchmark specification."""
     root = _require_object(
         _load_json(path, "benchmark specification"),
         "benchmark specification",
     )
-    if type(root.get("schema_version")) is not int or root["schema_version"] != 1:
+    schema_version = root.get("schema_version")
+    version_is_integer = type(schema_version) is int
+    version_is_one = schema_version == 1
+    version_is_valid = version_is_integer and version_is_one
+    if not version_is_valid:
         raise BatchBenchmarkError(
             "benchmark specification schema_version must equal 1"
         )
 
     entries = root.get("benchmarks")
-    if not isinstance(entries, list) or len(entries) != 1:
+    entries_are_an_array = isinstance(entries, list)
+    entries_are_present = bool(entries)
+    entries_are_valid = entries_are_an_array and entries_are_present
+    if not entries_are_valid:
         raise BatchBenchmarkError(
-            "benchmark specification must contain exactly one benchmark"
+            "benchmark specification must contain at least one benchmark"
         )
 
-    context = "benchmark specification.benchmarks[0]"
-    entry = _require_object(entries[0], context)
-    benchmark_id = _require_string(entry, "id", context)
-    argv = entry.get("argv")
-    if not isinstance(argv, list) or not argv:
-        raise BatchBenchmarkError(
-            f"{context}.argv must be a non-empty string array"
-        )
-    for index, argument in enumerate(argv):
-        if not isinstance(argument, str) or not argument:
-            raise BatchBenchmarkError(
-                f"{context}.argv[{index}] must be a non-empty string"
-            )
-        if "\0" in argument:
-            raise BatchBenchmarkError(
-                f"{context}.argv[{index}] must not contain a NUL byte"
-            )
-
+    benchmark_ids: set[str] = set()
+    benchmarks: list[BenchmarkSpec] = []
     managed_arguments = {
         "--batched",
         "--batch-number",
         "--models-dir",
         "--models",
     }
-    present_managed = {
-        managed
-        for argument in argv
-        for managed in managed_arguments
-        if argument == managed or argument.startswith(managed + "=")
-    }
-    if present_managed:
-        raise BatchBenchmarkError(
-            f"{context}.argv must not contain batch-managed arguments: "
-            f"{', '.join(sorted(present_managed))}"
-        )
-    return BenchmarkSpec(id=benchmark_id, argv=tuple(argv))
+    for entry_index, raw_entry in enumerate(entries):
+        context = f"benchmark specification.benchmarks[{entry_index}]"
+        entry = _require_object(raw_entry, context)
+        benchmark_id = _require_string(entry, "id", context)
+        if benchmark_id in benchmark_ids:
+            raise BatchBenchmarkError(
+                f"Duplicate benchmark id in specification: {benchmark_id}"
+            )
+        benchmark_ids.add(benchmark_id)
+
+        raw_argv = entry.get("argv")
+        argv_is_an_array = isinstance(raw_argv, list)
+        argv_is_present = bool(raw_argv)
+        argv_is_valid = argv_is_an_array and argv_is_present
+        if not argv_is_valid:
+            raise BatchBenchmarkError(
+                f"{context}.argv must be a non-empty string array"
+            )
+        argv: list[str] = []
+        for argument_index, raw_argument in enumerate(raw_argv):
+            argument_context = f"{context}.argv[{argument_index}]"
+            argument_is_a_string = isinstance(raw_argument, str)
+            argument_is_present = bool(raw_argument)
+            argument_is_valid = argument_is_a_string and argument_is_present
+            if not argument_is_valid:
+                raise BatchBenchmarkError(
+                    f"{argument_context} must be a non-empty string"
+                )
+            argument_has_nul = "\0" in raw_argument
+            if argument_has_nul:
+                raise BatchBenchmarkError(
+                    f"{argument_context} must not contain a NUL byte"
+                )
+            argv.append(raw_argument)
+
+        present_managed: set[str] = set()
+        for argument in argv:
+            for managed in managed_arguments:
+                is_bare_managed_argument = argument == managed
+                is_managed_assignment = argument.startswith(managed + "=")
+                is_managed_argument = (
+                    is_bare_managed_argument or is_managed_assignment
+                )
+                if is_managed_argument:
+                    present_managed.add(managed)
+        if present_managed:
+            raise BatchBenchmarkError(
+                f"{context}.argv must not contain batch-managed arguments: "
+                f"{', '.join(sorted(present_managed))}"
+            )
+        benchmarks.append(BenchmarkSpec(id=benchmark_id, argv=tuple(argv)))
+
+    return benchmarks
 
 
 def select_models(
@@ -522,7 +554,7 @@ def run(args: argparse.Namespace) -> int:
     cleanup_exact = True
 
     try:
-        benchmark = load_benchmark_spec(args.benchmark_spec)
+        benchmarks = load_benchmark_spec(args.benchmark_spec)
         manifest = load_manifest(args.model_manifest)
         requested = select_models(manifest, args.models)
         work_root = prepare_work_root(args.work_root)
@@ -564,30 +596,31 @@ def run(args: argparse.Namespace) -> int:
                 )
                 if not resident:
                     log(
-                        f"Skipping benchmark for batch {batch_number}: "
+                        f"Skipping benchmarks for batch {batch_number}: "
                         "no models downloaded successfully"
                     )
                 else:
-                    command = build_benchmark_command(
-                        benchmark,
-                        batch_number=batch_number,
-                        models_dir=models_dir,
-                        resident=resident,
-                    )
-                    log("++ " + shlex.join(command))
-                    try:
-                        completed = subprocess.run(command, check=False)
-                    except OSError as exc:
-                        log(
-                            f"Benchmark {benchmark.id} batch {batch_number} "
-                            f"failed to run: {exc}"
+                    for benchmark in benchmarks:
+                        command = build_benchmark_command(
+                            benchmark,
+                            batch_number=batch_number,
+                            models_dir=models_dir,
+                            resident=resident,
                         )
-                        failures.append(
-                            "benchmark invocation "
-                            f"(batch={batch_number}, benchmark={benchmark.id}): "
-                            f"{exc}"
-                        )
-                    else:
+                        log("++ " + shlex.join(command))
+                        try:
+                            completed = subprocess.run(command, check=False)
+                        except OSError as exc:
+                            log(
+                                f"Benchmark {benchmark.id} batch "
+                                f"{batch_number} failed to run: {exc}"
+                            )
+                            failures.append(
+                                "benchmark invocation "
+                                f"(batch={batch_number}, "
+                                f"benchmark={benchmark.id}): {exc}"
+                            )
+                            continue
                         log(
                             f"Benchmark {benchmark.id} batch {batch_number} "
                             f"exited with status {completed.returncode}"
@@ -641,7 +674,12 @@ def run(args: argparse.Namespace) -> int:
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--benchmark-spec", type=Path, required=True)
+    parser.add_argument(
+        "--benchmark-spec",
+        type=Path,
+        required=True,
+        help="JSON command list; relative argv paths use the current directory",
+    )
     parser.add_argument("--model-manifest", type=Path, required=True)
     parser.add_argument("--models", nargs="+", required=True, metavar="ID")
     parser.add_argument("--work-root", type=Path, required=True)

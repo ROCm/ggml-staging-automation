@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "benchmarks": [
+    {
+      "id": "lemonade",
+      "argv": [
+        "python3",
+        "scripts/hrx/run_lemonade_benchmark.py",
+        "--lemonade-build-dir",
+        "lemonade-source/build",
+        "--llama-server",
+        "release/benchmark-package/bin/llama-server",
+        "--hrx-output",
+        "lemonade-benchmark/benchmark-hrx.json",
+        "--vulkan-output",
+        "lemonade-benchmark/benchmark-vulkan.json",
+        "--hrx-server-log",
+        "lemonade-benchmark-debug/lemond-hrx.log",
+        "--vulkan-server-log",
+        "lemonade-benchmark-debug/lemond-vulkan.log",
+        "--hrx-response-log",
+        "lemonade-benchmark-debug/responses-hrx.jsonl",
+        "--vulkan-response-log",
+        "lemonade-benchmark-debug/responses-vulkan.jsonl"
+      ]
+    }
+  ]
+}
