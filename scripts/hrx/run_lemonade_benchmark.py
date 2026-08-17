@@ -13,6 +13,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -36,14 +37,8 @@ def log(message: str) -> None:
     print(message, flush=True)
 
 
-def remove_state_root(state_root: Path) -> None:
-    if state_root.exists():
-        shutil.rmtree(state_root)
-
-
 def prepare_state(state_root: Path) -> tuple[Path, Path, Path]:
-    """Keep Lemonade and model caches under one disposable root for cleanup."""
-    remove_state_root(state_root)
+    """Keep Lemonade runtime state under one private temporary root."""
     cache_dir = state_root / "lemonade"
     hf_home = state_root / "huggingface"
     runtime_dir = state_root / "runtime"
@@ -212,7 +207,6 @@ def run_benchmark(
     response_log: Path,
     models: list[str],
     *,
-    auto_pull: bool,
     env: dict[str, str],
 ) -> tuple[dict[str, Any], int]:
     """Run and summarize one backend's complete benchmark suite."""
@@ -233,8 +227,6 @@ def run_benchmark(
         "--output",
         os.fspath(output),
     ]
-    if auto_pull:
-        command.append("--auto-pull")
     command.extend(models)
     log("++ " + " ".join(command))
     subprocess.run(command, env=env, check=True)
@@ -297,7 +289,7 @@ def set_lemonade_config_values(
     llama_server: Path,
     device: str,
     *,
-    models_dir: Path | None = None,
+    models_dir: Path,
     env: dict[str, str],
     port: int,
 ) -> None:
@@ -315,38 +307,33 @@ def set_lemonade_config_values(
         f"llamacpp.device={device}",
         "no_fetch_executables=true",
         "log_level=debug",
+        f"extra_models_dir={models_dir}",
     ]
-    if models_dir is not None:
-        command.append(f"extra_models_dir={models_dir}")
     log("++ " + " ".join(command))
     subprocess.run(command, env=env, check=True)
     config = request_json(port, "/internal/config")
     configured_models_dir = config.get("extra_models_dir")
+    models_dir_was_retained = False
+    configured_models_dir_is_string = isinstance(configured_models_dir, str)
+    if configured_models_dir_is_string:
+        models_dir_was_retained = (
+            Path(configured_models_dir).resolve() == models_dir
+        )
     if (
         Path(config["llamacpp"]["hrx_bin"]).resolve() != llama_server
         or Path(config["llamacpp"]["vulkan_bin"]).resolve() != llama_server
         or config["llamacpp"]["device"] != device
         or config["no_fetch_executables"] is not True
         or config["log_level"] != "debug"
-        or (
-            models_dir is not None
-            and (
-                not isinstance(configured_models_dir, str)
-                or Path(configured_models_dir).resolve() != models_dir
-            )
-        )
+        or not models_dir_was_retained
     ):
         raise RuntimeError("Lemonade did not retain the requested configuration")
     log(
         "Verified Lemonade configuration: "
         f"llamacpp.hrx_bin={llama_server}, "
         f"llamacpp.vulkan_bin={llama_server}, "
-        f"llamacpp.device={device}, no_fetch_executables=true, log_level=debug"
-        + (
-            f", extra_models_dir={models_dir}"
-            if models_dir is not None
-            else ""
-        )
+        f"llamacpp.device={device}, no_fetch_executables=true, log_level=debug, "
+        f"extra_models_dir={models_dir}"
     )
 
 
@@ -408,11 +395,7 @@ def run(args: argparse.Namespace) -> int:
     lemonade_build = args.lemonade_build_dir.resolve()
     lemonade = lemonade_build / "lemonade"
     llama_server = args.llama_server.resolve()
-    models_dir = (
-        args.models_dir.resolve()
-        if args.models_dir is not None
-        else None
-    )
+    models_dir = args.models_dir.resolve()
     phases = (
         BenchmarkPhase(
             name="HRX",
@@ -433,7 +416,11 @@ def run(args: argparse.Namespace) -> int:
     )
     failed_scenario_count = 0
 
-    try:
+    with tempfile.TemporaryDirectory(
+        dir=models_dir.parent,
+        prefix="lemonade-state-",
+    ) as state_root_name:
+        state_root = Path(state_root_name)
         # Precreate debug files so early failures still leave uploadable artifacts.
         for log_path in (
             args.hrx_server_log,
@@ -447,7 +434,7 @@ def run(args: argparse.Namespace) -> int:
             else:
                 log_path.write_text("", encoding="utf-8")
 
-        cache_dir, hf_home, runtime_dir = prepare_state(args.state_root)
+        cache_dir, hf_home, runtime_dir = prepare_state(state_root)
         env = dict(os.environ)
         env.update(
             {
@@ -463,14 +450,14 @@ def run(args: argparse.Namespace) -> int:
         log_llama_server_devices(llama_server, env)
 
         # Run benchmarks
-        for phase_index, phase in enumerate(phases):
+        for phase in phases:
             log(
                 f"Starting {phase.name} benchmark phase on {phase.device}"
             )
             active_phase = phase
             if args.batched:
                 assert args.batch_number is not None
-                batch_root = args.state_root / phase.backend
+                batch_root = state_root / phase.backend
                 active_phase = BenchmarkPhase(
                     name=phase.name,
                     backend=phase.backend,
@@ -504,7 +491,6 @@ def run(args: argparse.Namespace) -> int:
                     active_phase.output,
                     active_phase.response_log,
                     args.models,
-                    auto_pull=models_dir is None and phase_index == 0,
                     env=env,
                 )
             finally:
@@ -558,9 +544,6 @@ def run(args: argparse.Namespace) -> int:
                     f"batch {args.batch_number} into {phase.output}"
                 )
             failed_scenario_count += phase_failed_scenario_count
-    finally:
-        remove_state_root(args.state_root)
-        log(f"Cleaned benchmark state: {args.state_root}")
 
     if failed_scenario_count:
         log(
@@ -575,8 +558,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--lemonade-build-dir", type=Path, required=True)
     parser.add_argument("--llama-server", type=Path, required=True)
-    parser.add_argument("--state-root", type=Path)
-    parser.add_argument("--models-dir", type=Path)
+    parser.add_argument("--models-dir", type=Path, required=True)
     parser.add_argument("--batched", action="store_true")
     parser.add_argument("--batch-number", type=int)
     parser.add_argument("--hrx-output", type=Path, required=True)
@@ -593,28 +575,6 @@ def main() -> int:
         parser.error("--batch-number requires --batched")
     if args.batch_number is not None and args.batch_number < 1:
         parser.error("--batch-number must be a positive integer")
-    if args.state_root is None:
-        if not args.batched:
-            parser.error("--state-root is required without --batched")
-        if args.models_dir is None:
-            parser.error("--models-dir is required when --state-root is omitted")
-        args.state_root = args.models_dir.parent / "lemonade-state"
-    if args.models_dir is not None:
-        try:
-            state_root = args.state_root.resolve()
-            models_dir = args.models_dir.resolve()
-        except (OSError, RuntimeError) as exc:
-            parser.error(f"Could not resolve state or model path: {exc}")
-        paths_are_equal = state_root == models_dir
-        state_contains_models = state_root in models_dir.parents
-        models_contain_state = models_dir in state_root.parents
-        paths_overlap = (
-            paths_are_equal
-            or state_contains_models
-            or models_contain_state
-        )
-        if paths_overlap:
-            parser.error("--state-root and --models-dir must not overlap")
     try:
         return run(args)
     except (
