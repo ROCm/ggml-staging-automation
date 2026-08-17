@@ -30,8 +30,6 @@ jobs:
       hrx_build_type: Release
       package_root_name: llama.cpp-install
       upload_artifact: true
-      build_test_package: true
-      test_artifact_name: llama-cpp-linux-x86_64-tests
 
   llama_cpp_release_bench:
     name: Linux / HRX release benchmark
@@ -43,6 +41,5 @@ jobs:
     with:
       name: Release benchmark
       release_artifact_name: llama-cpp-linux-x86_64
-      test_artifact_name: llama-cpp-linux-x86_64-tests
       package_root_name: llama.cpp-install
       models: Qwen3-30B-A3B-Instruct-2507-GGUF

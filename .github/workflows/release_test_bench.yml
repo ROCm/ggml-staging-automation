@@ -15,9 +15,6 @@ on:
       release_artifact_name:
         type: string
         required: true
-      test_artifact_name:
-        type: string
-        default: llama-cpp-linux-x86_64-tests
       package_root_name:
         type: string
         default: llama.cpp-install
