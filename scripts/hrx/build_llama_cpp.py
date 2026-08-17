@@ -174,11 +174,6 @@ def main() -> int:
     parser.add_argument("--target", default="all")
     parser.add_argument("--no-install", action="store_true")
     parser.add_argument("--build-tests", action="store_true")
-    parser.add_argument(
-        "--build-installed-tests",
-        action="store_true",
-        help="build and install llama.cpp tests",
-    )
     parser.add_argument("--build-examples", action="store_true")
     parser.add_argument("--backend-dl", action="store_true")
     parser.add_argument(
@@ -202,7 +197,7 @@ def main() -> int:
         target=args.target,
         install=not args.no_install,
         ggml_build_tests=args.build_tests,
-        llama_build_tests=args.build_tests or args.build_installed_tests,
+        llama_build_tests=args.build_tests,
         build_examples=args.build_examples,
         backend_dl=args.backend_dl,
         extra_cmake_args=extra_cmake_args,

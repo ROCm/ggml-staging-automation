@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # Copyright Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
-"""Create release and test overlay archives from a llama.cpp install tree."""
+"""Create a release archive from a llama.cpp install tree."""
 
 from __future__ import annotations
 
@@ -30,21 +30,10 @@ RELEASE_LIBRARY_GLOBS = (
     "lib/**/*.so*",
 )
 
-TEST_INSTALL_FILES = (
-    "bin/test-backend-ops",
-)
-
-
 @dataclass(frozen=True)
 class PackageEntry:
     relative: PurePosixPath
     source: Path
-
-
-def install_entry(install_dir: Path, entry: str) -> PackageEntry:
-    relative = PurePosixPath(entry)
-    source = install_dir.joinpath(*relative.parts)
-    return PackageEntry(relative=relative, source=source)
 
 
 def repo_entry(entry: str) -> PackageEntry:
@@ -79,10 +68,6 @@ def release_entries(install_dir: Path) -> list[PackageEntry]:
     for pattern in RELEASE_LIBRARY_GLOBS:
         entries.extend(glob_install_tree(install_dir, pattern))
     return entries
-
-
-def test_entries(install_dir: Path) -> list[PackageEntry]:
-    return [install_entry(install_dir, entry) for entry in TEST_INSTALL_FILES]
 
 
 def normalize_tarinfo(info: tarfile.TarInfo) -> tarfile.TarInfo:
@@ -146,7 +131,6 @@ def main() -> int:
         default=paths["llama_install"],
     )
     parser.add_argument("--release-package-file", type=Path, required=True)
-    parser.add_argument("--test-package-file", type=Path, default=None)
     parser.add_argument("--package-root-name", default="llama.cpp-install")
     args = parser.parse_args()
 
@@ -156,7 +140,6 @@ def main() -> int:
     package_root = PurePosixPath(args.package_root_name)
 
     release = release_entries(install_dir)
-    tests = test_entries(install_dir) if args.test_package_file is not None else []
 
     release_archived = create_package(
         package_file=args.release_package_file,
@@ -164,14 +147,6 @@ def main() -> int:
         entries=release,
     )
     print_created(args.release_package_file, release_archived)
-
-    if args.test_package_file is not None:
-        test_archived = create_package(
-            package_file=args.test_package_file,
-            package_root=package_root,
-            entries=tests,
-        )
-        print_created(args.test_package_file, test_archived)
     return 0
 
 

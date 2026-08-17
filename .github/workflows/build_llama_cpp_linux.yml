@@ -30,12 +30,6 @@ on:
       package_root_name:
         type: string
         default: llama.cpp-install
-      build_test_package:
-        type: boolean
-        default: false
-      test_artifact_name:
-        type: string
-        default: llama-cpp-linux-x86_64-tests
 
 permissions:
   contents: read
@@ -75,48 +69,30 @@ jobs:
 
       - name: Build and validate llama.cpp
         env:
-          BUILD_TEST_PACKAGE: ${{ inputs.build_test_package }}
           BUILD_TYPE: ${{ inputs.build_type }}
           HRX_BUILD_TYPE: ${{ inputs.hrx_build_type }}
         run: |
-          test_package_args=()
-          if [ "$BUILD_TEST_PACKAGE" = "true" ]; then
-            test_package_args=(
-              --build-test-package
-            )
-          fi
           python3 scripts/hrx/build_all.py \
             --build-type "$BUILD_TYPE" \
             --hrx-build-type "$HRX_BUILD_TYPE" \
-            --vulkan-sdk-dir "$PWD/build/vulkan-sdk" \
-            "${test_package_args[@]}"
+            --vulkan-sdk-dir "$PWD/build/vulkan-sdk"
 
       - name: Package llama.cpp artifacts
-        if: ${{ inputs.upload_artifact || inputs.build_test_package }}
+        if: ${{ inputs.upload_artifact }}
         env:
           ARTIFACT_NAME: ${{ inputs.artifact_name }}
-          BUILD_TEST_PACKAGE: ${{ inputs.build_test_package }}
           PACKAGE_FILE_NAME: ${{ inputs.package_file_name }}
           PACKAGE_ROOT_NAME: ${{ inputs.package_root_name }}
-          TEST_ARTIFACT_NAME: ${{ inputs.test_artifact_name }}
         run: |
           set -eu
           package_file_name="${PACKAGE_FILE_NAME:-${ARTIFACT_NAME}.tar.gz}"
           package_dir="$PWD/build/artifacts"
           rm -rf "$package_dir"
 
-          test_package_args=()
-          if [ "$BUILD_TEST_PACKAGE" = "true" ]; then
-            test_package_args=(
-              --test-package-file "$package_dir/${TEST_ARTIFACT_NAME}.tar.gz"
-            )
-          fi
-
           python3 scripts/hrx/build_artifacts_from_llama_cpp_install.py \
             --llama-install-dir "$PWD/build/llama.cpp-install" \
             --release-package-file "$package_dir/$package_file_name" \
-            --package-root-name "$PACKAGE_ROOT_NAME" \
-            "${test_package_args[@]}"
+            --package-root-name "$PACKAGE_ROOT_NAME"
 
       - name: Upload llama.cpp install tree
         if: ${{ inputs.upload_artifact }}
@@ -125,12 +101,3 @@ jobs:
           name: ${{ inputs.artifact_name }}
           path: build/artifacts/${{ inputs.package_file_name || format('{0}.tar.gz', inputs.artifact_name) }}
           if-no-files-found: error
-
-      - name: Upload llama.cpp test package
-        if: ${{ inputs.upload_artifact && inputs.build_test_package }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: ${{ inputs.test_artifact_name }}
-          path: build/artifacts/${{ inputs.test_artifact_name }}.tar.gz
-          if-no-files-found: error
-          retention-days: 1

@@ -87,8 +87,6 @@ jobs:
       build_type: Release
       hrx_build_type: Release
       upload_artifact: true
-      build_test_package: true
-      test_artifact_name: ${{ needs.prepare_release.outputs.artifact_name }}-tests
 
   llama_cpp_release_bench:
     name: Linux / HRX release benchmark
@@ -102,7 +100,6 @@ jobs:
     with:
       name: Release benchmark
       release_artifact_name: ${{ needs.prepare_release.outputs.artifact_name }}
-      test_artifact_name: ${{ needs.prepare_release.outputs.artifact_name }}-tests
       package_root_name: llama-${{ needs.prepare_release.outputs.version }}
       models: Qwen3-30B-A3B-Instruct-2507-GGUF
       allow_failure: true

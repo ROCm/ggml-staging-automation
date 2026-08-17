@@ -27,11 +27,6 @@ def main() -> int:
             "omit to build llama.cpp without Vulkan"
         ),
     )
-    parser.add_argument(
-        "--build-test-package",
-        action="store_true",
-        help="also install llama.cpp test binaries into the llama.cpp install tree",
-    )
     args, extra_args = parser.parse_known_args()
 
     common = [
@@ -73,7 +68,6 @@ def main() -> int:
             "--build-type",
             args.build_type,
             *vulkan_sdk_args,
-            *(["--build-installed-tests"] if args.build_test_package else []),
         ]
     )
     if not args.skip_validate:
