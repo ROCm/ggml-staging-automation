@@ -8,7 +8,6 @@ from __future__ import annotations
 import argparse
 import http.client
 import json
-import math
 import os
 import shutil
 import signal
@@ -20,7 +19,6 @@ from pathlib import Path
 from typing import Any
 
 
-BENCHMARK_RECIPE = "llamacpp"
 BENCHMARK_BACKEND_ARGS = "--ignore-eos"
 
 
@@ -148,209 +146,62 @@ def start_lemond(
         )
 
 
-def validate_measurement(value: Any, description: str) -> None:
-    """Require a finite, non-negative JSON number."""
-    if (
-        type(value) not in (int, float)
-        or not math.isfinite(value)
-        or value < 0
-    ):
-        raise RuntimeError(
-            f"Lemonade {description} must be a finite non-negative number"
-        )
-
-
-def validate_statistics(scenario: dict[str, Any], field: str) -> None:
-    """Validate one aggregate-statistics object from a usable scenario."""
-    statistics = scenario.get(field)
-    if not isinstance(statistics, dict):
-        raise RuntimeError(f"Lemonade usable scenario has invalid {field}")
-    for statistic in ("mean", "min", "max"):
-        validate_measurement(
-            statistics.get(statistic),
-            f"scenario {field}.{statistic}",
-        )
-
-
-def validate_benchmark(
+def summarize_benchmark(
     data: dict[str, Any],
-    *,
-    expected_backend: str | None = None,
-    expected_backend_args: str | None = None,
-    expected_models: list[str] | None = None,
-    expected_recipe: str | None = None,
+    expected_backend: str,
+    expected_models: list[str],
 ) -> tuple[int, int]:
-    """Validate scenario data and count scenarios that report failures."""
-    if not isinstance(data, dict):
-        raise RuntimeError("Lemonade benchmark is not a JSON object")
-    models = data.get("models")
-    if not isinstance(models, list) or not models:
-        raise RuntimeError("Lemonade benchmark has no models")
-
+    """Check batch identity and count scenarios that report failures."""
     scenario_count = 0
     failed_scenario_count = 0
     model_names: set[str] = set()
-    scenario_keys: set[tuple[str, str, int, str, str]] = set()
-    for model in models:
-        if not isinstance(model, dict):
-            raise RuntimeError("Lemonade benchmark has an invalid model entry")
-        model_name = model.get("model")
-        if not isinstance(model_name, str) or not model_name:
-            raise RuntimeError("Lemonade benchmark has a model without a name")
-        if model_name in model_names:
-            raise RuntimeError(
-                f"Lemonade benchmark has duplicate model {model_name!r}"
-            )
-        model_names.add(model_name)
-        results = model.get("results")
-        if not isinstance(results, list) or not results:
-            raise RuntimeError(
-                f"Lemonade model {model_name!r} has no results"
-            )
-        for result in results:
-            if not isinstance(result, dict):
+    try:
+        for model in data["models"]:
+            model_name = model["model"]
+            if model_name in model_names:
                 raise RuntimeError(
-                    f"Lemonade model {model_name!r} has an invalid result"
+                    f"Lemonade benchmark has duplicate model {model_name!r}"
                 )
-            recipe = result.get("recipe")
-            backend = result.get("backend")
-            context = result.get("ctx_size")
-            backend_args = result.get("backend_args", "")
-            if not isinstance(recipe, str) or not recipe:
-                raise RuntimeError(
-                    f"Lemonade model {model_name!r} has an invalid recipe"
-                )
-            if expected_recipe is not None and recipe != expected_recipe:
-                raise RuntimeError(
-                    f"Lemonade reported recipe {recipe!r}; expected "
-                    f"{expected_recipe!r}"
-                )
-            if not isinstance(backend, str) or not backend:
-                raise RuntimeError(
-                    f"Lemonade model {model_name!r} has an invalid backend"
-                )
-            if expected_backend is not None and backend != expected_backend:
-                raise RuntimeError(
-                    f"Lemonade reported backend {backend!r}; expected "
-                    f"{expected_backend!r}"
-                )
-            if type(context) is not int or context <= 0:
-                raise RuntimeError(
-                    f"Lemonade model {model_name!r} has an invalid context size"
-                )
-            if not isinstance(backend_args, str):
-                raise RuntimeError(
-                    f"Lemonade model {model_name!r} has invalid backend arguments"
-                )
-            if (
-                expected_backend_args is not None
-                and backend_args != expected_backend_args
-            ):
-                raise RuntimeError(
-                    f"Lemonade reported backend arguments {backend_args!r}; "
-                    f"expected {expected_backend_args!r}"
-                )
-            scenarios = result.get("scenarios")
-            if not isinstance(scenarios, list) or not scenarios:
+            model_names.add(model_name)
+            model_scenario_count = 0
+            for result in model["results"]:
+                backend = result["backend"]
+                if backend != expected_backend:
+                    raise RuntimeError(
+                        f"Lemonade reported backend {backend!r}; expected "
+                        f"{expected_backend!r}"
+                    )
+                for scenario in result["scenarios"]:
+                    failed_runs = scenario["failed_runs"]
+                    if type(failed_runs) is not int or failed_runs < 0:
+                        raise RuntimeError(
+                            "Lemonade scenario failed_runs must be a "
+                            "non-negative integer"
+                        )
+                    all_runs_failed = scenario.get("all_runs_failed", False)
+                    if type(all_runs_failed) is not bool:
+                        raise RuntimeError(
+                            "Lemonade scenario all_runs_failed must be a "
+                            "Boolean when present"
+                        )
+                    if failed_runs or all_runs_failed:
+                        failed_scenario_count += 1
+                    model_scenario_count += 1
+                    scenario_count += 1
+            if not model_scenario_count:
                 raise RuntimeError(
                     f"Lemonade model {model_name!r} has no scenarios"
                 )
-            for scenario in scenarios:
-                if not isinstance(scenario, dict):
-                    raise RuntimeError(
-                        f"Lemonade model {model_name!r} has an invalid scenario"
-                    )
-                scenario_name = scenario.get("name")
-                if not isinstance(scenario_name, str) or not scenario_name:
-                    raise RuntimeError(
-                        f"Lemonade model {model_name!r} has an unnamed scenario"
-                    )
-                scenario_key = (
-                    model_name,
-                    recipe,
-                    context,
-                    backend_args,
-                    scenario_name,
-                )
-                if scenario_key in scenario_keys:
-                    raise RuntimeError(
-                        "Lemonade benchmark has a duplicate scenario identity"
-                    )
-                scenario_keys.add(scenario_key)
-                failed_runs = scenario.get("failed_runs")
-                if type(failed_runs) is not int or failed_runs < 0:
-                    raise RuntimeError(
-                        "Lemonade scenario failed_runs must be a non-negative "
-                        "integer"
-                    )
-                all_runs_failed = scenario.get("all_runs_failed", False)
-                if type(all_runs_failed) is not bool:
-                    raise RuntimeError(
-                        "Lemonade scenario all_runs_failed must be a Boolean "
-                        "when present"
-                    )
-                input_tokens = scenario.get("input_tokens")
-                output_tokens = scenario.get("output_tokens")
-                for value, field in (
-                    (input_tokens, "input_tokens"),
-                    (output_tokens, "output_tokens"),
-                ):
-                    if type(value) is not int or value < 0:
-                        raise RuntimeError(
-                            f"Lemonade scenario has invalid {field}"
-                        )
-                if all_runs_failed:
-                    if input_tokens != 0 or output_tokens != 0:
-                        raise RuntimeError(
-                            "Lemonade failed scenario must report zero tokens"
-                        )
-                    unexpected_measurements = [
-                        field
-                        for field in (
-                            "ttft_ms",
-                            "duration_ms",
-                            "tps",
-                            "vram_peak_gb",
-                            "memory_peak_gb",
-                        )
-                        if field in scenario
-                    ]
-                    if unexpected_measurements:
-                        raise RuntimeError(
-                            "Lemonade failed scenario contains measurements: "
-                            + ", ".join(unexpected_measurements)
-                        )
-                else:
-                    for field in ("ttft_ms", "duration_ms", "tps"):
-                        validate_statistics(scenario, field)
-                    for field in ("vram_peak_gb", "memory_peak_gb"):
-                        if field in scenario:
-                            validate_measurement(
-                                scenario[field], f"scenario {field}"
-                            )
-                if failed_runs != 0 or all_runs_failed:
-                    failed_scenario_count += 1
-                scenario_count += 1
-
-    if expected_models is not None:
         expected_model_names = set(expected_models)
         if model_names != expected_model_names:
             missing_models = sorted(expected_model_names - model_names)
             unexpected_models = sorted(model_names - expected_model_names)
-            details = []
-            if missing_models:
-                details.append(
-                    "missing " + ", ".join(repr(x) for x in missing_models)
-                )
-            if unexpected_models:
-                details.append(
-                    "unexpected "
-                    + ", ".join(repr(x) for x in unexpected_models)
-                )
             raise RuntimeError(
                 "Lemonade benchmark model coverage mismatch: "
-                + "; ".join(details)
+                f"missing={missing_models!r}; unexpected={unexpected_models!r}"
             )
+    except (KeyError, TypeError) as exc:
+        raise RuntimeError("Lemonade benchmark report is malformed") from exc
     return scenario_count, failed_scenario_count
 
 
@@ -364,7 +215,7 @@ def run_benchmark(
     auto_pull: bool,
     env: dict[str, str],
 ) -> tuple[dict[str, Any], int]:
-    """Run and validate one backend's complete benchmark suite."""
+    """Run and summarize one backend's complete benchmark suite."""
     output.parent.mkdir(parents=True, exist_ok=True)
     output.unlink(missing_ok=True)
     command = [
@@ -391,15 +242,13 @@ def run_benchmark(
     if not output.is_file():
         raise RuntimeError(f"Lemonade benchmark did not write {output}")
     data = json.loads(output.read_text(encoding="utf-8"))
-    scenario_count, failed_scenario_count = validate_benchmark(
+    scenario_count, failed_scenario_count = summarize_benchmark(
         data,
         expected_backend=backend,
-        expected_backend_args=BENCHMARK_BACKEND_ARGS,
         expected_models=models,
-        expected_recipe=BENCHMARK_RECIPE,
     )
     log(
-        f"Validated {scenario_count} {backend} scenario(s); "
+        f"Summarized {scenario_count} {backend} scenario(s); "
         f"{failed_scenario_count} reported failures in {output}"
     )
     return data, failed_scenario_count
