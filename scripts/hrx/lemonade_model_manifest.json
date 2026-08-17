@@ -1,0 +1,55 @@
+{
+  "schema_version": 1,
+  "models": [
+    {
+      "id": "qwen3-30b-a3b-instruct-2507",
+      "name": "extra.Qwen3-30B-A3B-Instruct-2507-GGUF",
+      "directory": "Qwen3-30B-A3B-Instruct-2507-GGUF",
+      "repository": "unsloth/Qwen3-30B-A3B-Instruct-2507-GGUF",
+      "revision": "eea7b2be5805a5f151f8847ede8e5f9a9284bf77",
+      "filename": "Qwen3-30B-A3B-Instruct-2507-Q4_K_M.gguf",
+      "size_bytes": 18556686752,
+      "sha256": "6c997b8af17debdfb01d890214400ccbab00db6acc0ba8da5de1cc906c4774d0"
+    },
+    {
+      "id": "qwen3.8-27b",
+      "name": "extra.Qwen3.8-27B-GGUF",
+      "directory": "Qwen3.8-27B-GGUF",
+      "repository": "bartowski/Qwen3.8-27B-GGUF",
+      "revision": "f0eec4a4bb4975114a030d048952d83c0a53c034",
+      "filename": "Qwen3.8-27B-Q4_K_M.gguf",
+      "size_bytes": 17772537440,
+      "sha256": "e103abf9d914d1d7b2f2592f055f2759a71195c350a01c135f71aaae86bca52b"
+    },
+    {
+      "id": "mistral-small-3.2-24b",
+      "name": "extra.Mistral-Small-3.2-24B-Instruct-2506-GGUF",
+      "directory": "Mistral-Small-3.2-24B-Instruct-2506-GGUF",
+      "repository": "bartowski/mistralai_Mistral-Small-3.2-24B-Instruct-2506-GGUF",
+      "revision": "b3592d09be469bedab6be51f577824b3b6b76ba1",
+      "filename": "mistralai_Mistral-Small-3.2-24B-Instruct-2506-Q4_K_M.gguf",
+      "size_bytes": 14333915264,
+      "sha256": "80f5bda68f156f12650ca03a0a2dbfae06a215ac41caa773b8631a479f82415e"
+    },
+    {
+      "id": "gemma-4-12b",
+      "name": "extra.Gemma-4-12B-it-GGUF",
+      "directory": "Gemma-4-12B-it-GGUF",
+      "repository": "bartowski/gemma-4-12B-it-GGUF",
+      "revision": "2ae7d41be21ca62de00a2d320ee9cec50daa3aa6",
+      "filename": "gemma-4-12B-it-Q4_K_M.gguf",
+      "size_bytes": 7662533088,
+      "sha256": "3962624dcd25b947d889dc9ae1bf275b61db6cd4dbe694057f34fffef1671509"
+    },
+    {
+      "id": "llama-3.1-8b",
+      "name": "extra.Meta-Llama-3.1-8B-Instruct-GGUF",
+      "directory": "Meta-Llama-3.1-8B-Instruct-GGUF",
+      "repository": "bartowski/Meta-Llama-3.1-8B-Instruct-GGUF",
+      "revision": "bf5b95e96dac0462e2a09145ec66cae9a3f12067",
+      "filename": "Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf",
+      "size_bytes": 4920739232,
+      "sha256": "7b064f5842bf9532c91456deda288a1b672397a54fa729aa665952863033557c"
+    }
+  ]
+}
