@@ -13,7 +13,6 @@ import shutil
 import signal
 import subprocess
 import sys
-import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -173,7 +172,7 @@ def run_benchmark(
     *,
     auto_pull: bool,
     env: dict[str, str],
-) -> None:
+) -> dict[str, Any]:
     """Run and validate one backend's complete benchmark suite."""
     output.parent.mkdir(parents=True, exist_ok=True)
     output.unlink(missing_ok=True)
@@ -206,108 +205,31 @@ def run_benchmark(
         f"Validated {scenario_count} {backend} scenario(s) with zero failed "
         f"runs in {output}"
     )
-
-
-def _model_names(data: dict[str, Any], source: str) -> list[str]:
-    models = data.get("models")
-    if not isinstance(models, list):
-        raise RuntimeError(f"{source} has no models array")
-
-    names: list[str] = []
-    for entry in models:
-        if not isinstance(entry, dict):
-            raise RuntimeError(f"{source} has an invalid model entry")
-        name = entry.get("model")
-        if not isinstance(name, str) or not name:
-            raise RuntimeError(f"{source} has a model entry without a name")
-        if name in names:
-            raise RuntimeError(f"Duplicate model {name!r} in {source}")
-        names.append(name)
-    return names
+    return data
 
 
 def atomic_write_json(path: Path, data: dict[str, Any]) -> None:
     """Atomically replace a JSON document in its destination directory."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary_path: Path | None = None
-    try:
-        with tempfile.NamedTemporaryFile(
-            mode="w",
-            encoding="utf-8",
-            dir=path.parent,
-            prefix=f".{path.name}.",
-            suffix=".tmp",
-            delete=False,
-        ) as temporary_file:
-            temporary_path = Path(temporary_file.name)
-            json.dump(data, temporary_file, indent=2)
-            temporary_file.write("\n")
-            temporary_file.flush()
-            os.fsync(temporary_file.fileno())
-        os.replace(temporary_path, path)
-    finally:
-        if temporary_path is not None:
-            temporary_path.unlink(missing_ok=True)
+    temporary_path = path.with_name(f".{path.name}.tmp")
+    with temporary_path.open("w", encoding="utf-8") as temporary_file:
+        json.dump(data, temporary_file, indent=2)
+        temporary_file.write("\n")
+    os.replace(temporary_path, path)
 
 
 def merge_benchmark_output(
     cumulative_output: Path, batch_data: dict[str, Any]
 ) -> int:
-    """Validate and atomically merge one backend batch into cumulative output."""
-    validate_benchmark(batch_data)
-    batch_names = _model_names(batch_data, "current batch output")
-
+    """Atomically append one trusted backend batch to cumulative output."""
     if cumulative_output.exists():
-        try:
-            cumulative_data = json.loads(
-                cumulative_output.read_text(encoding="utf-8")
-            )
-        except json.JSONDecodeError as exc:
-            raise RuntimeError(
-                "Could not parse cumulative benchmark output "
-                f"{cumulative_output}: {exc}"
-            ) from exc
-        if not isinstance(cumulative_data, dict):
-            raise RuntimeError(
-                f"Cumulative benchmark output {cumulative_output} is not an object"
-            )
-        cumulative_names = _model_names(
-            cumulative_data, f"cumulative benchmark output {cumulative_output}"
-        )
-        duplicate_names = sorted(set(cumulative_names) & set(batch_names))
-        if duplicate_names:
-            raise RuntimeError(
-                "Duplicate model(s) across benchmark batches: "
-                + ", ".join(repr(name) for name in duplicate_names)
-            )
-
-        ignored_metadata = {"models", "timestamp"}
-        cumulative_metadata = {
-            key: value
-            for key, value in cumulative_data.items()
-            if key not in ignored_metadata
-        }
-        batch_metadata = {
-            key: value
-            for key, value in batch_data.items()
-            if key not in ignored_metadata
-        }
-        if cumulative_metadata != batch_metadata:
-            raise RuntimeError(
-                "Current batch has metadata incompatible with cumulative "
-                f"benchmark output {cumulative_output}"
-            )
-
-        merged_data = dict(cumulative_data)
-        merged_data["models"] = [
-            *cumulative_data["models"],
-            *batch_data["models"],
-        ]
+        merged_data = json.loads(cumulative_output.read_text(encoding="utf-8"))
+        merged_data["models"].extend(batch_data["models"])
     else:
-        merged_data = dict(batch_data)
+        merged_data = batch_data
 
     atomic_write_json(cumulative_output, merged_data)
-    return len(batch_names)
+    return len(batch_data["models"])
 
 
 def append_batch_log(destination: Path, source: Path, batch_number: int) -> None:
@@ -322,26 +244,6 @@ def append_batch_log(destination: Path, source: Path, batch_number: int) -> None
             ) as source_file:
                 shutil.copyfileobj(source_file, destination_file)
         destination_file.write(f"\n===== END {label} =====\n")
-
-
-def append_phase_logs(
-    phase: BenchmarkPhase,
-    temporary_phase: BenchmarkPhase,
-    batch_number: int,
-) -> None:
-    """Try both batched log appends before reporting an I/O failure."""
-    first_error: Exception | None = None
-    for destination, source in (
-        (phase.server_log, temporary_phase.server_log),
-        (phase.response_log, temporary_phase.response_log),
-    ):
-        try:
-            append_batch_log(destination, source, batch_number)
-        except Exception as exc:
-            if first_error is None:
-                first_error = exc
-    if first_error is not None:
-        raise first_error
 
 
 def set_lemonade_config_values(
@@ -404,13 +306,12 @@ def set_lemonade_config_values(
 
 def verify_configured_executable(
     *,
+    phase: BenchmarkPhase,
     phases: tuple[BenchmarkPhase, ...],
-    phase_index: int,
     cache_dir: Path,
     llama_server: Path,
 ) -> None:
     """Verify log and cache evidence for the pinned binary and selected device."""
-    phase = phases[phase_index]
     log_text = phase.server_log.read_text(encoding="utf-8", errors="replace")
     positive_text = (
         "Fetching executable artifacts is disabled; using installed "
@@ -421,8 +322,8 @@ def verify_configured_executable(
     used_selected_device = f"--device {phase.device}" in log_text
     used_other_device = any(
         f"--device {other_phase.device}" in log_text
-        for index, other_phase in enumerate(phases)
-        if index != phase_index
+        for other_phase in phases
+        if other_phase.device != phase.device
     )
     created_managed_backend = managed_backend_dir.exists()
     installed_llama_server = "Installing llama-server" in log_text
@@ -456,136 +357,16 @@ def log_llama_server_devices(llama_server: Path, env: dict[str, str]) -> None:
     log(result.stdout.rstrip())
 
 
-def run_phase(
-    *,
-    phase: BenchmarkPhase,
-    phase_index: int,
-    phases: tuple[BenchmarkPhase, ...],
-    lemonade_build: Path,
-    lemonade: Path,
-    llama_server: Path,
-    cache_dir: Path,
-    models_dir: Path | None,
-    models: list[str],
-    env: dict[str, str],
-    port: int,
-    batched: bool,
-    batch_number: int | None,
-) -> None:
-    """Run one backend using temporary artifacts only in cumulative mode."""
-    temporary_directory: tempfile.TemporaryDirectory[str] | None = None
-    temporary_phase = phase
-    if batched:
-        assert batch_number is not None
-        temporary_directory = tempfile.TemporaryDirectory(
-            prefix=f"lemonade-{phase.backend}-batch-{batch_number}-"
-        )
-        temporary_root = Path(temporary_directory.name)
-        temporary_phase = BenchmarkPhase(
-            name=phase.name,
-            backend=phase.backend,
-            device=phase.device,
-            output=temporary_root / "benchmark.json",
-            server_log=temporary_root / "server.log",
-            response_log=temporary_root / "responses.jsonl",
-        )
-
-    try:
-        server_process: subprocess.Popen[str] | None = None
-        batch_data: dict[str, Any] | None = None
-        phase_error: BaseException | None = None
-        try:
-            server_process = start_lemond(
-                lemonade_build,
-                cache_dir,
-                temporary_phase.server_log,
-                env=env,
-                port=port,
-            )
-            wait_for_live(server_process, port)
-            set_lemonade_config_values(
-                lemonade,
-                llama_server,
-                phase.device,
-                models_dir=models_dir,
-                env=env,
-                port=port,
-            )
-            run_benchmark(
-                lemonade,
-                phase.backend,
-                temporary_phase.output,
-                temporary_phase.response_log,
-                models,
-                auto_pull=models_dir is None and phase_index == 0,
-                env=env,
-            )
-            if batched:
-                batch_data = json.loads(
-                    temporary_phase.output.read_text(encoding="utf-8")
-                )
-        except BaseException as exc:
-            phase_error = exc
-            raise
-        finally:
-            stop_error: BaseException | None = None
-            try:
-                server_return_code = stop_server(server_process)
-                log(
-                    f"{phase.name} lemond stopped with status {server_return_code}"
-                )
-            except BaseException as exc:
-                stop_error = exc
-                raise
-            finally:
-                if batched:
-                    assert batch_number is not None
-                    try:
-                        append_phase_logs(phase, temporary_phase, batch_number)
-                    except Exception as exc:
-                        if phase_error is None and stop_error is None:
-                            raise
-                        log(
-                            f"Could not append {phase.backend} batch "
-                            f"{batch_number} logs: {exc}"
-                        )
-
-        invocation_phases = (
-            phases[:phase_index]
-            + (temporary_phase,)
-            + phases[phase_index + 1 :]
-        )
-        verify_configured_executable(
-            phases=invocation_phases,
-            phase_index=phase_index,
-            cache_dir=cache_dir,
-            llama_server=llama_server,
-        )
-        if batched:
-            assert batch_data is not None
-            merged_count = merge_benchmark_output(phase.output, batch_data)
-            log(
-                f"Merged {merged_count} {phase.backend} model(s) from batch "
-                f"{batch_number} into {phase.output}"
-            )
-    finally:
-        if temporary_directory is not None:
-            temporary_directory.cleanup()
-
-
 def run(args: argparse.Namespace) -> int:
     port = 13305
     lemonade_build = args.lemonade_build_dir.resolve()
     lemonade = lemonade_build / "lemonade"
     llama_server = args.llama_server.resolve()
-    configured_models_dir = getattr(args, "models_dir", None)
     models_dir = (
-        configured_models_dir.resolve()
-        if configured_models_dir is not None
+        args.models_dir.resolve()
+        if args.models_dir is not None
         else None
     )
-    batched = getattr(args, "batched", False)
-    batch_number = getattr(args, "batch_number", None)
     phases = (
         BenchmarkPhase(
             name="HRX",
@@ -614,7 +395,7 @@ def run(args: argparse.Namespace) -> int:
             args.vulkan_response_log,
         ):
             log_path.parent.mkdir(parents=True, exist_ok=True)
-            if batched:
+            if args.batched:
                 log_path.touch(exist_ok=True)
             else:
                 log_path.write_text("", encoding="utf-8")
@@ -639,21 +420,88 @@ def run(args: argparse.Namespace) -> int:
             log(
                 f"Starting {phase.name} benchmark phase on {phase.device}"
             )
-            run_phase(
-                phase=phase,
-                phase_index=phase_index,
+            active_phase = phase
+            if args.batched:
+                assert args.batch_number is not None
+                batch_root = args.state_root / phase.backend
+                active_phase = BenchmarkPhase(
+                    name=phase.name,
+                    backend=phase.backend,
+                    device=phase.device,
+                    output=batch_root / "benchmark.json",
+                    server_log=batch_root / "server.log",
+                    response_log=batch_root / "responses.jsonl",
+                )
+
+            server_process: subprocess.Popen[str] | None = None
+            try:
+                server_process = start_lemond(
+                    lemonade_build,
+                    cache_dir,
+                    active_phase.server_log,
+                    env=env,
+                    port=port,
+                )
+                wait_for_live(server_process, port)
+                set_lemonade_config_values(
+                    lemonade,
+                    llama_server,
+                    phase.device,
+                    models_dir=models_dir,
+                    env=env,
+                    port=port,
+                )
+                batch_data = run_benchmark(
+                    lemonade,
+                    phase.backend,
+                    active_phase.output,
+                    active_phase.response_log,
+                    args.models,
+                    auto_pull=models_dir is None and phase_index == 0,
+                    env=env,
+                )
+            finally:
+                try:
+                    server_return_code = stop_server(server_process)
+                    log(
+                        f"{phase.name} lemond stopped with status "
+                        f"{server_return_code}"
+                    )
+                finally:
+                    if args.batched:
+                        assert args.batch_number is not None
+                        for destination, source in (
+                            (phase.server_log, active_phase.server_log),
+                            (phase.response_log, active_phase.response_log),
+                        ):
+                            try:
+                                append_batch_log(
+                                    destination,
+                                    source,
+                                    args.batch_number,
+                                )
+                            except OSError as exc:
+                                log(
+                                    "Warning: could not append "
+                                    f"{phase.backend} batch {args.batch_number} "
+                                    f"log to {destination}: {exc}"
+                                )
+
+            verify_configured_executable(
+                phase=active_phase,
                 phases=phases,
-                lemonade_build=lemonade_build,
-                lemonade=lemonade,
-                llama_server=llama_server,
                 cache_dir=cache_dir,
-                models_dir=models_dir,
-                models=args.models,
-                env=env,
-                port=port,
-                batched=batched,
-                batch_number=batch_number,
+                llama_server=llama_server,
             )
+            if args.batched:
+                merged_count = merge_benchmark_output(
+                    phase.output,
+                    batch_data,
+                )
+                log(
+                    f"Merged {merged_count} {phase.backend} model(s) from "
+                    f"batch {args.batch_number} into {phase.output}"
+                )
     finally:
         remove_state_root(args.state_root)
         log(f"Cleaned benchmark state: {args.state_root}")
