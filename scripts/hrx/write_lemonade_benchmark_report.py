@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
 from collections.abc import Iterator, Sequence
 from pathlib import Path
@@ -18,6 +19,11 @@ ComparisonKey = tuple[str, str, int, str, str]
 ComparisonMatch = tuple[ComparisonKey, Benchmark, Benchmark]
 BASELINE_UNAVAILABLE_MESSAGE = (
     "No usable main benchmark artifact is available for comparison."
+)
+UNAVAILABLE_MEASUREMENT = "—"
+PARTIAL_FAILURE_NOTE = (
+    "Statistics shown for partial failures include successful runs only; "
+    "failed runs are excluded. `—` marks an unavailable measurement."
 )
 
 
@@ -63,6 +69,7 @@ def index_scenarios(
     """Index scenarios and reject ambiguous comparison identities."""
     scenarios: dict[ComparisonKey, Benchmark] = {}
     for key, scenario in iter_scenarios(benchmark):
+        validate_scenario(scenario)
         if key in scenarios:
             raise BenchmarkReportError(
                 f"Duplicate {backend_name} comparison key: {describe_key(key)}"
@@ -103,14 +110,17 @@ def match_scenarios(
     matches: list[ComparisonMatch] = []
     for key, left_scenario in left_scenarios.items():
         right_scenario = right_scenarios[key]
-        left_tokens = left_scenario["output_tokens"]
-        right_tokens = right_scenario["output_tokens"]
-        if left_tokens != right_tokens:
-            raise BenchmarkReportError(
-                f"Output-token count mismatch for {describe_key(key)}: "
-                f"{left_backend_label}={left_tokens}, "
-                f"{right_backend_label}={right_tokens}"
-            )
+        left_has_measurements = scenario_has_measurements(left_scenario)
+        right_has_measurements = scenario_has_measurements(right_scenario)
+        if left_has_measurements and right_has_measurements:
+            left_tokens = left_scenario["output_tokens"]
+            right_tokens = right_scenario["output_tokens"]
+            if left_tokens != right_tokens:
+                raise BenchmarkReportError(
+                    f"Output-token count mismatch for {describe_key(key)}: "
+                    f"{left_backend_label}={left_tokens}, "
+                    f"{right_backend_label}={right_tokens}"
+                )
         matches.append((key, left_scenario, right_scenario))
     return matches
 
@@ -125,6 +135,166 @@ def format_code(value: object) -> str:
 def format_table_cell(value: object) -> str:
     """Escape benchmark labels for a Markdown table cell."""
     return str(value).replace("\n", " ").replace("|", "\\|")
+
+
+def scenario_failed_runs(scenario: Benchmark) -> int:
+    """Return a validated failed-run count from one Lemonade scenario."""
+    failed_runs = scenario["failed_runs"]
+    if type(failed_runs) is not int or failed_runs < 0:
+        raise BenchmarkReportError(
+            "Scenario failed_runs must be a non-negative integer"
+        )
+    return failed_runs
+
+
+def scenario_has_measurements(scenario: Benchmark) -> bool:
+    """Return whether Lemonade retained at least one successful sample."""
+    all_runs_failed = scenario.get("all_runs_failed", False)
+    if type(all_runs_failed) is not bool:
+        raise BenchmarkReportError(
+            "Scenario all_runs_failed must be a Boolean when present"
+        )
+    return not all_runs_failed
+
+
+def scenario_output_tokens(scenario: Benchmark) -> int:
+    """Return a validated output-token count."""
+    output_tokens = scenario["output_tokens"]
+    if type(output_tokens) is not int or output_tokens < 0:
+        raise BenchmarkReportError(
+            "Scenario output_tokens must be a non-negative integer"
+        )
+    return output_tokens
+
+
+def scenario_metric(
+    scenario: Benchmark,
+    field: str,
+    statistic: str | None = None,
+    *,
+    optional: bool = False,
+) -> int | float | None:
+    """Return one finite, non-negative measurement."""
+    if optional and field not in scenario:
+        return None
+    value = scenario[field]
+    if statistic is not None:
+        value = value[statistic]
+    if (
+        type(value) not in (int, float)
+        or not math.isfinite(value)
+        or value < 0
+    ):
+        description = f"{field}.{statistic}" if statistic else field
+        raise BenchmarkReportError(
+            f"Scenario {description} must be a finite non-negative number"
+        )
+    return value
+
+
+def validate_scenario(scenario: Benchmark) -> None:
+    """Validate the scenario fields consumed by the report."""
+    scenario_failed_runs(scenario)
+    output_tokens = scenario_output_tokens(scenario)
+    if not scenario_has_measurements(scenario):
+        if output_tokens != 0:
+            raise BenchmarkReportError(
+                "Scenario without measurements must report zero output_tokens"
+            )
+        unexpected_fields = [
+            field
+            for field in ("ttft_ms", "tps", "vram_peak_gb")
+            if field in scenario
+        ]
+        if unexpected_fields:
+            raise BenchmarkReportError(
+                "Scenario without measurements contains measurement fields: "
+                + ", ".join(unexpected_fields)
+            )
+        return
+
+    for field in ("ttft_ms", "tps"):
+        for statistic in ("mean", "min", "max"):
+            scenario_metric(scenario, field, statistic)
+    scenario_metric(scenario, "vram_peak_gb", optional=True)
+
+
+def format_scenario_status(scenario: Benchmark, backend_label: str) -> str:
+    """Format one backend's status for a scenario row."""
+    failed_runs = scenario_failed_runs(scenario)
+    if not scenario_has_measurements(scenario):
+        return f"{backend_label} missing ({failed_runs} failed)"
+    if failed_runs:
+        return f"{failed_runs} failed"
+    return "OK"
+
+
+def format_pair_status(
+    left_scenario: Benchmark,
+    right_scenario: Benchmark,
+    left_backend_label: str,
+    right_backend_label: str,
+) -> str:
+    """Summarize failures and missing measurements across two backends."""
+    left_failed_runs = scenario_failed_runs(left_scenario)
+    right_failed_runs = scenario_failed_runs(right_scenario)
+    left_has_measurements = scenario_has_measurements(left_scenario)
+    right_has_measurements = scenario_has_measurements(right_scenario)
+
+    if left_has_measurements and right_has_measurements:
+        failed_runs = left_failed_runs + right_failed_runs
+        return f"{failed_runs} failed" if failed_runs else "OK"
+
+    statuses = []
+    for label, failed_runs, has_measurements in (
+        (
+            left_backend_label,
+            left_failed_runs,
+            left_has_measurements,
+        ),
+        (
+            right_backend_label,
+            right_failed_runs,
+            right_has_measurements,
+        ),
+    ):
+        if not has_measurements:
+            statuses.append(f"{label} missing ({failed_runs} failed)")
+        elif failed_runs:
+            statuses.append(f"{label}: {failed_runs} failed")
+    return "; ".join(statuses)
+
+
+def format_metric(
+    scenario: Benchmark,
+    field: str,
+    statistic: str | None = None,
+    *,
+    optional: bool = False,
+) -> str:
+    """Format one measurement, preserving malformed usable data as fatal."""
+    if not scenario_has_measurements(scenario):
+        return UNAVAILABLE_MEASUREMENT
+    value = scenario_metric(
+        scenario,
+        field,
+        statistic,
+        optional=optional,
+    )
+    if value is None:
+        return UNAVAILABLE_MEASUREMENT
+    return f"{value:.1f}"
+
+
+def format_output_tokens(
+    left_scenario: Benchmark, right_scenario: Benchmark
+) -> str:
+    """Use the token count from either available side of a comparison."""
+    if scenario_has_measurements(left_scenario):
+        return str(scenario_output_tokens(left_scenario))
+    if scenario_has_measurements(right_scenario):
+        return str(scenario_output_tokens(right_scenario))
+    return UNAVAILABLE_MEASUREMENT
 
 
 def format_backend_table(benchmark: Benchmark, backend_name: str) -> str:
@@ -146,21 +316,24 @@ def format_backend_table(benchmark: Benchmark, backend_name: str) -> str:
                 [
                     details,
                     "",
-                    "| Scenario | TTFT mean (ms) | TTFT min (ms) | "
+                    "| Scenario | Status | TTFT mean (ms) | TTFT min (ms) | "
                     "TTFT max (ms) | TPS mean | TPS min | TPS max | "
                     "VRAM peak (GB) |",
-                    "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+                    "| --- | --- | ---: | ---: | ---: | ---: | ---: | "
+                    "---: | ---: |",
                 ]
             )
             for scenario in result["scenarios"]:
-                ttft = scenario["ttft_ms"]
-                tps = scenario["tps"]
                 lines.append(
                     f"| {format_table_cell(scenario['name'])} | "
-                    f"{ttft['mean']:.1f} | {ttft['min']:.1f} | "
-                    f"{ttft['max']:.1f} | {tps['mean']:.1f} | "
-                    f"{tps['min']:.1f} | {tps['max']:.1f} | "
-                    f"{scenario['vram_peak_gb']:.1f} |"
+                    f"{format_scenario_status(scenario, backend_name)} | "
+                    f"{format_metric(scenario, 'ttft_ms', 'mean')} | "
+                    f"{format_metric(scenario, 'ttft_ms', 'min')} | "
+                    f"{format_metric(scenario, 'ttft_ms', 'max')} | "
+                    f"{format_metric(scenario, 'tps', 'mean')} | "
+                    f"{format_metric(scenario, 'tps', 'min')} | "
+                    f"{format_metric(scenario, 'tps', 'max')} | "
+                    f"{format_metric(scenario, 'vram_peak_gb', optional=True)} |"
                 )
             lines.append("")
 
@@ -209,27 +382,44 @@ def format_comparison_table(
                     f"**Context:** {format_code(context)} tokens · "
                     f"**Backend arguments:** {arguments}",
                     "",
-                    f"| Scenario | Output tokens | {left_backend_label} TPS mean | "
+                    f"| Scenario | Status | Output tokens | "
+                    f"{left_backend_label} TPS mean | "
                     f"{right_backend_label} TPS mean | TPS parity | "
                     f"{left_backend_label} TTFT mean (ms) | "
                     f"{right_backend_label} TTFT mean (ms) | "
                     f"{left_backend_label} VRAM peak (GB) | "
                     f"{right_backend_label} VRAM peak (GB) |",
-                    "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+                    "| --- | --- | ---: | ---: | ---: | ---: | ---: | "
+                    "---: | ---: | ---: |",
                 ]
             )
             previous_result = result_key
 
-        hrx_tps = hrx_scenario["tps"]["mean"]
-        vulkan_tps = vulkan_scenario["tps"]["mean"]
+        both_have_measurements = scenario_has_measurements(
+            hrx_scenario
+        ) and scenario_has_measurements(vulkan_scenario)
+        parity = "N/A"
+        if both_have_measurements:
+            parity = format_tps_parity(
+                hrx_scenario["tps"]["mean"],
+                vulkan_scenario["tps"]["mean"],
+            )
+        status = format_pair_status(
+            hrx_scenario,
+            vulkan_scenario,
+            left_backend_label,
+            right_backend_label,
+        )
         lines.append(
             f"| {format_table_cell(scenario_name)} | "
-            f"{hrx_scenario['output_tokens']} | {hrx_tps:.1f} | "
-            f"{vulkan_tps:.1f} | {format_tps_parity(hrx_tps, vulkan_tps)} | "
-            f"{hrx_scenario['ttft_ms']['mean']:.1f} | "
-            f"{vulkan_scenario['ttft_ms']['mean']:.1f} | "
-            f"{hrx_scenario['vram_peak_gb']:.1f} | "
-            f"{vulkan_scenario['vram_peak_gb']:.1f} |"
+            f"{status} | "
+            f"{format_output_tokens(hrx_scenario, vulkan_scenario)} | "
+            f"{format_metric(hrx_scenario, 'tps', 'mean')} | "
+            f"{format_metric(vulkan_scenario, 'tps', 'mean')} | {parity} | "
+            f"{format_metric(hrx_scenario, 'ttft_ms', 'mean')} | "
+            f"{format_metric(vulkan_scenario, 'ttft_ms', 'mean')} | "
+            f"{format_metric(hrx_scenario, 'vram_peak_gb', optional=True)} | "
+            f"{format_metric(vulkan_scenario, 'vram_peak_gb', optional=True)} |"
         )
 
     return "\n".join(lines).rstrip()
@@ -285,6 +475,7 @@ def format_report(hrx_benchmark: Benchmark, vulkan_benchmark: Benchmark) -> str:
     matches = match_scenarios(hrx_benchmark, vulkan_benchmark)
     return "\n\n".join(
         (
+            PARTIAL_FAILURE_NOTE,
             format_backend_table(hrx_benchmark, "HRX"),
             format_backend_table(vulkan_benchmark, "Vulkan"),
             format_comparison_table(matches),
