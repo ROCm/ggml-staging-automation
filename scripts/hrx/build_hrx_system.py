@@ -21,6 +21,16 @@ from hrx_build import (
 )
 
 
+LOOM_TOOL_TARGETS = (
+    "loom_tools_loom-link_loom-link",
+    "loom_tools_loom-format_loom-format",
+)
+LOOM_TOOL_INSTALL_COMPONENTS = (
+    "IREETool-loom-link",
+    "IREETool-loom-format",
+)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     add_common_path_args(parser)
@@ -69,19 +79,33 @@ def main() -> int:
         *extra_cmake_args,
     ]
     run(cmake_args, env=env)
-    run(["cmake", "--build", args.hrx_build_dir.resolve(), "--target", args.target], env=env)
     run(
         [
             "cmake",
-            "--install",
+            "--build",
             args.hrx_build_dir.resolve(),
-            "--prefix",
-            args.hrx_install_dir.resolve(),
-            "--component",
-            args.install_component,
+            "--target",
+            args.target,
+            *LOOM_TOOL_TARGETS,
         ],
         env=env,
     )
+    install_components = dict.fromkeys(
+        (args.install_component, *LOOM_TOOL_INSTALL_COMPONENTS)
+    )
+    for component in install_components:
+        run(
+            [
+                "cmake",
+                "--install",
+                args.hrx_build_dir.resolve(),
+                "--prefix",
+                args.hrx_install_dir.resolve(),
+                "--component",
+                component,
+            ],
+            env=env,
+        )
     return 0
 
 
