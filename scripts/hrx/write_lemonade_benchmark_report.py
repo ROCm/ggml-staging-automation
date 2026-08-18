@@ -1,7 +1,13 @@
 #!/usr/bin/env python3
 # Copyright Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
-"""Write an HRX/Vulkan Lemonade benchmark report as Markdown."""
+"""Write an HRX/Vulkan Lemonade benchmark report as Markdown.
+
+Current HRX and Vulkan results must cover exactly the same scenarios. A main
+baseline may contain additional scenarios from a broader model tier, but it
+must contain every current scenario; comparisons retain current-result order
+and validate output-token counts for every matched scenario.
+"""
 
 from __future__ import annotations
 
@@ -84,21 +90,25 @@ def match_scenarios(
     *,
     left_backend_label: str = "HRX",
     right_backend_label: str = "Vulkan",
+    allow_right_superset: bool = False,
 ) -> list[ComparisonMatch]:
-    """Match two benchmark result sets and enforce comparison integrity."""
+    """Match result sets, optionally ignoring scenarios found only on the right."""
     left_scenarios = index_scenarios(left_benchmark, left_backend_label)
     right_scenarios = index_scenarios(right_benchmark, right_backend_label)
 
     missing_right = [key for key in left_scenarios if key not in right_scenarios]
     missing_left = [key for key in right_scenarios if key not in left_scenarios]
-    if missing_right or missing_left:
+    right_has_extra_scenarios = bool(missing_left)
+    right_extras_are_invalid = right_has_extra_scenarios and not allow_right_superset
+    counterparts_do_not_match = bool(missing_right) or right_extras_are_invalid
+    if counterparts_do_not_match:
         details = []
         if missing_right:
             details.append(
                 f"missing from {right_backend_label}: "
                 + "; ".join(describe_key(key) for key in missing_right)
             )
-        if missing_left:
+        if right_extras_are_invalid:
             details.append(
                 f"missing from {left_backend_label}: "
                 + "; ".join(describe_key(key) for key in missing_left)
@@ -438,12 +448,14 @@ def format_main_comparisons(
         main_hrx_benchmark,
         left_backend_label="Current HRX",
         right_backend_label="Main HRX",
+        allow_right_superset=True,
     )
     vulkan_matches = match_scenarios(
         current_vulkan_benchmark,
         main_vulkan_benchmark,
         left_backend_label="Current Vulkan",
         right_backend_label="Main Vulkan",
+        allow_right_superset=True,
     )
 
     sections = []

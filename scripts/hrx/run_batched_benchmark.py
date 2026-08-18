@@ -1,7 +1,17 @@
 #!/usr/bin/env python3
 # Copyright Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
-"""Run commands over verified, disk-bounded batches of downloaded models."""
+"""Run commands over cumulative, verified, disk-bounded model tiers.
+
+The model manifest orders tiers from the smallest coverage set to the largest
+and assigns every model the minimum tier that includes it. ``--model-tier``
+selects the requested tier plus every tier below it, preserving manifest order
+until disk-bounded batch planning sorts the selected models by size.
+
+Manifest and tier errors fail setup before any model is downloaded. Each viable
+batch is still downloaded, verified, benchmarked, and removed independently so
+the configured disk bound holds across the complete selected tier.
+"""
 
 from __future__ import annotations
 
@@ -42,6 +52,7 @@ class DownloadError(RuntimeError):
 @dataclass(frozen=True)
 class ModelSpec:
     id: str
+    tier: str
     name: str
     directory: str
     repository: str
@@ -55,6 +66,12 @@ class ModelSpec:
         repository = urllib.parse.quote(self.repository, safe="/")
         filename = urllib.parse.quote(self.filename, safe="")
         return f"{HF_BASE_URL}/{repository}/resolve/{self.revision}/{filename}"
+
+
+@dataclass(frozen=True)
+class ModelManifest:
+    tiers: tuple[str, ...]
+    models: tuple[ModelSpec, ...]
 
 
 @dataclass(frozen=True)
@@ -87,16 +104,21 @@ def _require_string(
     field_name: str,
     context: str,
 ) -> str:
-    result = value.get(field_name)
-    if not isinstance(result, str) or not result:
-        raise BatchBenchmarkError(
-            f"{context}.{field_name} must be a non-empty string"
-        )
-    if "\0" in result:
-        raise BatchBenchmarkError(
-            f"{context}.{field_name} must not contain a NUL byte"
-        )
-    return result
+    return _require_string_value(
+        value.get(field_name),
+        f"{context}.{field_name}",
+    )
+
+
+def _require_string_value(value: Any, context: str) -> str:
+    value_is_a_string = isinstance(value, str)
+    value_is_present = bool(value)
+    value_is_valid = value_is_a_string and value_is_present
+    if not value_is_valid:
+        raise BatchBenchmarkError(f"{context} must be a non-empty string")
+    if "\0" in value:
+        raise BatchBenchmarkError(f"{context} must not contain a NUL byte")
+    return value
 
 
 def _validate_local_name(value: str, field: str, context: str) -> None:
@@ -118,11 +140,34 @@ def _validate_repository(repository: str, context: str) -> None:
         )
 
 
-def load_manifest(path: Path) -> list[ModelSpec]:
-    """Load and validate an ordered model manifest."""
+def load_manifest(path: Path) -> ModelManifest:
+    """Load and validate an ordered, cumulative model-tier manifest."""
     root = _require_object(_load_json(path, "model manifest"), "manifest")
-    if type(root.get("schema_version")) is not int or root["schema_version"] != 1:
-        raise BatchBenchmarkError("manifest.schema_version must equal 1")
+    schema_version = root.get("schema_version")
+    version_is_integer = type(schema_version) is int
+    version_is_two = schema_version == 2
+    version_is_valid = version_is_integer and version_is_two
+    if not version_is_valid:
+        raise BatchBenchmarkError("manifest.schema_version must equal 2")
+
+    raw_tiers = root.get("tiers")
+    tiers_are_an_array = isinstance(raw_tiers, list)
+    tiers_are_present = bool(raw_tiers)
+    tiers_are_valid = tiers_are_an_array and tiers_are_present
+    if not tiers_are_valid:
+        raise BatchBenchmarkError("manifest.tiers must be a non-empty array")
+
+    tiers: list[str] = []
+    tier_names: set[str] = set()
+    for tier_index, raw_tier in enumerate(raw_tiers):
+        tier = _require_string_value(
+            raw_tier,
+            f"manifest.tiers[{tier_index}]",
+        )
+        if tier in tier_names:
+            raise BatchBenchmarkError(f"Duplicate model tier in manifest: {tier}")
+        tier_names.add(tier)
+        tiers.append(tier)
 
     entries = root.get("models")
     if not isinstance(entries, list) or not entries:
@@ -137,6 +182,7 @@ def load_manifest(path: Path) -> list[ModelSpec]:
         entry = _require_object(raw_entry, context)
 
         model_id = _require_string(entry, "id", context)
+        tier = _require_string(entry, "tier", context)
         name = _require_string(entry, "name", context)
         directory = _require_string(entry, "directory", context)
         repository = _require_string(entry, "repository", context)
@@ -148,6 +194,10 @@ def load_manifest(path: Path) -> list[ModelSpec]:
         _validate_local_name(directory, "directory", context)
         _validate_local_name(filename, "filename", context)
         _validate_repository(repository, context)
+        if tier not in tier_names:
+            raise BatchBenchmarkError(
+                f"{context}.tier references unknown tier {tier!r}"
+            )
         if type(size_bytes) is not int or size_bytes <= 0:
             raise BatchBenchmarkError(
                 f"{context}.size_bytes must be a positive integer"
@@ -171,6 +221,7 @@ def load_manifest(path: Path) -> list[ModelSpec]:
         models.append(
             ModelSpec(
                 id=model_id,
+                tier=tier,
                 name=name,
                 directory=directory,
                 repository=repository,
@@ -180,7 +231,7 @@ def load_manifest(path: Path) -> list[ModelSpec]:
                 sha256=sha256,
             )
         )
-    return models
+    return ModelManifest(tiers=tuple(tiers), models=tuple(models))
 
 
 def load_benchmark_spec(path: Path) -> list[BenchmarkSpec]:
@@ -271,32 +322,28 @@ def load_benchmark_spec(path: Path) -> list[BenchmarkSpec]:
 
 
 def select_models(
-    manifest: list[ModelSpec],
-    requested_ids: list[str],
+    manifest: ModelManifest,
+    requested_tier: str,
 ) -> list[ModelSpec]:
-    """Select requested model IDs while retaining manifest order."""
-    if not requested_ids:
-        raise BatchBenchmarkError("At least one model id must be requested")
-
-    seen: set[str] = set()
-    duplicates: set[str] = set()
-    for model_id in requested_ids:
-        if model_id in seen:
-            duplicates.add(model_id)
-        seen.add(model_id)
-    if duplicates:
+    """Select one tier and every lower tier in manifest model order."""
+    try:
+        requested_tier_index = manifest.tiers.index(requested_tier)
+    except ValueError:
+        available_tiers = ", ".join(manifest.tiers)
         raise BatchBenchmarkError(
-            f"Duplicate requested model id(s): {', '.join(sorted(duplicates))}"
-        )
+            f"Unknown model tier {requested_tier!r}; "
+            f"available tiers: {available_tiers}"
+        ) from None
 
-    by_id = {model.id: model for model in manifest}
-    unknown = sorted(set(requested_ids) - set(by_id))
-    if unknown:
+    included_tiers = set(manifest.tiers[: requested_tier_index + 1])
+    selected = [
+        model for model in manifest.models if model.tier in included_tiers
+    ]
+    if not selected:
         raise BatchBenchmarkError(
-            f"Unknown requested model id(s): {', '.join(unknown)}"
+            f"Model tier {requested_tier!r} does not select any models"
         )
-    requested = set(requested_ids)
-    return [model for model in manifest if model.id in requested]
+    return selected
 
 
 def calculate_batch_capacity(max_disk_gib: float, free_bytes: int) -> int:
@@ -556,7 +603,7 @@ def run(args: argparse.Namespace) -> int:
     try:
         benchmarks = load_benchmark_spec(args.benchmark_spec)
         manifest = load_manifest(args.model_manifest)
-        requested = select_models(manifest, args.models)
+        selected = select_models(manifest, args.model_tier)
         work_root = prepare_work_root(args.work_root)
 
         free_bytes = shutil.disk_usage(work_root).free
@@ -564,7 +611,7 @@ def run(args: argparse.Namespace) -> int:
             args.max_disk_gib,
             free_bytes,
         )
-        batches = plan_batches(requested, capacity_bytes)
+        batches = plan_batches(selected, capacity_bytes)
         log(
             "Disk capacity: "
             f"limit={args.max_disk_gib:g} GiB, "
@@ -681,7 +728,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="JSON command list; relative argv paths use the current directory",
     )
     parser.add_argument("--model-manifest", type=Path, required=True)
-    parser.add_argument("--models", nargs="+", required=True, metavar="ID")
+    parser.add_argument("--model-tier", required=True, metavar="TIER")
     parser.add_argument("--work-root", type=Path, required=True)
     parser.add_argument("--max-disk-gib", type=float, default=40.0)
     return parser.parse_args(argv)

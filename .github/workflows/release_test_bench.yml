@@ -18,11 +18,11 @@ on:
       package_root_name:
         type: string
         default: llama.cpp-install
-      # WARNING: All models listed here will be pulled from Hugging Face during the benchmark.
-      models:
-        description: Space-separated model manifest IDs to benchmark.
+      # WARNING: All models selected by this tier are pulled from Hugging Face.
+      model_tier:
+        description: Cumulative model manifest tier to benchmark.
         type: string
-        default: qwen3-30b-a3b-instruct-2507
+        required: true
       allow_failure:
         description: Allow release validation jobs to fail without failing the calling workflow.
         type: boolean
@@ -119,14 +119,13 @@ jobs:
         id: lemonade_benchmark
         continue-on-error: true
         env:
-          LEMONADE_MODELS: ${{ inputs.models }}
+          LEMONADE_MODEL_TIER: ${{ inputs.model_tier }}
         run: |
           set -euo pipefail
-          read -r -a models <<< "$LEMONADE_MODELS"
           python3 scripts/hrx/run_batched_benchmark.py \
             --benchmark-spec "$PWD/scripts/hrx/benchmark_spec.json" \
             --model-manifest "$PWD/scripts/hrx/lemonade_model_manifest.json" \
-            --models "${models[@]}" \
+            --model-tier "$LEMONADE_MODEL_TIER" \
             --work-root "$RUNNER_TEMP/$BENCHMARK_STATE_NAME" \
             --max-disk-gib 40
 

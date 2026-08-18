@@ -74,6 +74,23 @@ Windows support is intentionally not implemented yet. The scripts and CMake
 layout keep runtime libraries adjacent so the later Windows flow can use the
 same basic packaging model with DLL copying instead of ELF RPATHs.
 
+## Benchmark model tiers
+
+Benchmark models are grouped into cumulative tiers in
+`scripts/hrx/lemonade_model_manifest.json`. The root `tiers` array orders tiers
+from the smallest to the most comprehensive. Each model's `tier` is its minimum
+tier, so selecting a tier includes models assigned to that tier and every tier
+below it.
+
+The `smoke` tier benchmarks `qwen3-30b-a3b-instruct-2507` and `llama-3.1-8b`.
+The `full` tier adds every other model in the manifest. CI selects tiers by
+event:
+
+- Pull requests use `smoke`.
+- Pushes to `main` use `full`.
+- Manual CI runs offer a `smoke` or `full` choice and default to `full`.
+- Release runs use `full`; benchmark failures remain nonblocking for publishing.
+
 ## Releases
 
 The `Release` workflow (`.github/workflows/release.yml`) runs nightly and can
