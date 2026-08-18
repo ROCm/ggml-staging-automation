@@ -115,20 +115,31 @@ jobs:
             --hrx-system-commit "$HRX_SYSTEM_COMMIT" \
             --lemonade-commit "$LEMONADE_COMMIT"
 
-      - name: Run batched Lemonade HRX and Vulkan benchmarks
-        id: lemonade_benchmark
+      - name: Fetch perplexity corpus
+        run: |
+          python3 scripts/hrx/fetch_wikitext2.py \
+            --output-dir "$PWD/perplexity-corpus"
+
+      - name: Run batched HRX and Vulkan benchmarks
+        id: benchmark
         continue-on-error: true
         env:
-          LEMONADE_MODELS: ${{ inputs.models }}
+          BENCHMARK_MODELS: ${{ inputs.models }}
         run: |
           set -euo pipefail
-          read -r -a models <<< "$LEMONADE_MODELS"
+          read -r -a models <<< "$BENCHMARK_MODELS"
           python3 scripts/hrx/run_batched_benchmark.py \
             --benchmark-spec "$PWD/scripts/hrx/benchmark_spec.json" \
             --model-manifest "$PWD/scripts/hrx/lemonade_model_manifest.json" \
             --models "${models[@]}" \
             --work-root "$RUNNER_TEMP/$BENCHMARK_STATE_NAME" \
             --max-disk-gib 40
+
+      - name: Remove perplexity corpus
+        # The runners are self-hosted, so benchmark inputs are removed explicitly.
+        if: ${{ always() }}
+        run: |
+          rm -rf "$PWD/perplexity-corpus"
 
       - name: Find latest main benchmark
         id: main_benchmark
@@ -167,7 +178,20 @@ jobs:
             --baseline-run-url "$BASELINE_RUN_URL" \
             >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Upload Lemonade benchmark
+      - name: Write perplexity report
+        env:
+          BASELINE_BENCHMARK_DIR: ${{ runner.temp }}/lemonade-main-benchmark-${{ matrix.gpu_target }}
+          BASELINE_RUN_URL: ${{ steps.main_benchmark.outputs.run_url }}
+        run: |
+          python3 scripts/hrx/write_perplexity_report.py \
+            "$PWD/lemonade-benchmark/perplexity-hrx.json" \
+            "$PWD/lemonade-benchmark/perplexity-vulkan.json" \
+            --baseline-hrx-perplexity "$BASELINE_BENCHMARK_DIR/perplexity-hrx.json" \
+            --baseline-vulkan-perplexity "$BASELINE_BENCHMARK_DIR/perplexity-vulkan.json" \
+            --baseline-run-url "$BASELINE_RUN_URL" \
+            >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload benchmark results
         if: ${{ always() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -175,11 +199,13 @@ jobs:
           path: |
             lemonade-benchmark/benchmark-hrx.json
             lemonade-benchmark/benchmark-vulkan.json
+            lemonade-benchmark/perplexity-hrx.json
+            lemonade-benchmark/perplexity-vulkan.json
             lemonade-benchmark/metadata.json
           if-no-files-found: error
           retention-days: 45
 
-      - name: Upload Lemonade debug logs
+      - name: Upload benchmark debug logs
         # Preserve diagnostics when the benchmark or report step fails.
         if: ${{ always() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -190,10 +216,12 @@ jobs:
             lemonade-benchmark-debug/lemond-vulkan.log
             lemonade-benchmark-debug/responses-hrx.jsonl
             lemonade-benchmark-debug/responses-vulkan.jsonl
+            lemonade-benchmark-debug/perplexity-hrx.log
+            lemonade-benchmark-debug/perplexity-vulkan.log
           if-no-files-found: warn
 
-      - name: Fail incomplete Lemonade benchmark
-        if: ${{ always() && steps.lemonade_benchmark.outcome == 'failure' }}
+      - name: Fail incomplete benchmark
+        if: ${{ always() && steps.benchmark.outcome == 'failure' }}
         run: |
-          echo "One or more Lemonade benchmark batches failed." >&2
+          echo "One or more benchmark batches failed." >&2
           exit 1

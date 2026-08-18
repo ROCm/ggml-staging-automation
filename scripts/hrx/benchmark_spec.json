@@ -23,6 +23,27 @@
         "--vulkan-response-log",
         "lemonade-benchmark-debug/responses-vulkan.jsonl"
       ]
+    },
+    {
+      "id": "perplexity",
+      "argv": [
+        "python3",
+        "scripts/hrx/run_perplexity_benchmark.py",
+        "--llama-perplexity",
+        "release/benchmark-package/bin/llama-perplexity",
+        "--model-manifest",
+        "scripts/hrx/lemonade_model_manifest.json",
+        "--corpus-file",
+        "perplexity-corpus/wiki.test.raw",
+        "--hrx-output",
+        "lemonade-benchmark/perplexity-hrx.json",
+        "--vulkan-output",
+        "lemonade-benchmark/perplexity-vulkan.json",
+        "--hrx-log",
+        "lemonade-benchmark-debug/perplexity-hrx.log",
+        "--vulkan-log",
+        "lemonade-benchmark-debug/perplexity-vulkan.log"
+      ]
     }
   ]
 }
