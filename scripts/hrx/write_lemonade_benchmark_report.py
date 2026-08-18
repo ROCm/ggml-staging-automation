@@ -20,21 +20,40 @@ Terms:
   (``all_runs_failed``); a *partial failure* has ``failed_runs > 0`` but still
   reports statistics over the runs that succeeded.
 
+The artifact shape, reduced to the fields this report reads (``#`` marks the
+comparison key)::
+
+    {"models": [
+      {"model": "llama-3.1-8b",                          # key
+       "results": [
+         {"recipe": "llamacpp", "backend": "hrx",        # recipe: key
+          "ctx_size": 4096, "backend_args": "",          # key, key
+          "scenarios": [
+            {"name": "p128g64",                          # key
+             "failed_runs": 0, "output_tokens": 64,
+             "ttft_ms": {"mean": .., "min": .., "max": ..},
+             "tps":     {"mean": .., "min": .., "max": ..},
+             "vram_peak_gb": 4.5},                       # optional
+            {"name": "p1024g64", "failed_runs": 3,
+             "output_tokens": 0, "all_runs_failed": true}]}]}]}
+
 The command line, the exit-code contract (current pair fatal, ``main``
-baseline best-effort), and the rule for which scenarios may be compared all
-live in ``benchmark_report`` and are shared with the perplexity report; this
-file supplies ``kind="benchmark"`` and the two section builders.
+baseline best-effort), and the matching rule all live in ``benchmark_report``
+and are shared with the perplexity report; this file supplies
+``kind="benchmark"`` and the section builders. Under that rule a model is
+compared only when both files contain it, and then all of its scenarios must
+be present on both sides. On top of it, this report requires matched
+scenarios to report the same output-token count wherever both sides have
+measurements: a TPS comparison over different generation lengths would be
+meaningless, so a mismatch is treated like a missing counterpart (fatal for
+the current pair, baseline-degrading for ``main``).
 
 The report is printed to stdout in a fixed order: the partial-failure note, a
-per-backend table for HRX then Vulkan, an HRX/Vulkan comparison, and finally
-either two current-versus-main comparisons (HRX and Vulkan each against the
-latest ``main`` artifact) or a one-line note that no baseline was usable.
-
-On top of the shared matching rule, this report requires matched scenarios to
-report the same output-token count wherever both sides have measurements: a
-TPS comparison over different generation lengths would be meaningless, so a
-mismatch is treated like a missing counterpart (fatal for the current pair,
-baseline-degrading for ``main``).
+per-backend table for HRX then Vulkan (every model each side ran, so a model
+skipped by the comparison is still visible), an HRX/Vulkan comparison, and
+finally either two current-versus-main comparisons (HRX and Vulkan each
+against the latest ``main`` artifact) or a one-line note that no baseline was
+usable.
 
 Validation is intentionally strict on shape (``type(x) is int`` rather than
 ``isinstance``) so a Boolean or NaN never masquerades as a count or a metric,
@@ -115,9 +134,8 @@ def match_scenarios(
     *,
     left_backend_label: str = "HRX",
     right_backend_label: str = "Vulkan",
-    allow_right_superset: bool = False,
 ) -> list[ComparisonMatch]:
-    """Match result sets, optionally ignoring scenarios found only on the right."""
+    """Match scenarios of every model both sides benchmarked."""
 
     def check_output_tokens(
         key: ComparisonKey,
@@ -143,9 +161,9 @@ def match_scenarios(
         index_scenarios(right_benchmark, right_backend_label),
         left_label=left_backend_label,
         right_label=right_backend_label,
+        group=lambda key: key[0],
         describe=describe_key,
         check_pair=check_output_tokens,
-        allow_right_superset=allow_right_superset,
     )
 
 
@@ -374,6 +392,12 @@ def format_comparison_table(
         f"{right_backend_label} mean TPS.",
         "",
     ]
+    if not matches:
+        lines.append(
+            f"No model was benchmarked by both {left_backend_label} and "
+            f"{right_backend_label}."
+        )
+        return "\n".join(lines)
     previous_model: str | None = None
     previous_result: tuple[str, str, int, str] | None = None
 
@@ -450,14 +474,12 @@ def format_main_comparisons(
         main_hrx_benchmark,
         left_backend_label="Current HRX",
         right_backend_label="Main HRX",
-        allow_right_superset=True,
     )
     vulkan_matches = match_scenarios(
         current_vulkan_benchmark,
         main_vulkan_benchmark,
         left_backend_label="Current Vulkan",
         right_backend_label="Main Vulkan",
-        allow_right_superset=True,
     )
 
     sections = []

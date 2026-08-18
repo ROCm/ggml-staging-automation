@@ -1,11 +1,47 @@
 #!/usr/bin/env python3
 # Copyright Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
-"""Write an HRX/Vulkan perplexity comparison report as Markdown.
+"""Write the HRX/Vulkan perplexity comparison report as Markdown.
 
-Current HRX and Vulkan results must contain exactly the same models. A main
-baseline may contain additional models from a broader model tier, but it must
-contain every current model; comparisons retain current-result order.
+CI runs ``llama-perplexity`` over the same corpus once per backend
+(``run_perplexity_benchmark.py``), leaving ``perplexity-hrx.json`` and
+``perplexity-vulkan.json``. This script renders the pair, and optionally each
+side against the latest ``main`` artifact, into the GitHub step summary so a
+reviewer can see whether HRX reproduces Vulkan's estimates. Perplexity deltas
+are informational: they never fail the job, only the report itself can.
+
+Terms:
+
+- A *run* is one model's measurement on one backend, keyed by model name — the
+  comparison key here is just the model. A run has ``status`` ``ok`` (with a
+  ``ppl`` estimate and uncertainty) or ``failed`` (with an ``error``, and the
+  ``log`` and batch to inspect).
+- The *settings line* is the corpus and chunking recipe every estimate in one
+  artifact was measured with. Two artifacts are only comparable when their
+  ``settings`` and corpus ``sha256`` are equal; ``check_comparable`` refuses
+  otherwise, because a PPL delta across corpora means nothing.
+
+The artifact shape, reduced to the fields this report reads::
+
+    {"settings": {"ctx": 512, "chunks": 8, "batch": 512, "extra_args": []},
+     "corpus": {"name": "wikitext-2-raw/wiki.test.raw", "sha256": "..."},
+     "models": [
+       {"model": "llama-3.1-8b", "status": "ok", "duration_s": 41.2,
+        "ppl": {"value": 6.1234, "uncertainty": 0.0312}},
+       {"model": "qwen3-8b", "status": "failed", "duration_s": 3.0,
+        "error": "exit code 1", "log": "perplexity-hrx.log", "batch": 2}]}
+
+The command line, the exit-code contract (current pair fatal, ``main``
+baseline best-effort), and the matching rule live in ``benchmark_report`` and
+are shared with the Lemonade report; this file supplies ``kind="perplexity"``
+and the table builder. Under that rule a model is compared only when both
+artifacts contain it; a model present on one side only is skipped, and a pair
+with no model in common renders a one-line note instead of a table.
+
+Output order on stdout: the partial-failure note, the settings line and
+HRX/Vulkan table, then either the two current-versus-main tables or the "no
+usable main perplexity artifact" note. Rows follow the current (left) artifact's
+model order.
 """
 
 from __future__ import annotations
@@ -113,17 +149,16 @@ def match_runs(
     *,
     left_label: str = "HRX",
     right_label: str = "Vulkan",
-    allow_right_superset: bool = False,
 ) -> list[ComparisonMatch]:
-    """Match run sets, optionally ignoring models found only on the right."""
+    """Match the runs of every model both sides measured."""
     check_comparable(left, right, left_label=left_label, right_label=right_label)
     return match_indexed(
         index_runs(left, left_label),
         index_runs(right, right_label),
         left_label=left_label,
         right_label=right_label,
+        group=lambda model: model,
         describe=repr,
-        allow_right_superset=allow_right_superset,
     )
 
 
@@ -216,10 +251,19 @@ def format_comparison_table(
         f"Δ PPL is {left_label} PPL minus {right_label} PPL; ratio is "
         f"{left_label} PPL divided by {right_label} PPL.",
         "",
-        f"| Model | Status | {left_label} PPL | {right_label} PPL | Δ PPL | "
-        f"Ratio | {left_label} time (s) | {right_label} time (s) |",
-        "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
+    if not matches:
+        lines.append(
+            f"No model was benchmarked by both {left_label} and {right_label}."
+        )
+        return "\n".join(lines)
+    lines.extend(
+        (
+            f"| Model | Status | {left_label} PPL | {right_label} PPL | Δ PPL | "
+            f"Ratio | {left_label} time (s) | {right_label} time (s) |",
+            "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |",
+        )
+    )
     for model, left_run, right_run in matches:
         lines.append(
             f"| {format_code(model)} | "
@@ -247,14 +291,12 @@ def format_main_comparisons(
         main_hrx,
         left_label="Current HRX",
         right_label="Main HRX",
-        allow_right_superset=True,
     )
     vulkan_matches = match_runs(
         current_vulkan,
         main_vulkan,
         left_label="Current Vulkan",
         right_label="Main Vulkan",
-        allow_right_superset=True,
     )
 
     sections = []

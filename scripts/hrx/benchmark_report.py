@@ -27,22 +27,32 @@ Terms:
   ``perplexity``. It appears in the argument names and diagnostics.
 
 Matching (``match_indexed``) takes a left index and a right index and returns
-``[(key, left_item, right_item), ...]`` in left order. Both files must carry
-the same key set; when ``allow_right_superset`` is set (used for the ``main``
-baseline, which may come from a broader model tier) keys found only on the
-right are ignored, but a key found only on the left is always an error.
-``check_pair`` lets a caller add a per-key check on the two matched items::
+``[(key, left_item, right_item), ...]`` in left order. Keys are compared per
+*group* — the model a key belongs to (for perplexity the key *is* the model).
+A group is compared only when both sides have it; a group present on one side
+only is skipped, not an error. Within a shared group the two key sets must be
+identical, and ``check_pair`` (if given) runs on every matched pair, so a
+comparison that is drawn is always complete for that model. The two files
+routinely disagree on *which* models they contain: a batch's HRX and Vulkan
+phases run one after the other and merge per phase, so a Vulkan failure leaves
+the HRX artifact with extra models, and a pull request benchmarks the ``smoke``
+tier while the ``main`` baseline was built from ``full``. An earlier rule that
+required identical key sets (with the baseline allowed to be a superset) lost
+the whole comparison, or the whole baseline block, on either of those cases;
+scoping strictness to the model keeps the guarantee that matters — never a row
+built from mismatched measurements — without that cost::
 
-    >>> left = {"a": 1, "b": 2}
-    >>> right = {"a": 10, "b": 20, "c": 30}
+    >>> left = {("A", "p1"): 1, ("A", "p2"): 2, ("B", "p1"): 3}
+    >>> right = {("A", "p1"): 10, ("A", "p2"): 20, ("C", "p1"): 30}
     >>> match_indexed(left, right, left_label="L", right_label="R",
-    ...               describe=repr, allow_right_superset=True)
-    [('a', 1, 10), ('b', 2, 20)]
-    >>> match_indexed(right, left, left_label="R", right_label="L",
-    ...               describe=repr)
+    ...               group=lambda key: key[0], describe=repr)
+    [(('A', 'p1'), 1, 10), (('A', 'p2'), 2, 20)]
+    >>> del right[("A", "p2")]
+    >>> match_indexed(left, right, left_label="L", right_label="R",
+    ...               group=lambda key: key[0], describe=repr)
     Traceback (most recent call last):
     ...
-    benchmark_report.ReportError: R/L counterparts do not match: missing from L: 'c'
+    benchmark_report.ReportError: L/R counterparts for 'A' do not match: missing from R: ('A', 'p2')
 
 The CLI (``run_report_cli``) is what the workflow invokes, once per script::
 
@@ -129,35 +139,47 @@ def match_indexed(
     *,
     left_label: str,
     right_label: str,
+    group: Callable[[K], Any],
     describe: Callable[[K], str],
     check_pair: Callable[[K, V, V], None] | None = None,
-    allow_right_superset: bool = False,
 ) -> list[tuple[K, V, V]]:
-    """Match two indexes, optionally ignoring keys found only on the right."""
-    missing_right = [key for key in left if key not in right]
-    missing_left = [key for key in right if key not in left]
-    right_has_extra_keys = bool(missing_left)
-    right_extras_are_invalid = right_has_extra_keys and not allow_right_superset
-    counterparts_do_not_match = bool(missing_right) or right_extras_are_invalid
-    if counterparts_do_not_match:
-        details = []
-        if missing_right:
-            details.append(
-                f"missing from {right_label}: "
-                + "; ".join(describe(key) for key in missing_right)
+    """Match every key whose group appears on both sides; ignore other groups."""
+    right_groups = {group(key) for key in right}
+    shared_groups: list[Any] = []
+    for key in left:
+        key_group = group(key)
+        group_is_shared = key_group in right_groups
+        group_is_new = key_group not in shared_groups
+        if group_is_shared and group_is_new:
+            shared_groups.append(key_group)
+
+    for shared_group in shared_groups:
+        left_keys = [key for key in left if group(key) == shared_group]
+        right_keys = [key for key in right if group(key) == shared_group]
+        missing_right = [key for key in left_keys if key not in right]
+        missing_left = [key for key in right_keys if key not in left]
+        counterparts_do_not_match = bool(missing_right) or bool(missing_left)
+        if counterparts_do_not_match:
+            details = []
+            if missing_right:
+                details.append(
+                    f"missing from {right_label}: "
+                    + "; ".join(describe(key) for key in missing_right)
+                )
+            if missing_left:
+                details.append(
+                    f"missing from {left_label}: "
+                    + "; ".join(describe(key) for key in missing_left)
+                )
+            raise ReportError(
+                f"{left_label}/{right_label} counterparts for "
+                f"{shared_group!r} do not match: " + " | ".join(details)
             )
-        if right_extras_are_invalid:
-            details.append(
-                f"missing from {left_label}: "
-                + "; ".join(describe(key) for key in missing_left)
-            )
-        raise ReportError(
-            f"{left_label}/{right_label} counterparts do not match: "
-            + " | ".join(details)
-        )
 
     matches: list[tuple[K, V, V]] = []
     for key, left_item in left.items():
+        if group(key) not in shared_groups:
+            continue
         right_item = right[key]
         if check_pair is not None:
             check_pair(key, left_item, right_item)
