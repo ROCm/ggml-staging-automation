@@ -1,16 +1,59 @@
 #!/usr/bin/env python3
 # Copyright Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
-"""Run commands over cumulative, verified, disk-bounded model tiers.
+"""Run benchmark workers over a tiered model set within a fixed disk bound.
 
-The model manifest orders tiers from the smallest coverage set to the largest
-and assigns every model the minimum tier that includes it. ``--model-tier``
-selects the requested tier plus every tier below it, preserving manifest order
-until disk-bounded batch planning sorts the selected models by size.
+Terms:
 
-Manifest and tier errors fail setup before any model is downloaded. Each viable
-batch is still downloaded, verified, benchmarked, and removed independently so
-the configured disk bound holds across the complete selected tier.
+- Model tier: an ordered label in the model manifest ("tiers"). Requesting a
+  tier selects that tier plus every earlier one, so tiers are cumulative and
+  the manifest order defines the size of the run.
+- Batch: a subset of the selected models that fits on disk at once. Models in a
+  batch are downloaded together, benchmarked together, and deleted together.
+- Benchmark worker: a command from the benchmark specification (for example
+  run_perplexity_benchmark.py). It is invoked once per batch and is expected to
+  merge its per-batch results itself.
+
+Why this exists: CI runners for the HRX release benchmarks have far less free
+disk than the full model set requires. Instead of pinning benchmarks to
+whatever fits, this driver keeps the model set as data
+(lemonade_model_manifest.json plus benchmark_spec.json), splits it into batches
+that respect --max-disk-gib, and guarantees no batch leaks onto the next.
+
+Boundary contract:
+
+- Inputs: --benchmark-spec (ordered "benchmarks" with "id" and "argv"),
+  --model-manifest (ordered "tiers" and "models"), --model-tier, --work-root,
+  and --max-disk-gib. Both JSON files are fully validated up front; a malformed
+  file fails the run before any download.
+- Worker invocation: each worker's argv is run verbatim with the batch-managed
+  arguments appended: --batched --batch-number N --models-dir DIR --models
+  NAME... A spec that already carries any of those arguments is rejected so a
+  worker cannot be pointed at the wrong models.
+- Exit status: 0 only if every download, every worker, and every cleanup
+  succeeded. Failures are collected and summarized on stderr rather than
+  aborting at the first one, so a single flaky download does not hide results
+  for the other models.
+- Disk invariant: at most --max-disk-gib minus a 2 GiB reserve of model data is
+  resident at any time, and never more than is actually free.
+
+How it works:
+
+- Batches are planned deterministically: models are sorted by size descending
+  and packed next-fit into the resident capacity. Any single model larger than
+  the capacity fails planning immediately.
+- Each batch lives in work_root/batch-NNNN/models. Downloads come from
+  huggingface.co, at most two at a time, each streamed to a temporary file,
+  size-bounded, SHA-256 verified, and then atomically renamed into place. A
+  failed attempt restarts from byte zero (no Range resumption) up to three
+  times. A model that never downloads is reported and the batch continues with
+  whatever did.
+- Workers run only when at least one model in the batch is resident and are
+  passed only the resident models, so a partial batch still yields data.
+- Batch cleanup runs in a finally block. If a batch directory cannot be removed
+  the driver stops scheduling later batches, because the disk bound can no
+  longer be guaranteed; the work root is likewise only removed when every batch
+  cleanup was exact.
 """
 
 from __future__ import annotations
@@ -143,13 +186,6 @@ def _validate_repository(repository: str, context: str) -> None:
 def load_manifest(path: Path) -> ModelManifest:
     """Load and validate an ordered, cumulative model-tier manifest."""
     root = _require_object(_load_json(path, "model manifest"), "manifest")
-    schema_version = root.get("schema_version")
-    version_is_integer = type(schema_version) is int
-    version_is_two = schema_version == 2
-    version_is_valid = version_is_integer and version_is_two
-    if not version_is_valid:
-        raise BatchBenchmarkError("manifest.schema_version must equal 2")
-
     raw_tiers = root.get("tiers")
     tiers_are_an_array = isinstance(raw_tiers, list)
     tiers_are_present = bool(raw_tiers)
@@ -240,15 +276,6 @@ def load_benchmark_spec(path: Path) -> list[BenchmarkSpec]:
         _load_json(path, "benchmark specification"),
         "benchmark specification",
     )
-    schema_version = root.get("schema_version")
-    version_is_integer = type(schema_version) is int
-    version_is_one = schema_version == 1
-    version_is_valid = version_is_integer and version_is_one
-    if not version_is_valid:
-        raise BatchBenchmarkError(
-            "benchmark specification schema_version must equal 1"
-        )
-
     entries = root.get("benchmarks")
     entries_are_an_array = isinstance(entries, list)
     entries_are_present = bool(entries)

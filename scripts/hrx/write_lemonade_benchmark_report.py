@@ -1,12 +1,52 @@
 #!/usr/bin/env python3
 # Copyright Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
-"""Write an HRX/Vulkan Lemonade benchmark report as Markdown.
+"""Write the Lemonade HRX/Vulkan benchmark report as Markdown.
 
-Current HRX and Vulkan results must cover exactly the same scenarios. A main
-baseline may contain additional scenarios from a broader model tier, but it
-must contain every current scenario; comparisons retain current-result order
-and validate output-token counts for every matched scenario.
+CI runs the release benchmark twice through Lemonade, once against the HRX
+backend and once against Vulkan, and each run leaves a ``benchmark-*.json``
+artifact (produced by ``run_lemonade_benchmark.py``). This script turns the pair
+into the Markdown that lands in the GitHub step summary, so someone reading the
+job page can see how HRX did next to Vulkan without opening the artifacts.
+
+Terms:
+
+- A *scenario* is one prompt/generation setting inside a *result*, which is one
+  model run with a given recipe, context size, and backend arguments. Scenarios
+  are matched across backends by their *comparison key* ``(model, recipe,
+  ctx_size, backend_args, scenario name)``; the backend itself is deliberately
+  not part of the key, since it is exactly what differs between the two files.
+- A scenario is *missing* when Lemonade retained no successful sample
+  (``all_runs_failed``); a *partial failure* has ``failed_runs > 0`` but still
+  reports statistics over the runs that succeeded.
+
+Usage, mirroring the workflow step::
+
+    write_lemonade_benchmark_report.py benchmark-hrx.json benchmark-vulkan.json \
+        --baseline-hrx-benchmark main/benchmark-hrx.json \
+        --baseline-vulkan-benchmark main/benchmark-vulkan.json \
+        --baseline-run-url https://github.com/.../actions/runs/123 \
+        >> "$GITHUB_STEP_SUMMARY"
+
+The report is printed to stdout in a fixed order: the partial-failure note, a
+per-backend table for HRX then Vulkan, an HRX/Vulkan comparison, and finally
+either two current-versus-main comparisons (HRX and Vulkan each against the
+latest ``main`` artifact) or a one-line note that no baseline was usable.
+
+Failure handling is asymmetric on purpose. The current HRX and Vulkan files
+must describe the same scenarios and the same output-token counts wherever both
+sides have measurements; any mismatch, duplicate key, or malformed measurement
+is fatal, prints a diagnostic to stderr, and exits 1, because a silently wrong
+comparison is worse than a missing one. The main baseline is best-effort: it may
+be absent, unreadable, or (via ``allow_right_superset``) contain extra scenarios
+from a broader model tier, and any problem there degrades to the "no usable
+main benchmark" note while the current report is still emitted with exit 0.
+
+Validation is intentionally strict on shape (``type(x) is int`` rather than
+``isinstance``) so a Boolean or NaN never masquerades as a count or a metric,
+but it only covers the fields the report reads. Everything past
+``load_benchmark`` is pure formatting so the section builders can be exercised
+on in-memory dicts without touching the filesystem.
 """
 
 from __future__ import annotations
