@@ -10,22 +10,23 @@ contain every current model; comparisons retain current-result order.
 
 from __future__ import annotations
 
-import argparse
-import json
 import math
-import sys
 from collections.abc import Sequence
-from pathlib import Path
 from typing import Any
+
+from benchmark_report import (
+    UNAVAILABLE_MEASUREMENT,
+    ReportError,
+    format_code,
+    format_table_cell,
+    match_indexed,
+    run_report_cli,
+)
 
 
 Perplexity = dict[str, Any]
 Run = dict[str, Any]
 ComparisonMatch = tuple[str, Run, Run]
-BASELINE_UNAVAILABLE_MESSAGE = (
-    "No usable main perplexity artifact is available for comparison."
-)
-UNAVAILABLE_MEASUREMENT = "—"
 PARTIAL_FAILURE_NOTE = (
     "`—` marks an unavailable measurement; failed runs are described in the "
     "Status column with the log file and batch to inspect. Perplexity deltas "
@@ -33,33 +34,11 @@ PARTIAL_FAILURE_NOTE = (
 )
 
 
-class PerplexityReportError(RuntimeError):
-    """Raised when two perplexity files cannot be compared safely."""
-
-
-def load_perplexity(path: Path) -> Perplexity:
-    """Load a perplexity JSON file without coupling I/O to report formatting."""
-    with path.open(encoding="utf-8") as perplexity_file:
-        return json.load(perplexity_file)
-
-
-def format_code(value: object) -> str:
-    """Format trusted metadata as an inline Markdown code span."""
-    text = str(value).replace("\n", " ")
-    fence = "``" if "`" in text else "`"
-    return f"{fence}{text}{fence}"
-
-
-def format_table_cell(value: object) -> str:
-    """Escape labels for a Markdown table cell."""
-    return str(value).replace("\n", " ").replace("|", "\\|")
-
-
 def run_succeeded(run: Run) -> bool:
     """Return whether one run produced a usable estimate."""
     status = run["status"]
     if status not in ("ok", "failed"):
-        raise PerplexityReportError(f"Run status must be ok or failed, got {status!r}")
+        raise ReportError(f"Run status must be ok or failed, got {status!r}")
     return status == "ok"
 
 
@@ -73,7 +52,7 @@ def run_metric(run: Run, *fields: str) -> int | float:
         or not math.isfinite(value)
         or value < 0
     ):
-        raise PerplexityReportError(
+        raise ReportError(
             f"Run {'.'.join(fields)} must be a finite non-negative number"
         )
     return value
@@ -90,7 +69,7 @@ def validate_run(run: Run) -> None:
     error_is_string = isinstance(error, str)
     error_is_present = error_is_string and bool(error)
     if not error_is_present:
-        raise PerplexityReportError("Failed run must describe its error")
+        raise ReportError("Failed run must describe its error")
 
 
 def index_runs(perplexity: Perplexity, backend_label: str) -> dict[str, Run]:
@@ -100,7 +79,7 @@ def index_runs(perplexity: Perplexity, backend_label: str) -> dict[str, Run]:
         validate_run(run)
         model = run["model"]
         if model in runs:
-            raise PerplexityReportError(
+            raise ReportError(
                 f"Duplicate {backend_label} model: {model!r}"
             )
         runs[model] = run
@@ -118,12 +97,12 @@ def check_comparable(
     same_settings = left["settings"] == right["settings"]
     same_corpus = left["corpus"]["sha256"] == right["corpus"]["sha256"]
     if not same_settings:
-        raise PerplexityReportError(
+        raise ReportError(
             f"{left_label} and {right_label} used different perplexity settings: "
             f"{left['settings']!r} vs {right['settings']!r}"
         )
     if not same_corpus:
-        raise PerplexityReportError(
+        raise ReportError(
             f"{left_label} and {right_label} used different corpora"
         )
 
@@ -138,24 +117,14 @@ def match_runs(
 ) -> list[ComparisonMatch]:
     """Match run sets, optionally ignoring models found only on the right."""
     check_comparable(left, right, left_label=left_label, right_label=right_label)
-    left_runs = index_runs(left, left_label)
-    right_runs = index_runs(right, right_label)
-
-    missing_right = [model for model in left_runs if model not in right_runs]
-    missing_left = [model for model in right_runs if model not in left_runs]
-    right_has_extra_models = bool(missing_left)
-    right_extras_are_invalid = right_has_extra_models and not allow_right_superset
-    counterparts_do_not_match = bool(missing_right) or right_extras_are_invalid
-    if counterparts_do_not_match:
-        details = []
-        if missing_right:
-            details.append(f"missing from {right_label}: {missing_right!r}")
-        if right_extras_are_invalid:
-            details.append(f"missing from {left_label}: {missing_left!r}")
-        raise PerplexityReportError(
-            "Perplexity counterparts do not match: " + " | ".join(details)
-        )
-    return [(model, left_runs[model], right_runs[model]) for model in left_runs]
+    return match_indexed(
+        index_runs(left, left_label),
+        index_runs(right, right_label),
+        left_label=left_label,
+        right_label=right_label,
+        describe=repr,
+        allow_right_superset=allow_right_superset,
+    )
 
 
 def format_ppl(run: Run) -> str:
@@ -326,71 +295,13 @@ def format_report(hrx: Perplexity, vulkan: Perplexity) -> str:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("hrx_perplexity", type=Path)
-    parser.add_argument("vulkan_perplexity", type=Path)
-    parser.add_argument("--baseline-hrx-perplexity", type=Path)
-    parser.add_argument("--baseline-vulkan-perplexity", type=Path)
-    parser.add_argument("--baseline-run-url")
-    args = parser.parse_args()
-
-    try:
-        hrx = load_perplexity(args.hrx_perplexity)
-        vulkan = load_perplexity(args.vulkan_perplexity)
-        report = format_report(hrx, vulkan)
-    except (
-        OSError,
-        json.JSONDecodeError,
-        PerplexityReportError,
-        IndexError,
-        KeyError,
-        OverflowError,
-        TypeError,
-        ValueError,
-    ) as exc:
-        print(f"Could not write perplexity report: {exc}", file=sys.stderr)
-        return 1
-
-    baseline_paths = (
-        args.baseline_hrx_perplexity,
-        args.baseline_vulkan_perplexity,
+    return run_report_cli(
+        kind="perplexity",
+        report_label="perplexity",
+        description=__doc__,
+        format_report=format_report,
+        format_main_comparisons=format_main_comparisons,
     )
-    if all(path is not None for path in baseline_paths):
-        try:
-            main_hrx = load_perplexity(args.baseline_hrx_perplexity)
-            main_vulkan = load_perplexity(args.baseline_vulkan_perplexity)
-            main_comparisons = format_main_comparisons(
-                hrx,
-                vulkan,
-                main_hrx,
-                main_vulkan,
-                args.baseline_run_url,
-            )
-        except (
-            OSError,
-            json.JSONDecodeError,
-            PerplexityReportError,
-            IndexError,
-            KeyError,
-            OverflowError,
-            TypeError,
-            ValueError,
-        ) as exc:
-            print(f"Could not compare with main perplexity: {exc}", file=sys.stderr)
-            report = f"{report}\n\n{BASELINE_UNAVAILABLE_MESSAGE}"
-        else:
-            report = f"{report}\n\n{main_comparisons}"
-    else:
-        if any(path is not None for path in baseline_paths):
-            print(
-                "Could not compare with main perplexity: both baseline perplexity "
-                "paths are required",
-                file=sys.stderr,
-            )
-        report = f"{report}\n\n{BASELINE_UNAVAILABLE_MESSAGE}"
-
-    print(report)
-    return 0
 
 
 if __name__ == "__main__":

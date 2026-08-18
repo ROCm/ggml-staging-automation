@@ -20,67 +20,52 @@ Terms:
   (``all_runs_failed``); a *partial failure* has ``failed_runs > 0`` but still
   reports statistics over the runs that succeeded.
 
-Usage, mirroring the workflow step::
-
-    write_lemonade_benchmark_report.py benchmark-hrx.json benchmark-vulkan.json \
-        --baseline-hrx-benchmark main/benchmark-hrx.json \
-        --baseline-vulkan-benchmark main/benchmark-vulkan.json \
-        --baseline-run-url https://github.com/.../actions/runs/123 \
-        >> "$GITHUB_STEP_SUMMARY"
+The command line, the exit-code contract (current pair fatal, ``main``
+baseline best-effort), and the rule for which scenarios may be compared all
+live in ``benchmark_report`` and are shared with the perplexity report; this
+file supplies ``kind="benchmark"`` and the two section builders.
 
 The report is printed to stdout in a fixed order: the partial-failure note, a
 per-backend table for HRX then Vulkan, an HRX/Vulkan comparison, and finally
 either two current-versus-main comparisons (HRX and Vulkan each against the
 latest ``main`` artifact) or a one-line note that no baseline was usable.
 
-Failure handling is asymmetric on purpose. The current HRX and Vulkan files
-must describe the same scenarios and the same output-token counts wherever both
-sides have measurements; any mismatch, duplicate key, or malformed measurement
-is fatal, prints a diagnostic to stderr, and exits 1, because a silently wrong
-comparison is worse than a missing one. The main baseline is best-effort: it may
-be absent, unreadable, or (via ``allow_right_superset``) contain extra scenarios
-from a broader model tier, and any problem there degrades to the "no usable
-main benchmark" note while the current report is still emitted with exit 0.
+On top of the shared matching rule, this report requires matched scenarios to
+report the same output-token count wherever both sides have measurements: a
+TPS comparison over different generation lengths would be meaningless, so a
+mismatch is treated like a missing counterpart (fatal for the current pair,
+baseline-degrading for ``main``).
 
 Validation is intentionally strict on shape (``type(x) is int`` rather than
 ``isinstance``) so a Boolean or NaN never masquerades as a count or a metric,
-but it only covers the fields the report reads. Everything past
-``load_benchmark`` is pure formatting so the section builders can be exercised
-on in-memory dicts without touching the filesystem.
+but it only covers the fields the report reads. Everything in this file is
+pure formatting over already-loaded dicts, so the section builders can be
+exercised in memory without touching the filesystem.
 """
 
 from __future__ import annotations
 
-import argparse
-import json
 import math
-import sys
 from collections.abc import Iterator, Sequence
-from pathlib import Path
 from typing import Any
+
+from benchmark_report import (
+    UNAVAILABLE_MEASUREMENT,
+    ReportError,
+    format_code,
+    format_table_cell,
+    match_indexed,
+    run_report_cli,
+)
 
 
 Benchmark = dict[str, Any]
 ComparisonKey = tuple[str, str, int, str, str]
 ComparisonMatch = tuple[ComparisonKey, Benchmark, Benchmark]
-BASELINE_UNAVAILABLE_MESSAGE = (
-    "No usable main benchmark artifact is available for comparison."
-)
-UNAVAILABLE_MEASUREMENT = "—"
 PARTIAL_FAILURE_NOTE = (
     "Statistics shown for partial failures include successful runs only; "
     "failed runs are excluded. `—` marks an unavailable measurement."
 )
-
-
-class BenchmarkReportError(RuntimeError):
-    """Raised when two benchmark files cannot be compared safely."""
-
-
-def load_benchmark(path: Path) -> Benchmark:
-    """Load a benchmark JSON file without coupling I/O to report formatting."""
-    with path.open(encoding="utf-8") as benchmark_file:
-        return json.load(benchmark_file)
 
 
 def iter_scenarios(
@@ -117,7 +102,7 @@ def index_scenarios(
     for key, scenario in iter_scenarios(benchmark):
         validate_scenario(scenario)
         if key in scenarios:
-            raise BenchmarkReportError(
+            raise ReportError(
                 f"Duplicate {backend_name} comparison key: {describe_key(key)}"
             )
         scenarios[key] = scenario
@@ -133,65 +118,42 @@ def match_scenarios(
     allow_right_superset: bool = False,
 ) -> list[ComparisonMatch]:
     """Match result sets, optionally ignoring scenarios found only on the right."""
-    left_scenarios = index_scenarios(left_benchmark, left_backend_label)
-    right_scenarios = index_scenarios(right_benchmark, right_backend_label)
 
-    missing_right = [key for key in left_scenarios if key not in right_scenarios]
-    missing_left = [key for key in right_scenarios if key not in left_scenarios]
-    right_has_extra_scenarios = bool(missing_left)
-    right_extras_are_invalid = right_has_extra_scenarios and not allow_right_superset
-    counterparts_do_not_match = bool(missing_right) or right_extras_are_invalid
-    if counterparts_do_not_match:
-        details = []
-        if missing_right:
-            details.append(
-                f"missing from {right_backend_label}: "
-                + "; ".join(describe_key(key) for key in missing_right)
-            )
-        if right_extras_are_invalid:
-            details.append(
-                f"missing from {left_backend_label}: "
-                + "; ".join(describe_key(key) for key in missing_left)
-            )
-        raise BenchmarkReportError(
-            "Benchmark counterparts do not match: " + " | ".join(details)
-        )
-
-    matches: list[ComparisonMatch] = []
-    for key, left_scenario in left_scenarios.items():
-        right_scenario = right_scenarios[key]
+    def check_output_tokens(
+        key: ComparisonKey,
+        left_scenario: Benchmark,
+        right_scenario: Benchmark,
+    ) -> None:
         left_has_measurements = scenario_has_measurements(left_scenario)
         right_has_measurements = scenario_has_measurements(right_scenario)
-        if left_has_measurements and right_has_measurements:
-            left_tokens = left_scenario["output_tokens"]
-            right_tokens = right_scenario["output_tokens"]
-            if left_tokens != right_tokens:
-                raise BenchmarkReportError(
-                    f"Output-token count mismatch for {describe_key(key)}: "
-                    f"{left_backend_label}={left_tokens}, "
-                    f"{right_backend_label}={right_tokens}"
-                )
-        matches.append((key, left_scenario, right_scenario))
-    return matches
+        both_have_measurements = left_has_measurements and right_has_measurements
+        if not both_have_measurements:
+            return
+        left_tokens = left_scenario["output_tokens"]
+        right_tokens = right_scenario["output_tokens"]
+        if left_tokens != right_tokens:
+            raise ReportError(
+                f"Output-token count mismatch for {describe_key(key)}: "
+                f"{left_backend_label}={left_tokens}, "
+                f"{right_backend_label}={right_tokens}"
+            )
 
-
-def format_code(value: object) -> str:
-    """Format trusted benchmark metadata as an inline Markdown code span."""
-    text = str(value).replace("\n", " ")
-    fence = "``" if "`" in text else "`"
-    return f"{fence}{text}{fence}"
-
-
-def format_table_cell(value: object) -> str:
-    """Escape benchmark labels for a Markdown table cell."""
-    return str(value).replace("\n", " ").replace("|", "\\|")
+    return match_indexed(
+        index_scenarios(left_benchmark, left_backend_label),
+        index_scenarios(right_benchmark, right_backend_label),
+        left_label=left_backend_label,
+        right_label=right_backend_label,
+        describe=describe_key,
+        check_pair=check_output_tokens,
+        allow_right_superset=allow_right_superset,
+    )
 
 
 def scenario_failed_runs(scenario: Benchmark) -> int:
     """Return a validated failed-run count from one Lemonade scenario."""
     failed_runs = scenario["failed_runs"]
     if type(failed_runs) is not int or failed_runs < 0:
-        raise BenchmarkReportError(
+        raise ReportError(
             "Scenario failed_runs must be a non-negative integer"
         )
     return failed_runs
@@ -201,7 +163,7 @@ def scenario_has_measurements(scenario: Benchmark) -> bool:
     """Return whether Lemonade retained at least one successful sample."""
     all_runs_failed = scenario.get("all_runs_failed", False)
     if type(all_runs_failed) is not bool:
-        raise BenchmarkReportError(
+        raise ReportError(
             "Scenario all_runs_failed must be a Boolean when present"
         )
     return not all_runs_failed
@@ -211,7 +173,7 @@ def scenario_output_tokens(scenario: Benchmark) -> int:
     """Return a validated output-token count."""
     output_tokens = scenario["output_tokens"]
     if type(output_tokens) is not int or output_tokens < 0:
-        raise BenchmarkReportError(
+        raise ReportError(
             "Scenario output_tokens must be a non-negative integer"
         )
     return output_tokens
@@ -236,7 +198,7 @@ def scenario_metric(
         or value < 0
     ):
         description = f"{field}.{statistic}" if statistic else field
-        raise BenchmarkReportError(
+        raise ReportError(
             f"Scenario {description} must be a finite non-negative number"
         )
     return value
@@ -248,7 +210,7 @@ def validate_scenario(scenario: Benchmark) -> None:
     output_tokens = scenario_output_tokens(scenario)
     if not scenario_has_measurements(scenario):
         if output_tokens != 0:
-            raise BenchmarkReportError(
+            raise ReportError(
                 "Scenario without measurements must report zero output_tokens"
             )
         unexpected_fields = [
@@ -257,7 +219,7 @@ def validate_scenario(scenario: Benchmark) -> None:
             if field in scenario
         ]
         if unexpected_fields:
-            raise BenchmarkReportError(
+            raise ReportError(
                 "Scenario without measurements contains measurement fields: "
                 + ", ".join(unexpected_fields)
             )
@@ -536,71 +498,13 @@ def format_report(hrx_benchmark: Benchmark, vulkan_benchmark: Benchmark) -> str:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("hrx_benchmark", type=Path)
-    parser.add_argument("vulkan_benchmark", type=Path)
-    parser.add_argument("--baseline-hrx-benchmark", type=Path)
-    parser.add_argument("--baseline-vulkan-benchmark", type=Path)
-    parser.add_argument("--baseline-run-url")
-    args = parser.parse_args()
-
-    try:
-        hrx_benchmark = load_benchmark(args.hrx_benchmark)
-        vulkan_benchmark = load_benchmark(args.vulkan_benchmark)
-        report = format_report(hrx_benchmark, vulkan_benchmark)
-    except (
-        OSError,
-        json.JSONDecodeError,
-        BenchmarkReportError,
-        IndexError,
-        KeyError,
-        OverflowError,
-        TypeError,
-        ValueError,
-    ) as exc:
-        print(f"Could not write Lemonade benchmark report: {exc}", file=sys.stderr)
-        return 1
-
-    baseline_paths = (
-        args.baseline_hrx_benchmark,
-        args.baseline_vulkan_benchmark,
+    return run_report_cli(
+        kind="benchmark",
+        report_label="Lemonade benchmark",
+        description=__doc__,
+        format_report=format_report,
+        format_main_comparisons=format_main_comparisons,
     )
-    if all(path is not None for path in baseline_paths):
-        try:
-            main_hrx_benchmark = load_benchmark(args.baseline_hrx_benchmark)
-            main_vulkan_benchmark = load_benchmark(args.baseline_vulkan_benchmark)
-            main_comparisons = format_main_comparisons(
-                hrx_benchmark,
-                vulkan_benchmark,
-                main_hrx_benchmark,
-                main_vulkan_benchmark,
-                args.baseline_run_url,
-            )
-        except (
-            OSError,
-            json.JSONDecodeError,
-            BenchmarkReportError,
-            IndexError,
-            KeyError,
-            OverflowError,
-            TypeError,
-            ValueError,
-        ) as exc:
-            print(f"Could not compare with main benchmark: {exc}", file=sys.stderr)
-            report = f"{report}\n\n{BASELINE_UNAVAILABLE_MESSAGE}"
-        else:
-            report = f"{report}\n\n{main_comparisons}"
-    else:
-        if any(path is not None for path in baseline_paths):
-            print(
-                "Could not compare with main benchmark: both baseline benchmark "
-                "paths are required",
-                file=sys.stderr,
-            )
-        report = f"{report}\n\n{BASELINE_UNAVAILABLE_MESSAGE}"
-
-    print(report)
-    return 0
 
 
 if __name__ == "__main__":
