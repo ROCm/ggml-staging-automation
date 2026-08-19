@@ -154,30 +154,6 @@ def start_lemond(
         )
 
 
-def validate_model_arguments(
-    models: list[str],
-    hrx_xfail_models: list[str],
-) -> set[str]:
-    """Validate model metadata received across the worker CLI boundary."""
-    model_names = set(models)
-    models_are_unique = len(models) == len(model_names)
-    if not models_are_unique:
-        raise RuntimeError("Lemonade benchmark model names must be unique")
-
-    xfail_model_names = set(hrx_xfail_models)
-    xfail_models_are_unique = len(hrx_xfail_models) == len(xfail_model_names)
-    if not xfail_models_are_unique:
-        raise RuntimeError("HRX XFAIL model names must be unique")
-
-    unknown_xfail_models = sorted(xfail_model_names - model_names)
-    if unknown_xfail_models:
-        raise RuntimeError(
-            "HRX XFAIL models are not in the benchmark selection: "
-            f"{unknown_xfail_models!r}"
-        )
-    return xfail_model_names
-
-
 def summarize_benchmark(
     data: Any,
     expected_backend: str,
@@ -457,10 +433,7 @@ def run(args: argparse.Namespace) -> int:
     lemonade = lemonade_build / "lemonade"
     llama_server = args.llama_server.resolve()
     models_dir = args.models_dir.resolve()
-    hrx_xfail_models = validate_model_arguments(
-        args.models,
-        args.hrx_xfail_models,
-    )
+    hrx_xfail_models = set(args.hrx_xfail_models)
     phases = (
         BenchmarkPhase(
             name="HRX",

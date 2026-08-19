@@ -63,33 +63,6 @@ class ResolvedModel:
     path: Path
 
 
-def validate_model_selection(
-    models: list[str], hrx_xfail_models: list[str]
-) -> set[str]:
-    """Validate externally supplied runtime names and return the XFAIL set."""
-    model_names = set(models)
-    models_are_unique = len(models) == len(model_names)
-    if not models_are_unique:
-        raise PerplexityBenchmarkError(
-            "Perplexity benchmark model names must be unique"
-        )
-
-    hrx_xfail_names = set(hrx_xfail_models)
-    hrx_xfail_names_are_unique = len(hrx_xfail_models) == len(hrx_xfail_names)
-    if not hrx_xfail_names_are_unique:
-        raise PerplexityBenchmarkError(
-            "HRX XFAIL model names must be unique"
-        )
-
-    unknown_hrx_xfail_names = hrx_xfail_names - model_names
-    if unknown_hrx_xfail_names:
-        raise PerplexityBenchmarkError(
-            "HRX XFAIL model names are not selected: "
-            f"{sorted(unknown_hrx_xfail_names)!r}"
-        )
-    return hrx_xfail_names
-
-
 def log(message: str) -> None:
     print(message, flush=True)
 
@@ -306,9 +279,7 @@ def run_phase(
 
 
 def run(args: argparse.Namespace) -> int:
-    hrx_xfail_models = validate_model_selection(
-        args.models, args.hrx_xfail_models
-    )
+    hrx_xfail_models = set(args.hrx_xfail_models)
     llama_perplexity = args.llama_perplexity.resolve()
     models_dir = args.models_dir.resolve()
     corpus_file = args.corpus_file.resolve()
