@@ -219,8 +219,8 @@ jobs:
             lemonade-benchmark-debug/perplexity-vulkan.log
           if-no-files-found: warn
 
-      - name: Fail incomplete benchmark
+      - name: Fail unexpected benchmark results
         if: ${{ always() && steps.benchmark.outcome == 'failure' }}
         run: |
-          echo "One or more benchmark batches failed." >&2
+          echo "One or more benchmark batches had unexpected failures or XPASS results." >&2
           exit 1

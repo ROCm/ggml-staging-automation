@@ -13,6 +13,9 @@ Terms:
 - Benchmark worker: a command from the benchmark specification (for example
   run_perplexity_benchmark.py). It is invoked once per batch and is expected to
   merge its per-batch results itself.
+- HRX XFAIL: optional per-model manifest metadata passed to benchmark workers
+  for the resident models in each batch. It defaults to false and never
+  relaxes Vulkan measurements.
 
 Why this exists: CI runners for the HRX release benchmarks have far less free
 disk than the full model set requires. Instead of pinning benchmarks to
@@ -27,9 +30,11 @@ Boundary contract:
   and --max-disk-gib. Both JSON files are fully validated up front; a malformed
   file fails the run before any download.
 - Worker invocation: each worker's argv is run verbatim with the batch-managed
-  arguments appended: --batched --batch-number N --models-dir DIR --models
-  NAME... A spec that already carries any of those arguments is rejected so a
-  worker cannot be pointed at the wrong models.
+  arguments appended: --batched --batch-number N --models-dir DIR
+  --hrx-xfail-models [NAME...] --models NAME... The XFAIL names are the
+  flagged subset of the resident runtime model names. A spec that already
+  carries any managed argument is rejected so a worker cannot be pointed at
+  the wrong models or supplied conflicting failure policy.
 - Exit status: 0 only if every download, every worker, and every cleanup
   succeeded. Failures are collected and summarized on stderr rather than
   aborting at the first one, so a single flaky download does not hide results
@@ -96,6 +101,7 @@ class DownloadError(RuntimeError):
 class ModelSpec:
     id: str
     tier: str
+    hrx_xfail: bool
     name: str
     directory: str
     repository: str
@@ -226,6 +232,12 @@ def load_manifest(path: Path) -> ModelManifest:
         filename = _require_string(entry, "filename", context)
         sha256 = _require_string(entry, "sha256", context)
         size_bytes = entry.get("size_bytes")
+        hrx = _require_object(entry.get("hrx", {}), f"{context}.hrx")
+        hrx_xfail = hrx.get("xfail", False)
+        if type(hrx_xfail) is not bool:
+            raise BatchBenchmarkError(
+                f"{context}.hrx.xfail must be a Boolean when present"
+            )
 
         _validate_local_name(directory, "directory", context)
         _validate_local_name(filename, "filename", context)
@@ -258,6 +270,7 @@ def load_manifest(path: Path) -> ModelManifest:
             ModelSpec(
                 id=model_id,
                 tier=tier,
+                hrx_xfail=hrx_xfail,
                 name=name,
                 directory=directory,
                 repository=repository,
@@ -291,6 +304,7 @@ def load_benchmark_spec(path: Path) -> list[BenchmarkSpec]:
         "--batched",
         "--batch-number",
         "--models-dir",
+        "--hrx-xfail-models",
         "--models",
     }
     for entry_index, raw_entry in enumerate(entries):
@@ -602,6 +616,8 @@ def build_benchmark_command(
         str(batch_number),
         "--models-dir",
         os.fspath(models_dir),
+        "--hrx-xfail-models",
+        *(model.name for model in resident if model.hrx_xfail),
         "--models",
         *(model.name for model in resident),
     ]
