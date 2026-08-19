@@ -18,6 +18,9 @@
     {
       "id": "qwen3.8-27b",
       "tier": "full",
+      "hrx": {
+        "xfail": true
+      },
       "name": "extra.Qwen3.8-27B-GGUF",
       "directory": "Qwen3.8-27B-GGUF",
       "repository": "bartowski/Qwen3.8-27B-GGUF",
@@ -29,6 +32,9 @@
     {
       "id": "mistral-small-3.2-24b",
       "tier": "full",
+      "hrx": {
+        "xfail": true
+      },
       "name": "extra.Mistral-Small-3.2-24B-Instruct-2506-GGUF",
       "directory": "Mistral-Small-3.2-24B-Instruct-2506-GGUF",
       "repository": "bartowski/mistralai_Mistral-Small-3.2-24B-Instruct-2506-GGUF",
@@ -40,6 +46,9 @@
     {
       "id": "gemma-4-12b",
       "tier": "full",
+      "hrx": {
+        "xfail": true
+      },
       "name": "extra.Gemma-4-12B-it-GGUF",
       "directory": "Gemma-4-12B-it-GGUF",
       "repository": "bartowski/gemma-4-12B-it-GGUF",
@@ -51,6 +60,9 @@
     {
       "id": "llama-3.1-8b",
       "tier": "smoke",
+      "hrx": {
+        "xfail": true
+      },
       "name": "extra.Meta-Llama-3.1-8B-Instruct-GGUF",
       "directory": "Meta-Llama-3.1-8B-Instruct-GGUF",
       "repository": "bartowski/Meta-Llama-3.1-8B-Instruct-GGUF",

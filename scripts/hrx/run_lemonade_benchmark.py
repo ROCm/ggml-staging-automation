@@ -1,7 +1,19 @@
 #!/usr/bin/env python3
 # Copyright Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
-"""Run HRX and Vulkan release benchmarks through sequential Lemonade daemons."""
+"""Run HRX and Vulkan release benchmarks through sequential Lemonade daemons.
+
+Each backend gets a fresh daemon configured to use the packaged llama-server
+and the requested device. The worker validates Lemonade's JSON before merging
+the batch into the stable artifacts. Vulkan results are always mandatory. HRX
+models carrying ``hrx.xfail`` in the model manifest may fail completely, but a
+partial result remains a failure and a complete result is an XPASS. Expected
+failures therefore preserve diagnostics without hiding regressions or fixes.
+
+Process, daemon, configuration, document, and artifact errors are always fatal.
+Only outcomes represented by an otherwise valid Lemonade document participate
+in XFAIL classification.
+"""
 
 from __future__ import annotations
 
@@ -19,6 +31,7 @@ from pathlib import Path
 from typing import Any
 
 from benchmark_output import append_batch_log, merge_benchmark_output
+from run_batched_benchmark import ModelSpec, load_manifest
 
 
 BENCHMARK_BACKEND_ARGS = "--ignore-eos"
@@ -32,6 +45,20 @@ class BenchmarkPhase:
     output: Path
     server_log: Path
     response_log: Path
+
+
+@dataclass(frozen=True)
+class ModelBenchmarkSummary:
+    scenario_count: int
+    successful_scenario_count: int
+    failed_scenario_count: int
+
+
+@dataclass(frozen=True)
+class BenchmarkOutcomeCounts:
+    failure_count: int
+    xfail_count: int
+    xpass_count: int
 
 
 def log(message: str) -> None:
@@ -142,32 +169,101 @@ def start_lemond(
         )
 
 
-def summarize_benchmark(
-    data: dict[str, Any],
+def resolve_model_specs(
+    manifest_path: Path,
+    names: list[str],
+) -> list[ModelSpec]:
+    """Resolve unique Lemonade runtime names to their manifest metadata."""
+    manifest = load_manifest(manifest_path)
+    specs_by_name = {spec.name: spec for spec in manifest.models}
+    unknown_names = [name for name in names if name not in specs_by_name]
+    names_are_unique = len(names) == len(set(names))
+    if unknown_names:
+        raise RuntimeError(
+            f"Models are not in {manifest_path}: {unknown_names!r}"
+        )
+    if not names_are_unique:
+        raise RuntimeError("Lemonade benchmark model names must be unique")
+    return [specs_by_name[name] for name in names]
+
+
+def summarize_benchmark_document(
+    data: Any,
     expected_backend: str,
-    expected_models: list[str],
-) -> tuple[int, int]:
-    """Check batch identity and count scenarios that report failures."""
+    expected_models: list[ModelSpec],
+) -> tuple[dict[str, ModelBenchmarkSummary], int, int]:
+    """Validate one document and summarize every model it contains."""
     scenario_count = 0
     failed_scenario_count = 0
     model_names: set[str] = set()
+    model_summaries: dict[str, ModelBenchmarkSummary] = {}
+    if not isinstance(data, dict):
+        raise RuntimeError("Lemonade benchmark document must be an object")
     try:
-        for model in data["models"]:
+        timestamp = data["timestamp"]
+        timestamp_is_string = isinstance(timestamp, str)
+        timestamp_is_present = bool(timestamp)
+        timestamp_is_valid = timestamp_is_string and timestamp_is_present
+        if not timestamp_is_valid:
+            raise RuntimeError(
+                "Lemonade benchmark timestamp must be a non-empty string"
+            )
+        if "hardware" not in data:
+            raise RuntimeError(
+                "Lemonade benchmark document is missing hardware metadata"
+            )
+        raw_models = data["models"]
+        if not isinstance(raw_models, list):
+            raise RuntimeError("Lemonade benchmark models must be an array")
+        for model in raw_models:
+            if not isinstance(model, dict):
+                raise RuntimeError(
+                    "Lemonade benchmark model entries must be objects"
+                )
             model_name = model["model"]
+            model_name_is_string = isinstance(model_name, str)
+            model_name_is_present = bool(model_name)
+            model_name_is_valid = model_name_is_string and model_name_is_present
+            if not model_name_is_valid:
+                raise RuntimeError(
+                    "Lemonade benchmark model names must be non-empty strings"
+                )
             if model_name in model_names:
                 raise RuntimeError(
                     f"Lemonade benchmark has duplicate model {model_name!r}"
                 )
             model_names.add(model_name)
             model_scenario_count = 0
-            for result in model["results"]:
+            model_successful_scenario_count = 0
+            model_failed_scenario_count = 0
+            results = model["results"]
+            if not isinstance(results, list):
+                raise RuntimeError(
+                    f"Lemonade model {model_name!r} results must be an array"
+                )
+            for result in results:
+                if not isinstance(result, dict):
+                    raise RuntimeError(
+                        f"Lemonade model {model_name!r} result entries "
+                        "must be objects"
+                    )
                 backend = result["backend"]
                 if backend != expected_backend:
                     raise RuntimeError(
                         f"Lemonade reported backend {backend!r}; expected "
                         f"{expected_backend!r}"
                     )
-                for scenario in result["scenarios"]:
+                scenarios = result["scenarios"]
+                if not isinstance(scenarios, list):
+                    raise RuntimeError(
+                        f"Lemonade model {model_name!r} scenarios must be an array"
+                    )
+                for scenario in scenarios:
+                    if not isinstance(scenario, dict):
+                        raise RuntimeError(
+                            f"Lemonade model {model_name!r} scenario entries "
+                            "must be objects"
+                        )
                     failed_runs = scenario["failed_runs"]
                     if type(failed_runs) is not int or failed_runs < 0:
                         raise RuntimeError(
@@ -180,25 +276,115 @@ def summarize_benchmark(
                             "Lemonade scenario all_runs_failed must be a "
                             "Boolean when present"
                         )
-                    if failed_runs or all_runs_failed:
+                    scenario_has_failed_runs = failed_runs > 0
+                    scenario_has_measurements = not all_runs_failed
+                    scenario_has_failures = (
+                        scenario_has_failed_runs or all_runs_failed
+                    )
+                    if scenario_has_failures:
+                        model_failed_scenario_count += 1
                         failed_scenario_count += 1
+                    if scenario_has_measurements:
+                        model_successful_scenario_count += 1
                     model_scenario_count += 1
                     scenario_count += 1
             if not model_scenario_count:
                 raise RuntimeError(
                     f"Lemonade model {model_name!r} has no scenarios"
                 )
-        expected_model_names = set(expected_models)
-        if model_names != expected_model_names:
-            missing_models = sorted(expected_model_names - model_names)
-            unexpected_models = sorted(model_names - expected_model_names)
+            model_summaries[model_name] = ModelBenchmarkSummary(
+                scenario_count=model_scenario_count,
+                successful_scenario_count=model_successful_scenario_count,
+                failed_scenario_count=model_failed_scenario_count,
+            )
+        expected_model_names = {model.name for model in expected_models}
+        unexpected_models = sorted(model_names - expected_model_names)
+        if unexpected_models:
             raise RuntimeError(
-                "Lemonade benchmark model coverage mismatch: "
-                f"missing={missing_models!r}; unexpected={unexpected_models!r}"
+                "Lemonade benchmark contains unexpected models: "
+                f"{unexpected_models!r}"
             )
     except (KeyError, TypeError) as exc:
         raise RuntimeError("Lemonade benchmark report is malformed") from exc
-    return scenario_count, failed_scenario_count
+    return model_summaries, scenario_count, failed_scenario_count
+
+
+def classify_benchmark_outcomes(
+    model_summaries: dict[str, ModelBenchmarkSummary],
+    expected_backend: str,
+    expected_models: list[ModelSpec],
+) -> BenchmarkOutcomeCounts:
+    """Classify model outcomes after the complete document is known to be valid."""
+    failure_count = 0
+    xfail_count = 0
+    xpass_count = 0
+    backend_label = expected_backend.upper()
+    backend_is_hrx = expected_backend == "hrx"
+
+    for model in expected_models:
+        summary = model_summaries.get(model.name)
+        model_is_missing = summary is None
+        model_is_flagged = model.hrx_xfail
+        xfail_applies = backend_is_hrx and model_is_flagged
+        model_label = f"{model.id} ({model.name})"
+
+        if model_is_missing:
+            if xfail_applies:
+                log(
+                    f"XFAIL: {backend_label} throughput for {model_label} "
+                    "is absent from a valid benchmark document"
+                )
+                xfail_count += 1
+            else:
+                log(
+                    f"FAIL: {backend_label} throughput for {model_label} "
+                    "is absent from a valid benchmark document"
+                )
+                failure_count += 1
+            continue
+
+        has_successful_scenarios = summary.successful_scenario_count > 0
+        has_failed_scenarios = summary.failed_scenario_count > 0
+        if not has_successful_scenarios:
+            if xfail_applies:
+                log(
+                    f"XFAIL: {backend_label} throughput for {model_label} "
+                    f"retained no successful scenarios across "
+                    f"{summary.scenario_count} scenario(s)"
+                )
+                xfail_count += 1
+            else:
+                log(
+                    f"FAIL: {backend_label} throughput for {model_label} "
+                    f"retained no successful scenarios across "
+                    f"{summary.scenario_count} scenario(s)"
+                )
+                failure_count += 1
+            continue
+
+        if has_failed_scenarios:
+            log(
+                f"FAIL: {backend_label} throughput for {model_label} was "
+                f"partial: {summary.failed_scenario_count} of "
+                f"{summary.scenario_count} scenario(s) reported failed runs "
+                "or no successful measurements"
+            )
+            failure_count += 1
+            continue
+
+        if xfail_applies:
+            log(
+                f"XPASS: {backend_label} throughput for {model_label} "
+                f"completed all {summary.scenario_count} scenario(s); "
+                "hrx.xfail is still set"
+            )
+            xpass_count += 1
+
+    return BenchmarkOutcomeCounts(
+        failure_count=failure_count,
+        xfail_count=xfail_count,
+        xpass_count=xpass_count,
+    )
 
 
 def run_benchmark(
@@ -206,10 +392,10 @@ def run_benchmark(
     backend: str,
     output: Path,
     response_log: Path,
-    models: list[str],
+    models: list[ModelSpec],
     *,
     env: dict[str, str],
-) -> tuple[dict[str, Any], int]:
+) -> tuple[dict[str, Any], BenchmarkOutcomeCounts]:
     """Run and summarize one backend's complete benchmark suite."""
     output.parent.mkdir(parents=True, exist_ok=True)
     output.unlink(missing_ok=True)
@@ -228,23 +414,33 @@ def run_benchmark(
         "--output",
         os.fspath(output),
     ]
-    command.extend(models)
+    command.extend(model.name for model in models)
     log("++ " + " ".join(command))
     subprocess.run(command, env=env, check=True)
 
     if not output.is_file():
         raise RuntimeError(f"Lemonade benchmark did not write {output}")
     data = json.loads(output.read_text(encoding="utf-8"))
-    scenario_count, failed_scenario_count = summarize_benchmark(
-        data,
+    model_summaries, scenario_count, failed_scenario_count = (
+        summarize_benchmark_document(
+            data,
+            expected_backend=backend,
+            expected_models=models,
+        )
+    )
+    outcome_counts = classify_benchmark_outcomes(
+        model_summaries,
         expected_backend=backend,
         expected_models=models,
     )
     log(
         f"Summarized {scenario_count} {backend} scenario(s); "
-        f"{failed_scenario_count} reported failures in {output}"
+        f"{failed_scenario_count} reported failures; "
+        f"outcomes: {outcome_counts.failure_count} FAIL, "
+        f"{outcome_counts.xfail_count} XFAIL, "
+        f"{outcome_counts.xpass_count} XPASS in {output}"
     )
-    return data, failed_scenario_count
+    return data, outcome_counts
 
 
 def set_lemonade_config_values(
@@ -359,6 +555,7 @@ def run(args: argparse.Namespace) -> int:
     lemonade = lemonade_build / "lemonade"
     llama_server = args.llama_server.resolve()
     models_dir = args.models_dir.resolve()
+    models = resolve_model_specs(args.model_manifest, args.models)
     phases = (
         BenchmarkPhase(
             name="HRX",
@@ -377,7 +574,9 @@ def run(args: argparse.Namespace) -> int:
             response_log=args.vulkan_response_log,
         ),
     )
-    failed_scenario_count = 0
+    failure_count = 0
+    xfail_count = 0
+    xpass_count = 0
 
     with tempfile.TemporaryDirectory(
         dir=models_dir.parent,
@@ -448,12 +647,12 @@ def run(args: argparse.Namespace) -> int:
                     env=env,
                     port=port,
                 )
-                batch_data, phase_failed_scenario_count = run_benchmark(
+                batch_data, outcome_counts = run_benchmark(
                     lemonade,
                     phase.backend,
                     active_phase.output,
                     active_phase.response_log,
-                    args.models,
+                    models,
                     env=env,
                 )
             finally:
@@ -506,14 +705,24 @@ def run(args: argparse.Namespace) -> int:
                     f"Merged {merged_count} {phase.backend} model(s) from "
                     f"batch {args.batch_number} into {phase.output}"
                 )
-            failed_scenario_count += phase_failed_scenario_count
+            failure_count += outcome_counts.failure_count
+            xfail_count += outcome_counts.xfail_count
+            xpass_count += outcome_counts.xpass_count
 
-    if failed_scenario_count:
+    has_failures = failure_count > 0
+    has_xpasses = xpass_count > 0
+    has_unexpected_outcomes = has_failures or has_xpasses
+    if has_unexpected_outcomes:
         log(
-            "Lemonade benchmark completed with "
-            f"{failed_scenario_count} failed scenario(s)"
+            "Lemonade benchmark completed with unexpected outcomes: "
+            f"{failure_count} FAIL, {xfail_count} XFAIL, {xpass_count} XPASS"
         )
         return 1
+    if xfail_count:
+        log(
+            "Lemonade benchmark completed successfully with "
+            f"{xfail_count} XFAIL outcome(s)"
+        )
     return 0
 
 
@@ -521,6 +730,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--lemonade-build-dir", type=Path, required=True)
     parser.add_argument("--llama-server", type=Path, required=True)
+    parser.add_argument("--model-manifest", type=Path, required=True)
     parser.add_argument("--models-dir", type=Path, required=True)
     parser.add_argument("--batched", action="store_true")
     parser.add_argument("--batch-number", type=int)

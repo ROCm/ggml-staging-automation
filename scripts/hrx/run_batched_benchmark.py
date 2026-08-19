@@ -13,6 +13,8 @@ Terms:
 - Benchmark worker: a command from the benchmark specification (for example
   run_perplexity_benchmark.py). It is invoked once per batch and is expected to
   merge its per-batch results itself.
+- HRX XFAIL: optional per-model manifest metadata consumed by benchmark
+  workers. It defaults to false and never relaxes Vulkan measurements.
 
 Why this exists: CI runners for the HRX release benchmarks have far less free
 disk than the full model set requires. Instead of pinning benchmarks to
@@ -96,6 +98,7 @@ class DownloadError(RuntimeError):
 class ModelSpec:
     id: str
     tier: str
+    hrx_xfail: bool
     name: str
     directory: str
     repository: str
@@ -226,6 +229,12 @@ def load_manifest(path: Path) -> ModelManifest:
         filename = _require_string(entry, "filename", context)
         sha256 = _require_string(entry, "sha256", context)
         size_bytes = entry.get("size_bytes")
+        hrx = _require_object(entry.get("hrx", {}), f"{context}.hrx")
+        hrx_xfail = hrx.get("xfail", False)
+        if type(hrx_xfail) is not bool:
+            raise BatchBenchmarkError(
+                f"{context}.hrx.xfail must be a Boolean when present"
+            )
 
         _validate_local_name(directory, "directory", context)
         _validate_local_name(filename, "filename", context)
@@ -258,6 +267,7 @@ def load_manifest(path: Path) -> ModelManifest:
             ModelSpec(
                 id=model_id,
                 tier=tier,
+                hrx_xfail=hrx_xfail,
                 name=name,
                 directory=directory,
                 repository=repository,
