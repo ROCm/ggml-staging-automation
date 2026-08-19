@@ -101,7 +101,7 @@ jobs:
       name: Release benchmark
       release_artifact_name: ${{ needs.prepare_release.outputs.artifact_name }}
       package_root_name: llama-${{ needs.prepare_release.outputs.version }}
-      models: qwen3-30b-a3b-instruct-2507
+      model_tier: full
       allow_failure: true
 
   publish_release:

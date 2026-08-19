@@ -8,6 +8,15 @@ name: CI
 
 on:
   workflow_dispatch:
+    inputs:
+      model_tier:
+        description: Model tier to benchmark.
+        required: true
+        type: choice
+        default: full
+        options:
+          - smoke
+          - full
   pull_request:
   push:
     branches:
@@ -42,9 +51,4 @@ jobs:
       name: Release benchmark
       release_artifact_name: llama-cpp-linux-x86_64
       package_root_name: llama.cpp-install
-      models: >-
-        qwen3-30b-a3b-instruct-2507
-        qwen3.8-27b
-        mistral-small-3.2-24b
-        gemma-4-12b
-        llama-3.1-8b
+      model_tier: ${{ github.event_name == 'pull_request' && 'smoke' || inputs.model_tier || 'full' }}

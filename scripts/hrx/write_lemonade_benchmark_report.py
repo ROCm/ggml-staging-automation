@@ -1,40 +1,89 @@
 #!/usr/bin/env python3
 # Copyright Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
-"""Write an HRX/Vulkan Lemonade benchmark report as Markdown."""
+"""Write the Lemonade HRX/Vulkan benchmark report as Markdown.
+
+CI runs the release benchmark twice through Lemonade, once against the HRX
+backend and once against Vulkan, and each run leaves a ``benchmark-*.json``
+artifact (produced by ``run_lemonade_benchmark.py``). This script turns the pair
+into the Markdown that lands in the GitHub step summary, so someone reading the
+job page can see how HRX did next to Vulkan without opening the artifacts.
+
+Terms:
+
+- A *scenario* is one prompt/generation setting inside a *result*, which is one
+  model run with a given recipe, context size, and backend arguments. Scenarios
+  are matched across backends by their *comparison key* ``(model, recipe,
+  ctx_size, backend_args, scenario name)``; the backend itself is deliberately
+  not part of the key, since it is exactly what differs between the two files.
+- A scenario is *missing* when Lemonade retained no successful sample
+  (``all_runs_failed``); a *partial failure* has ``failed_runs > 0`` but still
+  reports statistics over the runs that succeeded.
+
+The artifact shape, reduced to the fields this report reads (``#`` marks the
+comparison key)::
+
+    {"models": [
+      {"model": "llama-3.1-8b",                          # key
+       "results": [
+         {"recipe": "llamacpp", "backend": "hrx",        # recipe: key
+          "ctx_size": 4096, "backend_args": "",          # key, key
+          "scenarios": [
+            {"name": "p128g64",                          # key
+             "failed_runs": 0, "output_tokens": 64,
+             "ttft_ms": {"mean": .., "min": .., "max": ..},
+             "tps":     {"mean": .., "min": .., "max": ..},
+             "vram_peak_gb": 4.5},                       # optional
+            {"name": "p1024g64", "failed_runs": 3,
+             "output_tokens": 0, "all_runs_failed": true}]}]}]}
+
+The command line, the exit-code contract (current pair fatal, ``main``
+baseline best-effort), and the matching rule all live in ``benchmark_report``
+and are shared with the perplexity report; this file supplies
+``kind="benchmark"`` and the section builders. Under that rule a comparison
+row exists for every scenario key present in both files, and nothing else
+about the pair can prevent the row: a side with no successful run renders as
+``<backend> missing`` with ``—`` cells, and two successful sides that report
+different output-token counts (possible when generation stops at end-of-text
+at different points) show both counts as ``64 / 60``. TPS and TTFT are rates
+and latencies, so they are still compared in that case.
+
+The report is printed to stdout in a fixed order: the partial-failure note, a
+per-backend table for HRX then Vulkan (every model each side ran, so a model
+skipped by the comparison is still visible), an HRX/Vulkan comparison, and
+finally either two current-versus-main comparisons (HRX and Vulkan each
+against the latest ``main`` artifact) or a one-line note that no baseline was
+usable.
+
+Validation is intentionally strict on shape (``type(x) is int`` rather than
+``isinstance``) so a Boolean or NaN never masquerades as a count or a metric,
+but it only covers the fields the report reads. Everything in this file is
+pure formatting over already-loaded dicts, so the section builders can be
+exercised in memory without touching the filesystem.
+"""
 
 from __future__ import annotations
 
-import argparse
-import json
 import math
-import sys
 from collections.abc import Iterator, Sequence
-from pathlib import Path
 from typing import Any
 
+from benchmark_report import (
+    UNAVAILABLE_MEASUREMENT,
+    ReportError,
+    format_code,
+    format_table_cell,
+    match_indexed,
+    run_report_cli,
+)
 
 Benchmark = dict[str, Any]
 ComparisonKey = tuple[str, str, int, str, str]
 ComparisonMatch = tuple[ComparisonKey, Benchmark, Benchmark]
-BASELINE_UNAVAILABLE_MESSAGE = (
-    "No usable main benchmark artifact is available for comparison."
-)
-UNAVAILABLE_MEASUREMENT = "—"
 PARTIAL_FAILURE_NOTE = (
     "Statistics shown for partial failures include successful runs only; "
     "failed runs are excluded. `—` marks an unavailable measurement."
 )
-
-
-class BenchmarkReportError(RuntimeError):
-    """Raised when two benchmark files cannot be compared safely."""
-
-
-def load_benchmark(path: Path) -> Benchmark:
-    """Load a benchmark JSON file without coupling I/O to report formatting."""
-    with path.open(encoding="utf-8") as benchmark_file:
-        return json.load(benchmark_file)
 
 
 def iter_scenarios(
@@ -71,7 +120,7 @@ def index_scenarios(
     for key, scenario in iter_scenarios(benchmark):
         validate_scenario(scenario)
         if key in scenarios:
-            raise BenchmarkReportError(
+            raise ReportError(
                 f"Duplicate {backend_name} comparison key: {describe_key(key)}"
             )
         scenarios[key] = scenario
@@ -85,65 +134,18 @@ def match_scenarios(
     left_backend_label: str = "HRX",
     right_backend_label: str = "Vulkan",
 ) -> list[ComparisonMatch]:
-    """Match two benchmark result sets and enforce comparison integrity."""
-    left_scenarios = index_scenarios(left_benchmark, left_backend_label)
-    right_scenarios = index_scenarios(right_benchmark, right_backend_label)
-
-    missing_right = [key for key in left_scenarios if key not in right_scenarios]
-    missing_left = [key for key in right_scenarios if key not in left_scenarios]
-    if missing_right or missing_left:
-        details = []
-        if missing_right:
-            details.append(
-                f"missing from {right_backend_label}: "
-                + "; ".join(describe_key(key) for key in missing_right)
-            )
-        if missing_left:
-            details.append(
-                f"missing from {left_backend_label}: "
-                + "; ".join(describe_key(key) for key in missing_left)
-            )
-        raise BenchmarkReportError(
-            "Benchmark counterparts do not match: " + " | ".join(details)
-        )
-
-    matches: list[ComparisonMatch] = []
-    for key, left_scenario in left_scenarios.items():
-        right_scenario = right_scenarios[key]
-        left_has_measurements = scenario_has_measurements(left_scenario)
-        right_has_measurements = scenario_has_measurements(right_scenario)
-        if left_has_measurements and right_has_measurements:
-            left_tokens = left_scenario["output_tokens"]
-            right_tokens = right_scenario["output_tokens"]
-            if left_tokens != right_tokens:
-                raise BenchmarkReportError(
-                    f"Output-token count mismatch for {describe_key(key)}: "
-                    f"{left_backend_label}={left_tokens}, "
-                    f"{right_backend_label}={right_tokens}"
-                )
-        matches.append((key, left_scenario, right_scenario))
-    return matches
-
-
-def format_code(value: object) -> str:
-    """Format trusted benchmark metadata as an inline Markdown code span."""
-    text = str(value).replace("\n", " ")
-    fence = "``" if "`" in text else "`"
-    return f"{fence}{text}{fence}"
-
-
-def format_table_cell(value: object) -> str:
-    """Escape benchmark labels for a Markdown table cell."""
-    return str(value).replace("\n", " ").replace("|", "\\|")
+    """Pair every scenario both sides benchmarked, in left order."""
+    return match_indexed(
+        index_scenarios(left_benchmark, left_backend_label),
+        index_scenarios(right_benchmark, right_backend_label),
+    )
 
 
 def scenario_failed_runs(scenario: Benchmark) -> int:
     """Return a validated failed-run count from one Lemonade scenario."""
     failed_runs = scenario["failed_runs"]
     if type(failed_runs) is not int or failed_runs < 0:
-        raise BenchmarkReportError(
-            "Scenario failed_runs must be a non-negative integer"
-        )
+        raise ReportError("Scenario failed_runs must be a non-negative integer")
     return failed_runs
 
 
@@ -151,9 +153,7 @@ def scenario_has_measurements(scenario: Benchmark) -> bool:
     """Return whether Lemonade retained at least one successful sample."""
     all_runs_failed = scenario.get("all_runs_failed", False)
     if type(all_runs_failed) is not bool:
-        raise BenchmarkReportError(
-            "Scenario all_runs_failed must be a Boolean when present"
-        )
+        raise ReportError("Scenario all_runs_failed must be a Boolean when present")
     return not all_runs_failed
 
 
@@ -161,9 +161,7 @@ def scenario_output_tokens(scenario: Benchmark) -> int:
     """Return a validated output-token count."""
     output_tokens = scenario["output_tokens"]
     if type(output_tokens) is not int or output_tokens < 0:
-        raise BenchmarkReportError(
-            "Scenario output_tokens must be a non-negative integer"
-        )
+        raise ReportError("Scenario output_tokens must be a non-negative integer")
     return output_tokens
 
 
@@ -180,13 +178,9 @@ def scenario_metric(
     value = scenario[field]
     if statistic is not None:
         value = value[statistic]
-    if (
-        type(value) not in (int, float)
-        or not math.isfinite(value)
-        or value < 0
-    ):
+    if type(value) not in (int, float) or not math.isfinite(value) or value < 0:
         description = f"{field}.{statistic}" if statistic else field
-        raise BenchmarkReportError(
+        raise ReportError(
             f"Scenario {description} must be a finite non-negative number"
         )
     return value
@@ -198,16 +192,14 @@ def validate_scenario(scenario: Benchmark) -> None:
     output_tokens = scenario_output_tokens(scenario)
     if not scenario_has_measurements(scenario):
         if output_tokens != 0:
-            raise BenchmarkReportError(
+            raise ReportError(
                 "Scenario without measurements must report zero output_tokens"
             )
         unexpected_fields = [
-            field
-            for field in ("ttft_ms", "tps", "vram_peak_gb")
-            if field in scenario
+            field for field in ("ttft_ms", "tps", "vram_peak_gb") if field in scenario
         ]
         if unexpected_fields:
-            raise BenchmarkReportError(
+            raise ReportError(
                 "Scenario without measurements contains measurement fields: "
                 + ", ".join(unexpected_fields)
             )
@@ -286,13 +278,19 @@ def format_metric(
     return f"{value:.1f}"
 
 
-def format_output_tokens(
-    left_scenario: Benchmark, right_scenario: Benchmark
-) -> str:
-    """Use the token count from either available side of a comparison."""
-    if scenario_has_measurements(left_scenario):
+def format_output_tokens(left_scenario: Benchmark, right_scenario: Benchmark) -> str:
+    """Show one count when the sides agree, both when they do not."""
+    left_has_measurements = scenario_has_measurements(left_scenario)
+    right_has_measurements = scenario_has_measurements(right_scenario)
+    if left_has_measurements and right_has_measurements:
+        left_tokens = scenario_output_tokens(left_scenario)
+        right_tokens = scenario_output_tokens(right_scenario)
+        if left_tokens == right_tokens:
+            return str(left_tokens)
+        return f"{left_tokens} / {right_tokens}"
+    if left_has_measurements:
         return str(scenario_output_tokens(left_scenario))
-    if scenario_has_measurements(right_scenario):
+    if right_has_measurements:
         return str(scenario_output_tokens(right_scenario))
     return UNAVAILABLE_MEASUREMENT
 
@@ -319,8 +317,7 @@ def format_backend_table(benchmark: Benchmark, backend_name: str) -> str:
                     "| Scenario | Status | TTFT mean (ms) | TTFT min (ms) | "
                     "TTFT max (ms) | TPS mean | TPS min | TPS max | "
                     "VRAM peak (GB) |",
-                    "| --- | --- | ---: | ---: | ---: | ---: | ---: | "
-                    "---: | ---: |",
+                    "| --- | --- | ---: | ---: | ---: | ---: | ---: | " "---: | ---: |",
                 ]
             )
             for scenario in result["scenarios"]:
@@ -362,6 +359,12 @@ def format_comparison_table(
         f"{right_backend_label} mean TPS.",
         "",
     ]
+    if not matches:
+        lines.append(
+            f"No model was benchmarked by both {left_backend_label} and "
+            f"{right_backend_label}."
+        )
+        return "\n".join(lines)
     previous_model: str | None = None
     previous_result: tuple[str, str, int, str] | None = None
 
@@ -484,71 +487,13 @@ def format_report(hrx_benchmark: Benchmark, vulkan_benchmark: Benchmark) -> str:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("hrx_benchmark", type=Path)
-    parser.add_argument("vulkan_benchmark", type=Path)
-    parser.add_argument("--baseline-hrx-benchmark", type=Path)
-    parser.add_argument("--baseline-vulkan-benchmark", type=Path)
-    parser.add_argument("--baseline-run-url")
-    args = parser.parse_args()
-
-    try:
-        hrx_benchmark = load_benchmark(args.hrx_benchmark)
-        vulkan_benchmark = load_benchmark(args.vulkan_benchmark)
-        report = format_report(hrx_benchmark, vulkan_benchmark)
-    except (
-        OSError,
-        json.JSONDecodeError,
-        BenchmarkReportError,
-        IndexError,
-        KeyError,
-        OverflowError,
-        TypeError,
-        ValueError,
-    ) as exc:
-        print(f"Could not write Lemonade benchmark report: {exc}", file=sys.stderr)
-        return 1
-
-    baseline_paths = (
-        args.baseline_hrx_benchmark,
-        args.baseline_vulkan_benchmark,
+    return run_report_cli(
+        kind="benchmark",
+        report_label="Lemonade benchmark",
+        description=__doc__,
+        format_report=format_report,
+        format_main_comparisons=format_main_comparisons,
     )
-    if all(path is not None for path in baseline_paths):
-        try:
-            main_hrx_benchmark = load_benchmark(args.baseline_hrx_benchmark)
-            main_vulkan_benchmark = load_benchmark(args.baseline_vulkan_benchmark)
-            main_comparisons = format_main_comparisons(
-                hrx_benchmark,
-                vulkan_benchmark,
-                main_hrx_benchmark,
-                main_vulkan_benchmark,
-                args.baseline_run_url,
-            )
-        except (
-            OSError,
-            json.JSONDecodeError,
-            BenchmarkReportError,
-            IndexError,
-            KeyError,
-            OverflowError,
-            TypeError,
-            ValueError,
-        ) as exc:
-            print(f"Could not compare with main benchmark: {exc}", file=sys.stderr)
-            report = f"{report}\n\n{BASELINE_UNAVAILABLE_MESSAGE}"
-        else:
-            report = f"{report}\n\n{main_comparisons}"
-    else:
-        if any(path is not None for path in baseline_paths):
-            print(
-                "Could not compare with main benchmark: both baseline benchmark "
-                "paths are required",
-                file=sys.stderr,
-            )
-        report = f"{report}\n\n{BASELINE_UNAVAILABLE_MESSAGE}"
-
-    print(report)
-    return 0
 
 
 if __name__ == "__main__":

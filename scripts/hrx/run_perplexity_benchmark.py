@@ -67,7 +67,8 @@ def resolve_models(
     manifest_path: Path, models_dir: Path, names: list[str]
 ) -> list[ResolvedModel]:
     """Map Lemonade model names to the staged GGUF files they refer to."""
-    specs_by_name = {spec.name: spec for spec in load_manifest(manifest_path)}
+    manifest = load_manifest(manifest_path)
+    specs_by_name = {spec.name: spec for spec in manifest.models}
     unknown_names = [name for name in names if name not in specs_by_name]
     if unknown_names:
         raise PerplexityBenchmarkError(
