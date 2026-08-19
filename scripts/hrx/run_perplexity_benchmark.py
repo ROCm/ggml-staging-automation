@@ -5,12 +5,13 @@
 
 Every selected model is measured once per backend and recorded in a stable JSON
 artifact, including failed measurements. Vulkan and unflagged HRX measurements
-are mandatory. A failed HRX measurement for a model carrying ``hrx.xfail`` in
-the manifest is an XFAIL; a successful one is an XPASS and fails the worker so
-the stale expectation cannot pass unnoticed.
+are mandatory. The batched driver supplies the selected models carrying the
+HRX XFAIL policy as runtime names. A failed HRX measurement for one of those
+models is an XFAIL; a successful one is an XPASS and fails the worker so the
+stale expectation cannot pass unnoticed.
 
 Only completed measurement attempts are classified this way. Invalid inputs,
-process invocation errors, output-writing errors, and cleanup failures remain
+process invocation errors, result-writing errors, and cleanup failures remain
 fatal and retain their normal exception path.
 """
 
@@ -62,11 +63,31 @@ class ResolvedModel:
     path: Path
 
 
-@dataclass(frozen=True)
-class PerplexityOutcomeCounts:
-    failure_count: int
-    xfail_count: int
-    xpass_count: int
+def validate_model_selection(
+    models: list[str], hrx_xfail_models: list[str]
+) -> set[str]:
+    """Validate externally supplied runtime names and return the XFAIL set."""
+    model_names = set(models)
+    models_are_unique = len(models) == len(model_names)
+    if not models_are_unique:
+        raise PerplexityBenchmarkError(
+            "Perplexity benchmark model names must be unique"
+        )
+
+    hrx_xfail_names = set(hrx_xfail_models)
+    hrx_xfail_names_are_unique = len(hrx_xfail_models) == len(hrx_xfail_names)
+    if not hrx_xfail_names_are_unique:
+        raise PerplexityBenchmarkError(
+            "HRX XFAIL model names must be unique"
+        )
+
+    unknown_hrx_xfail_names = hrx_xfail_names - model_names
+    if unknown_hrx_xfail_names:
+        raise PerplexityBenchmarkError(
+            "HRX XFAIL model names are not selected: "
+            f"{sorted(unknown_hrx_xfail_names)!r}"
+        )
+    return hrx_xfail_names
 
 
 def log(message: str) -> None:
@@ -223,13 +244,12 @@ def run_phase(
     llama_perplexity: Path,
     corpus_file: Path,
     corpus_sha256: str,
+    hrx_xfail_models: set[str],
     args: argparse.Namespace,
-) -> tuple[dict[str, Any], PerplexityOutcomeCounts]:
+) -> tuple[dict[str, Any], bool]:
     """Measure every staged model on one device and build the batch document."""
     rows: list[dict[str, Any]] = []
-    failure_count = 0
-    xfail_count = 0
-    xpass_count = 0
+    has_unexpected_outcomes = False
     phase_is_hrx = phase.backend == "hrx"
     active_log.parent.mkdir(parents=True, exist_ok=True)
     with active_log.open("a", encoding="utf-8") as log_handle:
@@ -243,7 +263,7 @@ def run_phase(
                 log_handle,
             )
             rows.append(row)
-            model_is_flagged = model.spec.hrx_xfail
+            model_is_flagged = model.spec.name in hrx_xfail_models
             xfail_applies = phase_is_hrx and model_is_flagged
             model_label = f"{model.spec.id} ({model.spec.name})"
             if succeeded:
@@ -252,19 +272,18 @@ def run_phase(
                         f"XPASS: {phase.name} perplexity for {model_label} "
                         "completed successfully; hrx.xfail is still set"
                     )
-                    xpass_count += 1
+                    has_unexpected_outcomes = True
             elif xfail_applies:
                 log(
                     f"XFAIL: {phase.name} perplexity for {model_label}: "
                     f"{row['error']}"
                 )
-                xfail_count += 1
             else:
                 log(
                     f"FAIL: {phase.name} perplexity for {model_label}: "
                     f"{row['error']}"
                 )
-                failure_count += 1
+                has_unexpected_outcomes = True
     batch_data = {
         "schema_version": 1,
         "backend": phase.backend,
@@ -283,14 +302,13 @@ def run_phase(
         },
         "models": rows,
     }
-    return batch_data, PerplexityOutcomeCounts(
-        failure_count=failure_count,
-        xfail_count=xfail_count,
-        xpass_count=xpass_count,
-    )
+    return batch_data, has_unexpected_outcomes
 
 
 def run(args: argparse.Namespace) -> int:
+    hrx_xfail_models = validate_model_selection(
+        args.models, args.hrx_xfail_models
+    )
     llama_perplexity = args.llama_perplexity.resolve()
     models_dir = args.models_dir.resolve()
     corpus_file = args.corpus_file.resolve()
@@ -314,9 +332,7 @@ def run(args: argparse.Namespace) -> int:
             log=args.vulkan_log,
         ),
     )
-    failure_count = 0
-    xfail_count = 0
-    xpass_count = 0
+    has_unexpected_outcomes = False
 
     # Precreate debug files so early failures still leave uploadable artifacts.
     for phase in phases:
@@ -339,13 +355,14 @@ def run(args: argparse.Namespace) -> int:
             if args.batched:
                 active_log = state_root / phase.backend / "perplexity.log"
             try:
-                batch_data, outcome_counts = run_phase(
+                batch_data, phase_has_unexpected_outcomes = run_phase(
                     phase,
                     active_log,
                     models,
                     llama_perplexity,
                     corpus_file,
                     corpus_sha256,
+                    hrx_xfail_models,
                     args,
                 )
             finally:
@@ -369,24 +386,16 @@ def run(args: argparse.Namespace) -> int:
             else:
                 atomic_write_json(phase.output, batch_data)
                 log(f"Wrote {phase.output}")
-            failure_count += outcome_counts.failure_count
-            xfail_count += outcome_counts.xfail_count
-            xpass_count += outcome_counts.xpass_count
+            has_unexpected_outcomes = (
+                has_unexpected_outcomes or phase_has_unexpected_outcomes
+            )
 
-    has_failures = failure_count > 0
-    has_xpasses = xpass_count > 0
-    has_unexpected_outcomes = has_failures or has_xpasses
     if has_unexpected_outcomes:
         log(
-            "Perplexity benchmark completed with unexpected outcomes: "
-            f"{failure_count} FAIL, {xfail_count} XFAIL, {xpass_count} XPASS"
+            "Perplexity benchmark completed with unexpected FAIL or XPASS "
+            "outcomes"
         )
         return 1
-    if xfail_count:
-        log(
-            "Perplexity benchmark completed successfully with "
-            f"{xfail_count} XFAIL outcome(s)"
-        )
     return 0
 
 
@@ -414,6 +423,7 @@ def main() -> int:
         default=[],
         help="Extra argument forwarded to llama-perplexity (repeatable).",
     )
+    parser.add_argument("--hrx-xfail-models", nargs="*", required=True)
     parser.add_argument("--models", nargs="+", required=True)
     args = parser.parse_args()
     if args.batched and args.batch_number is None:

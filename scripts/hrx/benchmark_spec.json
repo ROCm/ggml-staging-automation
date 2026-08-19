@@ -9,8 +9,6 @@
         "lemonade-source/build",
         "--llama-server",
         "release/benchmark-package/bin/llama-server",
-        "--model-manifest",
-        "scripts/hrx/lemonade_model_manifest.json",
         "--hrx-output",
         "lemonade-benchmark/benchmark-hrx.json",
         "--vulkan-output",
