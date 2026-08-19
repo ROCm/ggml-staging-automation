@@ -45,8 +45,8 @@ row exists for every scenario key present in both files, and nothing else
 about the pair can prevent the row: a side with no successful run renders as
 ``<backend> missing`` with ``—`` cells, and two successful sides that report
 different output-token counts (possible when generation stops at end-of-text
-at different points) render both counts as ``64 / 60`` with TPS parity
-``N/A``, since a rate comparison across generation lengths would mislead.
+at different points) show both counts as ``64 / 60``. TPS and TTFT are rates
+and latencies, so they are still compared in that case.
 
 The report is printed to stdout in a fixed order: the partial-failure note, a
 per-backend table for HRX then Vulkan (every model each side ran, so a model
@@ -76,7 +76,6 @@ from benchmark_report import (
     match_indexed,
     run_report_cli,
 )
-
 
 Benchmark = dict[str, Any]
 ComparisonKey = tuple[str, str, int, str, str]
@@ -140,13 +139,13 @@ def match_scenarios(
         index_scenarios(left_benchmark, left_backend_label),
         index_scenarios(right_benchmark, right_backend_label),
     )
+
+
 def scenario_failed_runs(scenario: Benchmark) -> int:
     """Return a validated failed-run count from one Lemonade scenario."""
     failed_runs = scenario["failed_runs"]
     if type(failed_runs) is not int or failed_runs < 0:
-        raise ReportError(
-            "Scenario failed_runs must be a non-negative integer"
-        )
+        raise ReportError("Scenario failed_runs must be a non-negative integer")
     return failed_runs
 
 
@@ -154,9 +153,7 @@ def scenario_has_measurements(scenario: Benchmark) -> bool:
     """Return whether Lemonade retained at least one successful sample."""
     all_runs_failed = scenario.get("all_runs_failed", False)
     if type(all_runs_failed) is not bool:
-        raise ReportError(
-            "Scenario all_runs_failed must be a Boolean when present"
-        )
+        raise ReportError("Scenario all_runs_failed must be a Boolean when present")
     return not all_runs_failed
 
 
@@ -164,9 +161,7 @@ def scenario_output_tokens(scenario: Benchmark) -> int:
     """Return a validated output-token count."""
     output_tokens = scenario["output_tokens"]
     if type(output_tokens) is not int or output_tokens < 0:
-        raise ReportError(
-            "Scenario output_tokens must be a non-negative integer"
-        )
+        raise ReportError("Scenario output_tokens must be a non-negative integer")
     return output_tokens
 
 
@@ -183,11 +178,7 @@ def scenario_metric(
     value = scenario[field]
     if statistic is not None:
         value = value[statistic]
-    if (
-        type(value) not in (int, float)
-        or not math.isfinite(value)
-        or value < 0
-    ):
+    if type(value) not in (int, float) or not math.isfinite(value) or value < 0:
         description = f"{field}.{statistic}" if statistic else field
         raise ReportError(
             f"Scenario {description} must be a finite non-negative number"
@@ -205,9 +196,7 @@ def validate_scenario(scenario: Benchmark) -> None:
                 "Scenario without measurements must report zero output_tokens"
             )
         unexpected_fields = [
-            field
-            for field in ("ttft_ms", "tps", "vram_peak_gb")
-            if field in scenario
+            field for field in ("ttft_ms", "tps", "vram_peak_gb") if field in scenario
         ]
         if unexpected_fields:
             raise ReportError(
@@ -289,9 +278,7 @@ def format_metric(
     return f"{value:.1f}"
 
 
-def format_output_tokens(
-    left_scenario: Benchmark, right_scenario: Benchmark
-) -> str:
+def format_output_tokens(left_scenario: Benchmark, right_scenario: Benchmark) -> str:
     """Show one count when the sides agree, both when they do not."""
     left_has_measurements = scenario_has_measurements(left_scenario)
     right_has_measurements = scenario_has_measurements(right_scenario)
@@ -330,8 +317,7 @@ def format_backend_table(benchmark: Benchmark, backend_name: str) -> str:
                     "| Scenario | Status | TTFT mean (ms) | TTFT min (ms) | "
                     "TTFT max (ms) | TPS mean | TPS min | TPS max | "
                     "VRAM peak (GB) |",
-                    "| --- | --- | ---: | ---: | ---: | ---: | ---: | "
-                    "---: | ---: |",
+                    "| --- | --- | ---: | ---: | ---: | ---: | ---: | " "---: | ---: |",
                 ]
             )
             for scenario in result["scenarios"]:
@@ -415,12 +401,8 @@ def format_comparison_table(
         both_have_measurements = scenario_has_measurements(
             hrx_scenario
         ) and scenario_has_measurements(vulkan_scenario)
-        same_output_tokens = both_have_measurements and (
-            scenario_output_tokens(hrx_scenario)
-            == scenario_output_tokens(vulkan_scenario)
-        )
         parity = "N/A"
-        if same_output_tokens:
+        if both_have_measurements:
             parity = format_tps_parity(
                 hrx_scenario["tps"]["mean"],
                 vulkan_scenario["tps"]["mean"],
