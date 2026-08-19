@@ -40,13 +40,13 @@ comparison key)::
 The command line, the exit-code contract (current pair fatal, ``main``
 baseline best-effort), and the matching rule all live in ``benchmark_report``
 and are shared with the perplexity report; this file supplies
-``kind="benchmark"`` and the section builders. Under that rule a model is
-compared only when both files contain it, and then all of its scenarios must
-be present on both sides. On top of it, this report requires matched
-scenarios to report the same output-token count wherever both sides have
-measurements: a TPS comparison over different generation lengths would be
-meaningless, so a mismatch is treated like a missing counterpart (fatal for
-the current pair, baseline-degrading for ``main``).
+``kind="benchmark"`` and the section builders. Under that rule a comparison
+row exists for every scenario key present in both files, and nothing else
+about the pair can prevent the row: a side with no successful run renders as
+``<backend> missing`` with ``—`` cells, and two successful sides that report
+different output-token counts (possible when generation stops at end-of-text
+at different points) render both counts as ``64 / 60`` with TPS parity
+``N/A``, since a rate comparison across generation lengths would mislead.
 
 The report is printed to stdout in a fixed order: the partial-failure note, a
 per-backend table for HRX then Vulkan (every model each side ran, so a model
@@ -135,38 +135,11 @@ def match_scenarios(
     left_backend_label: str = "HRX",
     right_backend_label: str = "Vulkan",
 ) -> list[ComparisonMatch]:
-    """Match scenarios of every model both sides benchmarked."""
-
-    def check_output_tokens(
-        key: ComparisonKey,
-        left_scenario: Benchmark,
-        right_scenario: Benchmark,
-    ) -> None:
-        left_has_measurements = scenario_has_measurements(left_scenario)
-        right_has_measurements = scenario_has_measurements(right_scenario)
-        both_have_measurements = left_has_measurements and right_has_measurements
-        if not both_have_measurements:
-            return
-        left_tokens = left_scenario["output_tokens"]
-        right_tokens = right_scenario["output_tokens"]
-        if left_tokens != right_tokens:
-            raise ReportError(
-                f"Output-token count mismatch for {describe_key(key)}: "
-                f"{left_backend_label}={left_tokens}, "
-                f"{right_backend_label}={right_tokens}"
-            )
-
+    """Pair every scenario both sides benchmarked, in left order."""
     return match_indexed(
         index_scenarios(left_benchmark, left_backend_label),
         index_scenarios(right_benchmark, right_backend_label),
-        left_label=left_backend_label,
-        right_label=right_backend_label,
-        group=lambda key: key[0],
-        describe=describe_key,
-        check_pair=check_output_tokens,
     )
-
-
 def scenario_failed_runs(scenario: Benchmark) -> int:
     """Return a validated failed-run count from one Lemonade scenario."""
     failed_runs = scenario["failed_runs"]
@@ -319,10 +292,18 @@ def format_metric(
 def format_output_tokens(
     left_scenario: Benchmark, right_scenario: Benchmark
 ) -> str:
-    """Use the token count from either available side of a comparison."""
-    if scenario_has_measurements(left_scenario):
+    """Show one count when the sides agree, both when they do not."""
+    left_has_measurements = scenario_has_measurements(left_scenario)
+    right_has_measurements = scenario_has_measurements(right_scenario)
+    if left_has_measurements and right_has_measurements:
+        left_tokens = scenario_output_tokens(left_scenario)
+        right_tokens = scenario_output_tokens(right_scenario)
+        if left_tokens == right_tokens:
+            return str(left_tokens)
+        return f"{left_tokens} / {right_tokens}"
+    if left_has_measurements:
         return str(scenario_output_tokens(left_scenario))
-    if scenario_has_measurements(right_scenario):
+    if right_has_measurements:
         return str(scenario_output_tokens(right_scenario))
     return UNAVAILABLE_MEASUREMENT
 
@@ -434,8 +415,12 @@ def format_comparison_table(
         both_have_measurements = scenario_has_measurements(
             hrx_scenario
         ) and scenario_has_measurements(vulkan_scenario)
+        same_output_tokens = both_have_measurements and (
+            scenario_output_tokens(hrx_scenario)
+            == scenario_output_tokens(vulkan_scenario)
+        )
         parity = "N/A"
-        if both_have_measurements:
+        if same_output_tokens:
             parity = format_tps_parity(
                 hrx_scenario["tps"]["mean"],
                 vulkan_scenario["tps"]["mean"],

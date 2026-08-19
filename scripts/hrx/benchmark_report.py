@@ -26,33 +26,24 @@ Terms:
 - *Kind*: the noun the CLI uses for the artifact, ``benchmark`` or
   ``perplexity``. It appears in the argument names and diagnostics.
 
-Matching (``match_indexed``) takes a left index and a right index and returns
-``[(key, left_item, right_item), ...]`` in left order. Keys are compared per
-*group* — the model a key belongs to (for perplexity the key *is* the model).
-A group is compared only when both sides have it; a group present on one side
-only is skipped, not an error. Within a shared group the two key sets must be
-identical, and ``check_pair`` (if given) runs on every matched pair, so a
-comparison that is drawn is always complete for that model. The two files
-routinely disagree on *which* models they contain: a batch's HRX and Vulkan
-phases run one after the other and merge per phase, so a Vulkan failure leaves
-the HRX artifact with extra models, and a pull request benchmarks the ``smoke``
-tier while the ``main`` baseline was built from ``full``. An earlier rule that
-required identical key sets (with the baseline allowed to be a superset) lost
-the whole comparison, or the whole baseline block, on either of those cases;
-scoping strictness to the model keeps the guarantee that matters — never a row
-built from mismatched measurements — without that cost::
+Matching (``match_indexed``) pairs every comparison key present in both
+indexes and returns ``[(key, left_item, right_item), ...]`` in left order; a
+key found on one side only is skipped, never an error. Everything that decides
+whether two measurements may sit in one row is therefore in the key, and the
+scripts render a pair's failures (a backend with no successful run) rather than
+refusing to pair. The two files routinely disagree on what they contain: a
+batch's HRX and Vulkan phases run one after the other and merge per phase, so a
+Vulkan failure leaves the HRX artifact with extra models; a pull request
+benchmarks the ``smoke`` tier while the ``main`` baseline was built from
+``full``; and a baseline from an older commit may carry different scenarios.
+An earlier rule required identical key sets (with the baseline allowed to be a
+superset) and lost the whole comparison, or the whole baseline block, on any
+of those::
 
     >>> left = {("A", "p1"): 1, ("A", "p2"): 2, ("B", "p1"): 3}
-    >>> right = {("A", "p1"): 10, ("A", "p2"): 20, ("C", "p1"): 30}
-    >>> match_indexed(left, right, left_label="L", right_label="R",
-    ...               group=lambda key: key[0], describe=repr)
+    >>> right = {("A", "p1"): 10, ("C", "p1"): 30, ("A", "p2"): 20}
+    >>> match_indexed(left, right)
     [(('A', 'p1'), 1, 10), (('A', 'p2'), 2, 20)]
-    >>> del right[("A", "p2")]
-    >>> match_indexed(left, right, left_label="L", right_label="R",
-    ...               group=lambda key: key[0], describe=repr)
-    Traceback (most recent call last):
-    ...
-    benchmark_report.ReportError: L/R counterparts for 'A' do not match: missing from R: ('A', 'p2')
 
 The CLI (``run_report_cli``) is what the workflow invokes, once per script::
 
@@ -136,55 +127,9 @@ def format_table_cell(value: object) -> str:
 def match_indexed(
     left: Mapping[K, V],
     right: Mapping[K, V],
-    *,
-    left_label: str,
-    right_label: str,
-    group: Callable[[K], Any],
-    describe: Callable[[K], str],
-    check_pair: Callable[[K, V, V], None] | None = None,
 ) -> list[tuple[K, V, V]]:
-    """Match every key whose group appears on both sides; ignore other groups."""
-    right_groups = {group(key) for key in right}
-    shared_groups: list[Any] = []
-    for key in left:
-        key_group = group(key)
-        group_is_shared = key_group in right_groups
-        group_is_new = key_group not in shared_groups
-        if group_is_shared and group_is_new:
-            shared_groups.append(key_group)
-
-    for shared_group in shared_groups:
-        left_keys = [key for key in left if group(key) == shared_group]
-        right_keys = [key for key in right if group(key) == shared_group]
-        missing_right = [key for key in left_keys if key not in right]
-        missing_left = [key for key in right_keys if key not in left]
-        counterparts_do_not_match = bool(missing_right) or bool(missing_left)
-        if counterparts_do_not_match:
-            details = []
-            if missing_right:
-                details.append(
-                    f"missing from {right_label}: "
-                    + "; ".join(describe(key) for key in missing_right)
-                )
-            if missing_left:
-                details.append(
-                    f"missing from {left_label}: "
-                    + "; ".join(describe(key) for key in missing_left)
-                )
-            raise ReportError(
-                f"{left_label}/{right_label} counterparts for "
-                f"{shared_group!r} do not match: " + " | ".join(details)
-            )
-
-    matches: list[tuple[K, V, V]] = []
-    for key, left_item in left.items():
-        if group(key) not in shared_groups:
-            continue
-        right_item = right[key]
-        if check_pair is not None:
-            check_pair(key, left_item, right_item)
-        matches.append((key, left_item, right_item))
-    return matches
+    """Pair every key present in both indexes, in left order."""
+    return [(key, left[key], right[key]) for key in left if key in right]
 
 
 def run_report_cli(

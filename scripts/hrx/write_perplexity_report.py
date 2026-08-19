@@ -150,15 +150,11 @@ def match_runs(
     left_label: str = "HRX",
     right_label: str = "Vulkan",
 ) -> list[ComparisonMatch]:
-    """Match the runs of every model both sides measured."""
+    """Pair the runs of every model both sides measured, in left order."""
     check_comparable(left, right, left_label=left_label, right_label=right_label)
     return match_indexed(
         index_runs(left, left_label),
         index_runs(right, right_label),
-        left_label=left_label,
-        right_label=right_label,
-        group=lambda model: model,
-        describe=repr,
     )
 
 
