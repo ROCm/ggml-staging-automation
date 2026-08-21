@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Iterable
 
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
+REPO_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_BUILD_ROOT = REPO_ROOT / "build"
 
 VULKAN_HEADERS_REPO = "https://github.com/KhronosGroup/Vulkan-Headers.git"

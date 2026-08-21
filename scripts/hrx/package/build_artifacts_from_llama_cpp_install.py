@@ -11,9 +11,9 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Iterable
 
-from hrx_build import REPO_ROOT, default_paths
 
-
+REPO_ROOT = Path(__file__).resolve().parents[3]
+DEFAULT_LLAMA_INSTALL_DIR = REPO_ROOT / "build" / "llama.cpp-install"
 RELEASE_INSTALL_GLOBS = (
     "bin/llama-*",
     "include/*.h",
@@ -124,11 +124,10 @@ def print_created(package_file: Path, entries: Iterable[str]) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    paths = default_paths()
     parser.add_argument(
         "--llama-install-dir",
         type=Path,
-        default=paths["llama_install"],
+        default=DEFAULT_LLAMA_INSTALL_DIR,
     )
     parser.add_argument("--release-package-file", type=Path, required=True)
     parser.add_argument("--package-root-name", default="llama.cpp-install")

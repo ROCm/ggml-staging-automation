@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Iterable
 
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
+REPO_ROOT = Path(__file__).resolve().parents[3]
 ROCM_PIN_FILE = REPO_ROOT / "rocm-version.json"
 ROCM_ARTIFACT_SET = "core-with-upstream-hip"
 ROCM_EXTRA_BUILD_ARTIFACTS = ("rocwmma_dev_generic",)
@@ -176,7 +176,7 @@ def python_executable() -> str:
 
 
 def main() -> int:
-    print("This module is shared by the scripts in scripts/hrx.", flush=True)
+    print("This module is shared by the scripts in scripts/hrx/build.", flush=True)
     return 0
 
 

@@ -4,7 +4,7 @@
       "id": "lemonade",
       "argv": [
         "python3",
-        "scripts/hrx/run_lemonade_benchmark.py",
+        "scripts/hrx/benchmark/run_lemonade_benchmark.py",
         "--lemonade-build-dir",
         "lemonade-source/build",
         "--llama-server",
@@ -27,11 +27,11 @@
       "id": "perplexity",
       "argv": [
         "python3",
-        "scripts/hrx/run_perplexity_benchmark.py",
+        "scripts/hrx/benchmark/run_perplexity_benchmark.py",
         "--llama-perplexity",
         "release/benchmark-package/bin/llama-perplexity",
         "--model-manifest",
-        "scripts/hrx/lemonade_model_manifest.json",
+        "benchmarks/hrx/model_manifest.json",
         "--corpus-file",
         "perplexity-corpus/wiki.test.raw",
         "--hrx-output",

@@ -65,14 +65,14 @@ jobs:
         run: python3 -m pip install --upgrade -r requirements.txt cmake==3.31.6 ninja
 
       - name: Build Vulkan SDK build dependencies
-        run: python3 scripts/hrx/build_vulkan_sdk.py --vulkan-sdk-dir "$PWD/build/vulkan-sdk"
+        run: python3 scripts/hrx/build/build_vulkan_sdk.py --vulkan-sdk-dir "$PWD/build/vulkan-sdk"
 
       - name: Build and validate llama.cpp
         env:
           BUILD_TYPE: ${{ inputs.build_type }}
           HRX_BUILD_TYPE: ${{ inputs.hrx_build_type }}
         run: |
-          python3 scripts/hrx/build_all.py \
+          python3 scripts/hrx/build/build_all.py \
             --build-type "$BUILD_TYPE" \
             --hrx-build-type "$HRX_BUILD_TYPE" \
             --vulkan-sdk-dir "$PWD/build/vulkan-sdk"
@@ -89,7 +89,7 @@ jobs:
           package_dir="$PWD/build/artifacts"
           rm -rf "$package_dir"
 
-          python3 scripts/hrx/build_artifacts_from_llama_cpp_install.py \
+          python3 scripts/hrx/package/build_artifacts_from_llama_cpp_install.py \
             --llama-install-dir "$PWD/build/llama.cpp-install" \
             --release-package-file "$package_dir/$package_file_name" \
             --package-root-name "$PACKAGE_ROOT_NAME"

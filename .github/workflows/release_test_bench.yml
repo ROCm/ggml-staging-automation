@@ -92,14 +92,14 @@ jobs:
           PACKAGE_ROOT_NAME: ${{ inputs.package_root_name }}
           RELEASE_ARTIFACT_NAME: ${{ inputs.release_artifact_name }}
         run: |
-          python3 scripts/hrx/extract_release_package.py \
+          python3 scripts/hrx/package/extract_release_package.py \
             --archive "artifacts/${RELEASE_ARTIFACT_NAME}.tar.gz" \
             --package-root-name "$PACKAGE_ROOT_NAME" \
             --output-dir release/benchmark-package
 
       - name: Build Lemonade
         run: |
-          python3 scripts/hrx/build_lemonade.py \
+          python3 scripts/hrx/build/build_lemonade.py \
             --source-dir "$PWD/lemonade-source" \
             --build-dir "$PWD/lemonade-source/build"
 
@@ -109,7 +109,7 @@ jobs:
           LEMONADE_COMMIT: ${{ steps.sources.outputs.lemonade }}
           LLAMA_CPP_COMMIT: ${{ steps.sources.outputs.llama_cpp }}
         run: |
-          python3 scripts/hrx/write_benchmark_metadata.py \
+          python3 scripts/hrx/benchmark/write_benchmark_metadata.py \
             --output "$PWD/lemonade-benchmark/metadata.json" \
             --llama-cpp-commit "$LLAMA_CPP_COMMIT" \
             --hrx-system-commit "$HRX_SYSTEM_COMMIT" \
@@ -117,7 +117,7 @@ jobs:
 
       - name: Fetch perplexity corpus
         run: |
-          python3 scripts/hrx/fetch_wikitext2.py \
+          python3 scripts/hrx/benchmark/fetch_wikitext2.py \
             --output-dir "$PWD/perplexity-corpus"
 
       - name: Run batched HRX and Vulkan benchmarks
@@ -127,9 +127,9 @@ jobs:
           BENCHMARK_MODEL_TIER: ${{ inputs.model_tier }}
         run: |
           set -euo pipefail
-          python3 scripts/hrx/run_batched_benchmark.py \
-            --benchmark-spec "$PWD/scripts/hrx/benchmark_spec.json" \
-            --model-manifest "$PWD/scripts/hrx/lemonade_model_manifest.json" \
+          python3 scripts/hrx/benchmark/run_batched_benchmark.py \
+            --benchmark-spec "$PWD/benchmarks/hrx/benchmark_spec.json" \
+            --model-manifest "$PWD/benchmarks/hrx/model_manifest.json" \
             --model-tier "$BENCHMARK_MODEL_TIER" \
             --work-root "$RUNNER_TEMP/$BENCHMARK_STATE_NAME" \
             --max-disk-gib 40
@@ -169,7 +169,7 @@ jobs:
           BASELINE_BENCHMARK_DIR: ${{ runner.temp }}/lemonade-main-benchmark-${{ matrix.gpu_target }}
           BASELINE_RUN_URL: ${{ steps.main_benchmark.outputs.run_url }}
         run: |
-          python3 scripts/hrx/write_lemonade_benchmark_report.py \
+          python3 scripts/hrx/benchmark/write_lemonade_benchmark_report.py \
             "$PWD/lemonade-benchmark/benchmark-hrx.json" \
             "$PWD/lemonade-benchmark/benchmark-vulkan.json" \
             --baseline-hrx-benchmark "$BASELINE_BENCHMARK_DIR/benchmark-hrx.json" \
@@ -182,7 +182,7 @@ jobs:
           BASELINE_BENCHMARK_DIR: ${{ runner.temp }}/lemonade-main-benchmark-${{ matrix.gpu_target }}
           BASELINE_RUN_URL: ${{ steps.main_benchmark.outputs.run_url }}
         run: |
-          python3 scripts/hrx/write_perplexity_report.py \
+          python3 scripts/hrx/benchmark/write_perplexity_report.py \
             "$PWD/lemonade-benchmark/perplexity-hrx.json" \
             "$PWD/lemonade-benchmark/perplexity-vulkan.json" \
             --baseline-hrx-perplexity "$BASELINE_BENCHMARK_DIR/perplexity-hrx.json" \
