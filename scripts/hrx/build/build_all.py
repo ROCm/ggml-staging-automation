@@ -49,11 +49,17 @@ def main() -> int:
     if args.vulkan_sdk_dir is not None:
         vulkan_sdk_args = ["--vulkan-sdk-dir", args.vulkan_sdk_dir.resolve()]
     if not args.skip_fetch:
-        run([python_executable(), REPO_ROOT / "scripts" / "hrx" / "fetch_rocm.py", *common])
+        run(
+            [
+                python_executable(),
+                REPO_ROOT / "scripts" / "hrx" / "build" / "fetch_rocm.py",
+                *common,
+            ]
+        )
     run(
         [
             python_executable(),
-            REPO_ROOT / "scripts" / "hrx" / "build_hrx_system.py",
+            REPO_ROOT / "scripts" / "hrx" / "build" / "build_hrx_system.py",
             *common,
             "--build-type",
             args.hrx_build_type,
@@ -63,7 +69,7 @@ def main() -> int:
     run(
         [
             python_executable(),
-            REPO_ROOT / "scripts" / "hrx" / "build_llama_cpp.py",
+            REPO_ROOT / "scripts" / "hrx" / "build" / "build_llama_cpp.py",
             *common,
             "--build-type",
             args.build_type,
@@ -75,7 +81,7 @@ def main() -> int:
         run(
             [
                 python_executable(),
-                REPO_ROOT / "scripts" / "hrx" / "validate_install.py",
+                REPO_ROOT / "scripts" / "hrx" / "build" / "validate_install.py",
                 *common,
                 *validate_args,
             ]

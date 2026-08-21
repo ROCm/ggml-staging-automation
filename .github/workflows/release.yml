@@ -44,7 +44,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          python3 scripts/hrx/check_release_source.py | tee -a "$GITHUB_STEP_SUMMARY"
+          python3 scripts/hrx/release/check_release_source.py | tee -a "$GITHUB_STEP_SUMMARY"
 
   prepare_release:
     name: Prepare

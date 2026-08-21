@@ -1,5 +1,6 @@
 .direnv/
 .venv/
 build/
+!scripts/hrx/build/
 **/__pycache__/
 *.py[cod]

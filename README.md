@@ -40,7 +40,7 @@ python3 -m pip install --upgrade -r requirements.txt
 Run the full local Release build:
 
 ```bash
-python3 scripts/hrx/build_all.py
+python3 scripts/hrx/build/build_all.py
 ```
 
 The default layout is:
@@ -57,10 +57,10 @@ build/llama.cpp-install
 The individual steps are also available for incremental development:
 
 ```bash
-python3 scripts/hrx/fetch_rocm.py
-python3 scripts/hrx/build_hrx_system.py
-python3 scripts/hrx/build_llama_cpp.py
-python3 scripts/hrx/validate_install.py
+python3 scripts/hrx/build/fetch_rocm.py
+python3 scripts/hrx/build/build_hrx_system.py
+python3 scripts/hrx/build/build_llama_cpp.py
+python3 scripts/hrx/build/validate_install.py
 ```
 
 The default build type is `Release` for both `hrx-system` and `llama.cpp`. The

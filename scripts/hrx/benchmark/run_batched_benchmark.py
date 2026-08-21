@@ -20,7 +20,8 @@ Terms:
 Why this exists: CI runners for the HRX release benchmarks have far less free
 disk than the full model set requires. Instead of pinning benchmarks to
 whatever fits, this driver keeps the model set as data
-(lemonade_model_manifest.json plus benchmark_spec.json), splits it into batches
+(``benchmarks/hrx/model_manifest.json`` plus
+``benchmarks/hrx/benchmark_spec.json``), splits it into batches
 that respect --max-disk-gib, and guarantees no batch leaks onto the next.
 
 Boundary contract:
