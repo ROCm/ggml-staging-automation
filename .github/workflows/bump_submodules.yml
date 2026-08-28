@@ -23,6 +23,7 @@ on:
         default: ""
 
 permissions:
+  checks: read
   contents: write
   pull-requests: write
 
@@ -36,6 +37,15 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
 
+    env:
+      # The automation's commit identity: used as author/committer on the
+      # bump commit, and by the guard script to tell the automation's
+      # commits apart from human ones.
+      BOT_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
+      # The rolling PR's head branch: force-pushed by the create-pull-request
+      # step and inspected by the guard script.
+      BUMP_BRANCH: users/automation/bump-submodules
+
     steps:
       - name: Check out main
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -44,56 +54,26 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Check bump branch for human commits or failing CI
+        id: guard
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 scripts/hrx/bump/check_bump_branch.py | tee -a "$GITHUB_STEP_SUMMARY"
+
       - name: Update submodules
+        if: steps.guard.outputs.proceed == 'true'
         id: submodules
         env:
           HRX_COMMIT: ${{ inputs.hrx_commit }}
           LLAMA_COMMIT: ${{ inputs.llama_commit }}
         run: |
           set -euo pipefail
-
-          hrx_from="$(git rev-parse HEAD:hrx-system)"
-          llama_from="$(git rev-parse HEAD:llama.cpp)"
-
-          git submodule sync -- hrx-system llama.cpp
-          git submodule update --init --checkout -- hrx-system llama.cpp
-
-          update_submodule() {
-            local path="$1"
-            local commit="$2"
-
-            if [[ -z "$commit" ]]; then
-              git submodule update --remote --checkout -- "$path"
-              return
-            fi
-
-            if [[ ! "$commit" =~ ^[0-9a-fA-F]{40}$ ]]; then
-              echo "${path} commit must be a full 40-character SHA." >&2
-              exit 1
-            fi
-
-            git -C "$path" fetch origin "$commit"
-            git -C "$path" checkout --detach "$commit"
-          }
-
-          update_submodule hrx-system "$HRX_COMMIT"
-          update_submodule llama.cpp "$LLAMA_COMMIT"
-
-          hrx_to="$(git -C hrx-system rev-parse HEAD)"
-          llama_to="$(git -C llama.cpp rev-parse HEAD)"
-
-          {
-            echo "hrx_from=${hrx_from}"
-            echo "hrx_from_short=${hrx_from:0:12}"
-            echo "hrx_to=${hrx_to}"
-            echo "hrx_to_short=${hrx_to:0:12}"
-            echo "llama_from=${llama_from}"
-            echo "llama_from_short=${llama_from:0:12}"
-            echo "llama_to=${llama_to}"
-            echo "llama_to_short=${llama_to:0:12}"
-          } >> "${GITHUB_OUTPUT}"
+          python3 scripts/hrx/bump/update_submodules.py
 
       - name: Create or update pull request
+        if: steps.guard.outputs.proceed == 'true'
         uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
         with:
           # A token is required to trigger PR CI automatically. GITHUB_TOKEN is
@@ -103,9 +83,9 @@ jobs:
             hrx-system
             llama.cpp
           commit-message: Bump integration submodules
-          committer: github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>
-          author: github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>
-          branch: users/automation/bump-submodules
+          committer: github-actions[bot] <${{ env.BOT_EMAIL }}>
+          author: github-actions[bot] <${{ env.BOT_EMAIL }}>
+          branch: ${{ env.BUMP_BRANCH }}
           delete-branch: true
           base: main
           title: Bump integration submodules
@@ -117,5 +97,8 @@ jobs:
             | [`hrx-system`](https://github.com/ROCm/hrx-system) | `main` | [`${{ steps.submodules.outputs.hrx_from_short }}`](https://github.com/ROCm/hrx-system/commit/${{ steps.submodules.outputs.hrx_from }}) | [`${{ steps.submodules.outputs.hrx_to_short }}`](https://github.com/ROCm/hrx-system/commit/${{ steps.submodules.outputs.hrx_to }}) |
             | [`llama.cpp`](https://github.com/ROCm/llama-cpp-temp-fork) | `hrx-graph-develop` | [`${{ steps.submodules.outputs.llama_from_short }}`](https://github.com/ROCm/llama-cpp-temp-fork/commit/${{ steps.submodules.outputs.llama_from }}) | [`${{ steps.submodules.outputs.llama_to_short }}`](https://github.com/ROCm/llama-cpp-temp-fork/commit/${{ steps.submodules.outputs.llama_to }}) |
 
-            If CI does not start automatically, close and immediately reopen this
-            pull request to trigger it.
+            While this PR has failing checks, newer pins are not pushed — the
+            failure needs attention first. To discard this PR and re-create it
+            at the latest pins, close it; the next scheduled run opens a fresh
+            one. If commits were pushed to the branch by hand, delete the
+            branch as well (the "Delete branch" button on the closed PR).
