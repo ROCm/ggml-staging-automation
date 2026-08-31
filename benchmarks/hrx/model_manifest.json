@@ -74,9 +74,6 @@
     {
       "id": "llama-3.1-8b",
       "tier": "smoke",
-      "hrx": {
-        "xfail": true
-      },
       "name": "extra.Meta-Llama-3.1-8B-Instruct-GGUF",
       "directory": "Meta-Llama-3.1-8B-Instruct-GGUF",
       "repository": "bartowski/Meta-Llama-3.1-8B-Instruct-GGUF",
