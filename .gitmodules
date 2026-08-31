@@ -4,5 +4,5 @@
 	branch = main
 [submodule "llama.cpp"]
 	path = llama.cpp
-	url = https://github.com/AMD-Ecosystem/llama.cpp.git
-	branch = hrx-graph-develop-v2
+	url = https://github.com/AaronStGeorge/llama.cpp.git
+	branch = fix-bump-pr-52-fetch-rocm-ci-core-path
