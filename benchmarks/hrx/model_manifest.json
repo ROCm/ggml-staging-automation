@@ -72,6 +72,17 @@
       "sha256": "3962624dcd25b947d889dc9ae1bf275b61db6cd4dbe694057f34fffef1671509"
     },
     {
+      "id": "llama-3.2-3b-instruct-bf16",
+      "tier": "smoke",
+      "name": "extra.Llama-3.2-3B-Instruct-GGUF",
+      "directory": "Llama-3.2-3B-Instruct-GGUF",
+      "repository": "unsloth/Llama-3.2-3B-Instruct-GGUF",
+      "revision": "e7d0997e49c9cb00d88b4c1a6a16aa894b0bbc31",
+      "filename": "Llama-3.2-3B-Instruct-BF16.gguf",
+      "size_bytes": 6433687744,
+      "sha256": "9b8dce13b6cbcd8b20037bd6383ee8e747b5034ca32f40b5b8ee2efa9ebf56b8"
+    },
+    {
       "id": "llama-3.1-8b",
       "tier": "smoke",
       "name": "extra.Meta-Llama-3.1-8B-Instruct-GGUF",
