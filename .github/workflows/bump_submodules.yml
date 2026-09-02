@@ -4,11 +4,17 @@
 # See https://llvm.org/LICENSE.txt for license information.
 # SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 
+# Opens the rolling submodule-bump PR. The PR is created as the automation's
+# GitHub App so that it triggers PR CI; a PR opened with GITHUB_TOKEN does
+# not. While a bump PR is open nothing happens here: it is waiting on a human
+# to merge it, or to fix or close it, before newer pins are worth pushing.
+
 name: Bump integration submodules
 
 on:
   schedule:
-    - cron: "0 */2 * * *"
+    # Daily at 11:00 UTC
+    - cron: "0 11 * * *"
   workflow_dispatch:
     inputs:
       hrx_commit:
@@ -17,35 +23,52 @@ on:
         type: string
         default: ""
       llama_commit:
-        description: "llama.cpp commit SHA. Defaults to the latest hrx-graph-develop commit."
+        description: "llama.cpp commit SHA. Defaults to the latest hrx-graph-develop-v2 commit."
         required: false
         type: string
         default: ""
 
 permissions:
-  checks: read
-  contents: write
-  pull-requests: write
+  contents: read
 
 concurrency:
   group: bump-integration-submodules
   cancel-in-progress: false
 
+env:
+  # The rolling PR's head branch.
+  BUMP_BRANCH: users/automation/bump-submodules
+
 jobs:
+  gate:
+    name: Check for an open bump PR
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      pull-requests: read
+    outputs:
+      open_pr_count: ${{ steps.open_prs.outputs.count }}
+    steps:
+      - name: Count open bump PRs
+        id: open_prs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          count=$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$BUMP_BRANCH" \
+            --state open --json number --jq length)
+          echo "count=$count" >> "$GITHUB_OUTPUT"
+          echo "Open pull requests from \`$BUMP_BRANCH\`: $count. Pins are bumped only when there are none." \
+            >> "$GITHUB_STEP_SUMMARY"
+
   bump:
     name: Update submodule pins
+    needs: gate
+    if: needs.gate.outputs.open_pr_count == '0'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
-
-    env:
-      # The automation's commit identity: used as author/committer on the
-      # bump commit, and by the guard script to tell the automation's
-      # commits apart from human ones.
-      BOT_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
-      # The rolling PR's head branch: force-pushed by the create-pull-request
-      # step and inspected by the guard script.
-      BUMP_BRANCH: users/automation/bump-submodules
-
+    permissions:
+      contents: read
     steps:
       - name: Check out main
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -54,16 +77,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Check bump branch for human commits or failing CI
-        id: guard
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          python3 scripts/hrx/bump/check_bump_branch.py | tee -a "$GITHUB_STEP_SUMMARY"
-
       - name: Update submodules
-        if: steps.guard.outputs.proceed == 'true'
         id: submodules
         env:
           HRX_COMMIT: ${{ inputs.hrx_commit }}
@@ -72,19 +86,39 @@ jobs:
           set -euo pipefail
           python3 scripts/hrx/bump/update_submodules.py
 
-      - name: Create or update pull request
-        if: steps.guard.outputs.proceed == 'true'
+      - name: Generate GitHub App token
+        id: app_token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ vars.BUMP_APP_ID }}
+          private-key: ${{ secrets.BUMP_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+
+      - name: Look up the App's commit identity
+        # Committing under the App's noreply address attributes the bump
+        # commit to the App's bot user; the main-branch ruleset asks for an
+        # extra approval on unattributed commits.
+        id: bot
+        env:
+          GH_TOKEN: ${{ steps.app_token.outputs.token }}
+          APP_SLUG: ${{ steps.app_token.outputs.app-slug }}
+        run: |
+          set -euo pipefail
+          user_id=$(gh api "users/${APP_SLUG}[bot]" --jq .id)
+          echo "identity=${APP_SLUG}[bot] <${user_id}+${APP_SLUG}[bot]@users.noreply.github.com>" \
+            >> "$GITHUB_OUTPUT"
+
+      - name: Create pull request
         uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
         with:
-          # A token is required to trigger PR CI automatically. GITHUB_TOKEN is
-          # the fallback; close and reopen its PR to trigger CI.
-          token: ${{ secrets.SUBMODULE_BUMP_TOKEN || github.token }}
+          token: ${{ steps.app_token.outputs.token }}
           add-paths: |
             hrx-system
             llama.cpp
           commit-message: Bump integration submodules
-          committer: github-actions[bot] <${{ env.BOT_EMAIL }}>
-          author: github-actions[bot] <${{ env.BOT_EMAIL }}>
+          committer: ${{ steps.bot.outputs.identity }}
+          author: ${{ steps.bot.outputs.identity }}
           branch: ${{ env.BUMP_BRANCH }}
           delete-branch: true
           base: main
@@ -95,10 +129,8 @@ jobs:
             | Submodule | Tracked branch | From | To |
             | --- | --- | --- | --- |
             | [`hrx-system`](https://github.com/ROCm/hrx-system) | `main` | [`${{ steps.submodules.outputs.hrx_from_short }}`](https://github.com/ROCm/hrx-system/commit/${{ steps.submodules.outputs.hrx_from }}) | [`${{ steps.submodules.outputs.hrx_to_short }}`](https://github.com/ROCm/hrx-system/commit/${{ steps.submodules.outputs.hrx_to }}) |
-            | [`llama.cpp`](https://github.com/ROCm/llama-cpp-temp-fork) | `hrx-graph-develop` | [`${{ steps.submodules.outputs.llama_from_short }}`](https://github.com/ROCm/llama-cpp-temp-fork/commit/${{ steps.submodules.outputs.llama_from }}) | [`${{ steps.submodules.outputs.llama_to_short }}`](https://github.com/ROCm/llama-cpp-temp-fork/commit/${{ steps.submodules.outputs.llama_to }}) |
+            | [`llama.cpp`](https://github.com/AMD-Ecosystem/llama.cpp) | `hrx-graph-develop-v2` | [`${{ steps.submodules.outputs.llama_from_short }}`](https://github.com/AMD-Ecosystem/llama.cpp/commit/${{ steps.submodules.outputs.llama_from }}) | [`${{ steps.submodules.outputs.llama_to_short }}`](https://github.com/AMD-Ecosystem/llama.cpp/commit/${{ steps.submodules.outputs.llama_to }}) |
 
-            While this PR has failing checks, newer pins are not pushed — the
-            failure needs attention first. To discard this PR and re-create it
-            at the latest pins, close it; the next scheduled run opens a fresh
-            one. If commits were pushed to the branch by hand, delete the
-            branch as well (the "Delete branch" button on the closed PR).
+            While this PR is open, newer pins are not pushed. Merge it once
+            its checks pass, or close it and the next scheduled run re-creates
+            it at the latest pins. Fixes can be pushed to this branch directly.
