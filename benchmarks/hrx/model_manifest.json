@@ -46,9 +46,6 @@
     {
       "id": "mistral-small-3.2-24b",
       "tier": "full",
-      "hrx": {
-        "xfail": true
-      },
       "name": "extra.Mistral-Small-3.2-24B-Instruct-2506-GGUF",
       "directory": "Mistral-Small-3.2-24B-Instruct-2506-GGUF",
       "repository": "bartowski/mistralai_Mistral-Small-3.2-24B-Instruct-2506-GGUF",
