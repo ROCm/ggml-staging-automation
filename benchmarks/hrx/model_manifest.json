@@ -32,9 +32,6 @@
     {
       "id": "qwen3.8-27b",
       "tier": "full",
-      "hrx": {
-        "xfail": true
-      },
       "name": "extra.Qwen3.8-27B-GGUF",
       "directory": "Qwen3.8-27B-GGUF",
       "repository": "bartowski/Qwen3.8-27B-GGUF",
@@ -57,9 +54,6 @@
     {
       "id": "gemma-4-12b",
       "tier": "full",
-      "hrx": {
-        "xfail": true
-      },
       "name": "extra.Gemma-4-12B-it-GGUF",
       "directory": "Gemma-4-12B-it-GGUF",
       "repository": "bartowski/gemma-4-12B-it-GGUF",
