@@ -33,8 +33,8 @@ The artifact shape, reduced to the fields this report reads::
 
 The command line and exit-code contract (malformed input is fatal) live in
 ``benchmark_report`` and are shared with the Lemonade report; this file
-supplies ``kind="perplexity"`` and the table builder. Only perplexity uses
-that module's ``match_indexed`` helper: a model is compared only when both
+supplies ``kind="perplexity"`` and owns matching through ``match_indexed``.
+A model is compared only when both
 artifacts contain it; a model present on one side only is skipped, and a pair
 with no model in common renders a one-line note instead of a table.
 
@@ -45,7 +45,7 @@ HRX/Vulkan table. Rows follow the HRX artifact's model order.
 from __future__ import annotations
 
 import math
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 from benchmark_report import (
@@ -53,7 +53,6 @@ from benchmark_report import (
     ReportError,
     format_code,
     format_table_cell,
-    match_indexed,
     run_report_cli,
 )
 
@@ -139,6 +138,25 @@ def check_comparable(
         raise ReportError(
             f"{left_label} and {right_label} used different corpora"
         )
+
+
+def match_indexed(
+    left: Mapping[str, Run],
+    right: Mapping[str, Run],
+) -> list[ComparisonMatch]:
+    """Pair shared model keys in left order; skip unmatched models.
+
+    A backend can fail before completing a batch, so requiring identical model
+    sets would discard useful comparisons. Preserve shared models, including
+    failed runs whose status still needs to be shown. Inputs are validated
+    indexes from ``index_runs``, keyed by full model name.
+
+    >>> left = {"model-a": {}, "model-b": {}, "model-c": {}}
+    >>> right = {"model-b": {}, "model-d": {}, "model-a": {}}
+    >>> [model for model, _, _ in match_indexed(left, right)]
+    ['model-a', 'model-b']
+    """
+    return [(key, left[key], right[key]) for key in left if key in right]
 
 
 def match_runs(

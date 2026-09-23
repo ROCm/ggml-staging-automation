@@ -1,47 +1,21 @@
 # Copyright Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
-"""Shared report CLI and Markdown helpers, plus perplexity matching support.
+"""Shared CLI, error handling, and Markdown helpers for CI benchmark reports.
 
 Two scripts turn CI benchmark artifacts into Markdown for the GitHub step
 summary: ``write_lemonade_benchmark_report.py`` (Lemonade throughput) and
 ``write_perplexity_report.py`` (llama-perplexity). Each compares an HRX artifact
 against a Vulkan artifact from the same run. The scripts differ in what a
 measurement is and how tables are arranged; this module owns their common
-command-line and error-handling contract and Markdown helpers. It also provides
-``match_indexed``, currently used only by the perplexity report. Historical
-artifacts are no longer loaded by either report.
+command-line and error-handling contract and Markdown helpers. Each report
+owns its measurement matching rules. Historical artifacts are no longer loaded
+by either report.
 
 Terms:
 
-- *Comparison key*: the identity of one measurement inside an artifact. For
-  perplexity it is the model name; for Lemonade it is
-  ``(model, recipe, ctx_size, backend_args, scenario)``. The backend is never
-  part of the key because it is exactly what differs between the two files.
-- *Index*: an insertion-ordered ``dict`` from comparison key to the measurement
-  it identifies. Each script builds its own indexes and validates entries;
-  the matching helper consumes those established identities.
 - *Current pair*: the HRX and Vulkan artifacts from the same CI run.
 - *Kind*: the noun the CLI uses for the artifact, ``benchmark`` or
   ``perplexity``. It appears in positional argument names and diagnostics.
-
-For perplexity, ``match_indexed`` pairs every comparison key present in both
-indexes and returns ``[(key, left_item, right_item), ...]`` in left order; a
-key found on one side only is skipped, never an error. Lemonade does not call
-this helper: its formatter builds the union of its own indexes, so scenarios
-and models present on only one backend still appear with missing-value cells.
-Both reports retain failed measurements in their comparisons rather than
-refusing to pair them merely because one backend has no successful sample.
-
-The two files can disagree on what they contain: a batch's HRX and Vulkan
-phases run one after the other and merge per phase, so a Vulkan failure can
-leave the HRX artifact with extra models. An earlier rule required identical
-key sets and discarded otherwise useful comparisons on such mismatches. The
-intersection helper preserves every shared key, regardless of order::
-
-    >>> left = {"model-a": 1, "model-b": 2, "model-c": 3}
-    >>> right = {"model-b": 20, "model-d": 40, "model-a": 10}
-    >>> match_indexed(left, right)
-    [('model-a', 1, 10), ('model-b', 2, 20)]
 
 The CLI (``run_report_cli``) is invoked by each script's entry point. The
 workflow supplies the two current artifacts and appends stdout to its summary::
@@ -71,16 +45,12 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import Any
 
 
 UNAVAILABLE_MEASUREMENT = "—"
-
-K = TypeVar("K")
-V = TypeVar("V")
-
 
 class ReportError(RuntimeError):
     """Raised when two report inputs cannot be compared safely."""
@@ -114,14 +84,6 @@ def format_code(value: object) -> str:
 def format_table_cell(value: object) -> str:
     """Escape labels for a Markdown table cell."""
     return str(value).replace("\n", " ").replace("|", "\\|")
-
-
-def match_indexed(
-    left: Mapping[K, V],
-    right: Mapping[K, V],
-) -> list[tuple[K, V, V]]:
-    """Pair shared perplexity model keys in left order; skip unmatched models."""
-    return [(key, left[key], right[key]) for key in left if key in right]
 
 
 def run_report_cli(
