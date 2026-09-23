@@ -1,14 +1,15 @@
 # Copyright Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
-"""Shared CLI, matching rule, and Markdown helpers for the HRX report scripts.
+"""Shared report CLI and Markdown helpers, plus perplexity matching support.
 
 Two scripts turn CI benchmark artifacts into Markdown for the GitHub step
 summary: ``write_lemonade_benchmark_report.py`` (Lemonade throughput) and
 ``write_perplexity_report.py`` (llama-perplexity). Each compares an HRX artifact
 against a Vulkan artifact from the same run. The scripts differ in what a
 measurement is and how tables are arranged; this module owns their common
-command-line and error-handling contract, plus reusable matching and Markdown
-helpers. Historical artifacts are no longer loaded by either report.
+command-line and error-handling contract and Markdown helpers. It also provides
+``match_indexed``, currently used only by the perplexity report. Historical
+artifacts are no longer loaded by either report.
 
 Terms:
 
@@ -23,10 +24,10 @@ Terms:
 - *Kind*: the noun the CLI uses for the artifact, ``benchmark`` or
   ``perplexity``. It appears in positional argument names and diagnostics.
 
-Matching (``match_indexed``) pairs every comparison key present in both
+For perplexity, ``match_indexed`` pairs every comparison key present in both
 indexes and returns ``[(key, left_item, right_item), ...]`` in left order; a
-key found on one side only is skipped, never an error. Perplexity uses this
-intersection. Lemonade instead renders the union of its indexes, so scenarios
+key found on one side only is skipped, never an error. Lemonade does not call
+this helper: its formatter builds the union of its own indexes, so scenarios
 and models present on only one backend still appear with missing-value cells.
 Both reports retain failed measurements in their comparisons rather than
 refusing to pair them merely because one backend has no successful sample.
@@ -37,10 +38,10 @@ leave the HRX artifact with extra models. An earlier rule required identical
 key sets and discarded otherwise useful comparisons on such mismatches. The
 intersection helper preserves every shared key, regardless of order::
 
-    >>> left = {("A", "p1"): 1, ("A", "p2"): 2, ("B", "p1"): 3}
-    >>> right = {("A", "p1"): 10, ("C", "p1"): 30, ("A", "p2"): 20}
+    >>> left = {"model-a": 1, "model-b": 2, "model-c": 3}
+    >>> right = {"model-b": 20, "model-d": 40, "model-a": 10}
     >>> match_indexed(left, right)
-    [(('A', 'p1'), 1, 10), (('A', 'p2'), 2, 20)]
+    [('model-a', 1, 10), ('model-b', 2, 20)]
 
 The CLI (``run_report_cli``) is invoked by each script's entry point. The
 workflow supplies the two current artifacts and appends stdout to its summary::
@@ -119,7 +120,7 @@ def match_indexed(
     left: Mapping[K, V],
     right: Mapping[K, V],
 ) -> list[tuple[K, V, V]]:
-    """Pair every key present in both indexes, in left order."""
+    """Pair shared perplexity model keys in left order; skip unmatched models."""
     return [(key, left[key], right[key]) for key in left if key in right]
 
 

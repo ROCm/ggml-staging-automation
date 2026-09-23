@@ -31,10 +31,10 @@ The artifact shape, reduced to the fields this report reads::
        {"model": "qwen3-8b", "status": "failed", "duration_s": 3.0,
         "error": "exit code 1", "log": "perplexity-hrx.log", "batch": 2}]}
 
-The command line, the exit-code contract (malformed input is fatal),
-and the matching rule live in ``benchmark_report`` and
-are shared with the Lemonade report; this file supplies ``kind="perplexity"``
-and the table builder. Under that rule a model is compared only when both
+The command line and exit-code contract (malformed input is fatal) live in
+``benchmark_report`` and are shared with the Lemonade report; this file
+supplies ``kind="perplexity"`` and the table builder. Only perplexity uses
+that module's ``match_indexed`` helper: a model is compared only when both
 artifacts contain it; a model present on one side only is skipped, and a pair
 with no model in common renders a one-line note instead of a table.
 
