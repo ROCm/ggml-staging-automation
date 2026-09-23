@@ -1,17 +1,68 @@
 # Copyright Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
-"""Shared CLI, matching, and Markdown helpers for CI benchmark reports.
+"""Shared CLI, matching rule, and Markdown helpers for the HRX report scripts.
 
-The Lemonade and perplexity scripts render the current HRX/Vulkan JSON pair
-into a GitHub step summary. Each formatter owns measurement validation and
-presentation; this module loads the artifacts and catches input errors before
-anything is printed. Malformed or unreadable input returns status 1 with a
-stderr diagnostic; a complete report goes to stdout with status 0.
+Two scripts turn CI benchmark artifacts into Markdown for the GitHub step
+summary: ``write_lemonade_benchmark_report.py`` (Lemonade throughput) and
+``write_perplexity_report.py`` (llama-perplexity). Each compares an HRX artifact
+against a Vulkan artifact from the same run. The scripts differ in what a
+measurement is and how tables are arranged; this module owns their common
+command-line and error-handling contract, plus reusable matching and Markdown
+helpers. Historical artifacts are no longer loaded by either report.
 
-``match_indexed`` pairs keys present in both insertion-ordered indexes, in
-left order. Perplexity uses this intersection; Lemonade retains the union so
-models missing from one backend remain visible. Historical artifacts are not
-loaded by either report.
+Terms:
+
+- *Comparison key*: the identity of one measurement inside an artifact. For
+  perplexity it is the model name; for Lemonade it is
+  ``(model, recipe, ctx_size, backend_args, scenario)``. The backend is never
+  part of the key because it is exactly what differs between the two files.
+- *Index*: an insertion-ordered ``dict`` from comparison key to the measurement
+  it identifies. Each script builds its own indexes and validates entries;
+  the matching helper consumes those established identities.
+- *Current pair*: the HRX and Vulkan artifacts from the same CI run.
+- *Kind*: the noun the CLI uses for the artifact, ``benchmark`` or
+  ``perplexity``. It appears in positional argument names and diagnostics.
+
+Matching (``match_indexed``) pairs every comparison key present in both
+indexes and returns ``[(key, left_item, right_item), ...]`` in left order; a
+key found on one side only is skipped, never an error. Perplexity uses this
+intersection. Lemonade instead renders the union of its indexes, so scenarios
+and models present on only one backend still appear with missing-value cells.
+Both reports retain failed measurements in their comparisons rather than
+refusing to pair them merely because one backend has no successful sample.
+
+The two files can disagree on what they contain: a batch's HRX and Vulkan
+phases run one after the other and merge per phase, so a Vulkan failure can
+leave the HRX artifact with extra models. An earlier rule required identical
+key sets and discarded otherwise useful comparisons on such mismatches. The
+intersection helper preserves every shared key, regardless of order::
+
+    >>> left = {("A", "p1"): 1, ("A", "p2"): 2, ("B", "p1"): 3}
+    >>> right = {("A", "p1"): 10, ("C", "p1"): 30, ("A", "p2"): 20}
+    >>> match_indexed(left, right)
+    [(('A', 'p1'), 1, 10), (('A', 'p2'), 2, 20)]
+
+The CLI (``run_report_cli``) is invoked by each script's entry point. The
+workflow supplies the two current artifacts and appends stdout to its summary::
+
+    python3 scripts/hrx/benchmark/write_lemonade_benchmark_report.py \\
+        benchmark-hrx.json benchmark-vulkan.json >> "$GITHUB_STEP_SUMMARY"
+
+The current pair must load and format successfully before anything is printed.
+On success, the complete report goes to stdout and the exit status is 0. An
+input or comparison error produces a diagnostic on stderr, exit status 1, and
+nothing on stdout: a misleading or partial summary is worse than a missing
+one. A valid artifact describing a failed benchmark is distinct from malformed
+input; the formatter renders that failure without failing the report itself.
+
+Artifact JSON crosses the report's input boundary. ``load_json`` owns reading
+and JSON decoding; each script's formatter owns measurement validation and
+comparability, because those depend on the kind of benchmark. The shared CLI
+wraps both loading and formatting in ``REPORT_INPUT_ERRORS``, turning problems
+such as missing fields, invalid metric types, or unreadable files into the
+same diagnostic contract. Scripts raise ``ReportError`` for the semantic
+problems they detect themselves. Once validation establishes the indexes,
+matching and presentation consume them without repeating those checks.
 """
 
 from __future__ import annotations
