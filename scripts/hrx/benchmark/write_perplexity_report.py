@@ -256,7 +256,7 @@ def format_comparison_table(
 ) -> str:
     """Format already-matched runs without performing I/O or validation."""
     lines = [
-        f"## {title}",
+        f"# {title}",
         "",
         settings_line,
         "",
