@@ -5,8 +5,8 @@
 
 ``run_lemonade_benchmark.py`` produces the input pair. A scenario is one
 prompt/generation setting within a model's recipe/context/backend-arguments
-configuration. Collection owns scenario selection; the report must also work
-with older artifacts and new scenarios without maintaining its own allowlist.
+configuration. Collection owns scenario selection; the report discovers the
+scenarios in the current-run pair without maintaining its own allowlist.
 
 The artifact shape, reduced to consumed fields (``#`` marks comparison-key
 fields)::
@@ -27,9 +27,9 @@ entries have no usable TPS. Different output-token counts can result from
 end-of-text stopping and do not prevent comparing the supplied rates.
 
 Backend is excluded from the comparison key because it is the variable being
-compared. The union of keys preserves results when a backend fails before
-producing every model. Configuration differences remain separate rather than
-silently pairing measurements made under different conditions.
+compared. Both artifacts come from the same model tier and scenario selection,
+so their comparison keys must agree. Recorded failures still have entries;
+missing entries indicate an incomplete or mismatched pair.
 
 The runner name provides context for machine-dependent throughput differences.
 Shared CLI and failure contracts are documented in ``benchmark_report``.
@@ -93,9 +93,7 @@ def index_scenarios(benchmark: Benchmark) -> dict[ComparisonKey, Benchmark]:
     return scenarios
 
 
-def mean_tps(scenario: Benchmark | None) -> float | None:
-    if scenario is None:
-        return None
+def mean_tps(scenario: Benchmark) -> float | None:
     if scenario.get("all_runs_failed", False):
         return None
     return scenario["tps"]["mean"]
@@ -106,7 +104,9 @@ def format_report(
 ) -> str:
     """Build scenario tables from validated indexes, preserving model order."""
     indexes = {"Vulkan": index_scenarios(vulkan), "HRX": index_scenarios(hrx)}
-    keys = list(dict.fromkeys([*indexes["HRX"], *indexes["Vulkan"]]))
+    if indexes["HRX"].keys() != indexes["Vulkan"].keys():
+        raise ReportError("HRX and Vulkan scenario keys differ; expected the same CI run")
+    keys = list(indexes["HRX"])
     lines = ["# Lemonade benchmarks"]
     if runner_name:
         lines.extend(["", f"**Runner:** {format_code(runner_name)}"])
@@ -142,17 +142,13 @@ def format_report(
                 values = [format_table_cell(model_name)]
                 rates = {}
                 for backend, index in indexes.items():
-                    scenario = index.get(key)
+                    scenario = index[key]
                     rate = mean_tps(scenario)
                     values.append(
                         UNAVAILABLE_MEASUREMENT if rate is None else f"{rate:.1f}"
                     )
                     rates[backend] = rate
-                    if scenario is None:
-                        notes.append(
-                            f"{format_code(model_name)} {backend}: missing scenario."
-                        )
-                    elif scenario["failed_runs"]:
+                    if scenario["failed_runs"]:
                         count = scenario["failed_runs"]
                         detail = (
                             "no successful measurements"
