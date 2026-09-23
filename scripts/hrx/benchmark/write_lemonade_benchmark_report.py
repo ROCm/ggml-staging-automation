@@ -1,27 +1,90 @@
 #!/usr/bin/env python3
 # Copyright Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
-"""Render current Lemonade throughput as per-scenario tables for CI.
+"""Write the Lemonade HRX/Vulkan throughput report as Markdown.
 
-The HRX and Vulkan JSON artifacts contain per-model scenario measurements.
-This report discovers every scenario and model in either artifact, with
-models as rows and mean tok/s plus HRX/Vulkan percent as columns. Scenarios
-retain their artifact names and appear in HRX order, followed by Vulkan-only
-scenarios. Display names omit the ``extra.`` model prefix; matching uses full
-names. It does not load historical artifacts or aggregate scenarios.
+CI runs the release benchmark through Lemonade against HRX and Vulkan,
+leaving ``benchmark-hrx.json`` and ``benchmark-vulkan.json`` (produced by
+``run_lemonade_benchmark.py``). This script turns the pair into the GitHub
+step summary so a reviewer can compare generation throughput across models
+without opening the artifacts. Collection decides which scenarios run; the
+report discovers every scenario present in either artifact, with no fixed
+list of scenarios or models and no aggregation across scenarios.
 
-The CLI includes GitHub Actions' ``RUNNER_NAME`` beneath the title when
-available. Local rendering without that environment variable omits the line.
+Terms:
 
-Measurements are paired by model, recipe, context size, backend arguments,
-and scenario. Different configurations get separate tables rather than being
-silently combined. The union of both backends' models remains visible;
-missing or failed measurements render as an em dash, and partial failures
-are noted below the table. A zero Vulkan rate has no defined percentage.
+- A *scenario* is one prompt/generation setting inside a *result*, which is one
+  model run with a given recipe, context size, and backend arguments. Scenarios
+  are matched across backends by their *comparison key* ``(model, recipe,
+  ctx_size, backend_args, scenario name)``; the backend itself is deliberately
+  not part of the key, since it is exactly what differs between the two files.
+- A *missing scenario* has no entry for that key on one backend. An entry with
+  ``all_runs_failed`` has no successful sample. Both have unavailable TPS,
+  while a *partial failure* has ``failed_runs > 0`` and still reports statistics
+  over the runs that succeeded.
+- *Percentage* means HRX mean TPS divided by Vulkan mean TPS, multiplied by
+  100. Thus 100% is parity, and 80% means HRX achieved 80% of Vulkan's rate.
 
-The shared CLI loads the current pair and reports malformed input on stderr
-without emitting a partial report. This module validates the fields it
-consumes at the artifact boundary.
+The artifact shape, reduced to the fields this report reads (``#`` marks the
+comparison key)::
+
+    {"models": [
+      {"model": "extra.example-model",                  # key
+       "results": [
+         {"recipe": "llamacpp",                         # key
+          "ctx_size": 4096, "backend_args": "",          # key, key
+          "scenarios": [
+            {"name": "example-scenario",                # key
+             "failed_runs": 0, "tps": {"mean": 42.0}},
+            {"name": "another-scenario",                # key
+             "failed_runs": 3, "all_runs_failed": true}]}]}]}
+
+``backend_args`` defaults to an empty string and ``all_runs_failed`` to false
+when omitted. Other artifact fields, such as output-token counts, TTFT, and
+memory measurements, are not consumed. Different output-token counts do not
+prevent a TPS comparison: the report compares the supplied rates rather than
+requiring generation to stop at the same token on both backends.
+
+The comparison includes the union of both indexes so a missing model or
+scenario on one backend cannot silently remove the other backend's result.
+Within a scenario, each distinct recipe/context/arguments combination gets
+its own table; configurations are never averaged or paired across mismatched
+keys. Duplicate keys within an artifact are rejected because they would make
+that pairing ambiguous. Removing ``extra.`` affects display names only;
+comparison identities retain the full model names.
+
+Output starts with ``Lemonade benchmarks``, the optional runner name, and the
+percentage definition. Each discovered scenario then gets a section named
+exactly as in the artifact, with models as rows and Vulkan tok/s, HRX tok/s,
+and HRX/Vulkan percentage as columns. Scenario and model order follow first
+appearance in HRX, followed by entries present only in Vulkan. Configuration
+labels appear when a scenario requires multiple tables. Empty inputs produce
+a no-measurements note; historical comparisons are not included.
+
+An unavailable TPS renders as ``—``. The percentage also renders as ``—``
+when either rate is unavailable or Vulkan's rate is zero. Notes below each
+table identify missing scenarios and reported failed runs; partial-failure
+notes explain that the mean includes successful samples only. These are
+benchmark outcomes to display, not malformed-input errors that fail a report.
+
+The command line and exit-code contract live in ``benchmark_report`` and are
+shared with the perplexity report; this file supplies ``kind="benchmark"``
+and ``format_report``. ``main`` passes GitHub Actions' ``RUNNER_NAME`` into the
+formatter so machine-dependent throughput differences have visible context.
+Local rendering without that environment variable omits the runner line.
+
+``index_scenarios`` validates the consumed measurement fields at the artifact
+boundary. Counts must be non-negative integers, failure flags must be Boolean,
+and usable mean TPS must be finite and non-negative. Exact numeric type checks
+exclude Booleans, and explicit finiteness checks exclude NaN and infinity.
+Measurements marked ``all_runs_failed`` do not require a TPS field. The shared
+CLI handles validation errors before printing any report, so malformed input
+cannot leave a partial summary.
+
+``format_report`` validates and formats already-loaded dictionaries without
+filesystem or environment access; callers can exercise it in memory and pass
+an optional runner name. Downstream rendering consumes those validated
+measurements without repeating validation.
 """
 
 from __future__ import annotations
