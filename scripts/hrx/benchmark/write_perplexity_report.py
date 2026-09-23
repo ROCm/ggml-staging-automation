@@ -5,10 +5,10 @@
 
 CI runs ``llama-perplexity`` over the same corpus once per backend
 (``run_perplexity_benchmark.py``), leaving ``perplexity-hrx.json`` and
-``perplexity-vulkan.json``. This script renders the pair, and optionally each
-side against the latest ``main`` artifact, into the GitHub step summary so a
-reviewer can see whether HRX reproduces Vulkan's estimates. Perplexity deltas
-are informational: they never fail the job, only the report itself can.
+``perplexity-vulkan.json``. This script renders the pair into the GitHub step
+summary so a reviewer can see whether HRX reproduces Vulkan's estimates.
+Perplexity deltas are informational: they never fail the job, only the report
+itself can.
 
 Terms:
 
@@ -31,17 +31,15 @@ The artifact shape, reduced to the fields this report reads::
        {"model": "qwen3-8b", "status": "failed", "duration_s": 3.0,
         "error": "exit code 1", "log": "perplexity-hrx.log", "batch": 2}]}
 
-The command line, the exit-code contract (current pair fatal, ``main``
-baseline best-effort), and the matching rule live in ``benchmark_report`` and
-are shared with the Lemonade report; this file supplies ``kind="perplexity"``
-and the table builder. Under that rule a model is compared only when both
-artifacts contain it; a model present on one side only is skipped, and a pair
-with no model in common renders a one-line note instead of a table.
+The command line and exit-code contract (malformed input is fatal) live in
+``benchmark_report`` and are shared with the Lemonade report; this file
+supplies ``kind="perplexity"`` and pairs models by name. Both artifacts come
+from the same CI run and must contain the same model set. Recorded failures
+retain model entries; missing entries indicate an incomplete or mismatched
+pair, rather than a different benchmark tier.
 
 Output order on stdout: the partial-failure note, the settings line and
-HRX/Vulkan table, then either the two current-versus-main tables or the "no
-usable main perplexity artifact" note. Rows follow the current (left) artifact's
-model order.
+HRX/Vulkan table. Rows follow the HRX artifact's model order.
 """
 
 from __future__ import annotations
@@ -55,7 +53,6 @@ from benchmark_report import (
     ReportError,
     format_code,
     format_table_cell,
-    match_indexed,
     run_report_cli,
 )
 
@@ -122,40 +119,27 @@ def index_runs(perplexity: Perplexity, backend_label: str) -> dict[str, Run]:
     return runs
 
 
-def check_comparable(
-    left: Perplexity,
-    right: Perplexity,
-    *,
-    left_label: str,
-    right_label: str,
-) -> None:
+def check_comparable(left: Perplexity, right: Perplexity) -> None:
     """Refuse to compare estimates that were not measured the same way."""
     same_settings = left["settings"] == right["settings"]
     same_corpus = left["corpus"]["sha256"] == right["corpus"]["sha256"]
     if not same_settings:
         raise ReportError(
-            f"{left_label} and {right_label} used different perplexity settings: "
+            "HRX and Vulkan used different perplexity settings: "
             f"{left['settings']!r} vs {right['settings']!r}"
         )
     if not same_corpus:
-        raise ReportError(
-            f"{left_label} and {right_label} used different corpora"
-        )
+        raise ReportError("HRX and Vulkan used different corpora")
 
 
-def match_runs(
-    left: Perplexity,
-    right: Perplexity,
-    *,
-    left_label: str = "HRX",
-    right_label: str = "Vulkan",
-) -> list[ComparisonMatch]:
-    """Pair the runs of every model both sides measured, in left order."""
-    check_comparable(left, right, left_label=left_label, right_label=right_label)
-    return match_indexed(
-        index_runs(left, left_label),
-        index_runs(right, right_label),
-    )
+def match_runs(hrx: Perplexity, vulkan: Perplexity) -> list[ComparisonMatch]:
+    """Pair the current run's models by name, independent of artifact order."""
+    check_comparable(hrx, vulkan)
+    hrx_runs = index_runs(hrx, "HRX")
+    vulkan_runs = index_runs(vulkan, "Vulkan")
+    if hrx_runs.keys() != vulkan_runs.keys():
+        raise ReportError("HRX and Vulkan model sets differ; expected the same CI run")
+    return [(model, run, vulkan_runs[model]) for model, run in hrx_runs.items()]
 
 
 def format_ppl(run: Run) -> str:
@@ -195,16 +179,11 @@ def format_run_status(run: Run, label: str) -> str:
     return f"{label} failed: {format_table_cell(run['error'])} (see {location})"
 
 
-def format_pair_status(
-    left: Run,
-    right: Run,
-    left_label: str,
-    right_label: str,
-) -> str:
+def format_pair_status(left: Run, right: Run) -> str:
     """Summarize failures across two backends."""
     statuses = [
         format_run_status(run, label)
-        for run, label in ((left, left_label), (right, right_label))
+        for run, label in ((left, "HRX"), (right, "Vulkan"))
         if not run_succeeded(run)
     ]
     return "; ".join(statuses) if statuses else "OK"
@@ -233,37 +212,30 @@ def format_settings_line(perplexity: Perplexity) -> str:
 def format_comparison_table(
     matches: Sequence[ComparisonMatch],
     settings_line: str,
-    *,
-    title: str = "Perplexity HRX/Vulkan comparison",
-    left_label: str = "HRX",
-    right_label: str = "Vulkan",
 ) -> str:
     """Format already-matched runs without performing I/O or validation."""
     lines = [
-        f"## {title}",
+        "# Perplexity HRX/Vulkan comparison",
         "",
         settings_line,
         "",
-        f"Δ PPL is {left_label} PPL minus {right_label} PPL; ratio is "
-        f"{left_label} PPL divided by {right_label} PPL.",
+        "Δ PPL is HRX PPL minus Vulkan PPL; ratio is HRX PPL divided by Vulkan PPL.",
         "",
     ]
     if not matches:
-        lines.append(
-            f"No model was benchmarked by both {left_label} and {right_label}."
-        )
+        lines.append("No models were benchmarked.")
         return "\n".join(lines)
     lines.extend(
         (
-            f"| Model | Status | {left_label} PPL | {right_label} PPL | Δ PPL | "
-            f"Ratio | {left_label} time (s) | {right_label} time (s) |",
+            "| Model | Status | HRX PPL | Vulkan PPL | Δ PPL | "
+            "Ratio | HRX time (s) | Vulkan time (s) |",
             "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |",
         )
     )
     for model, left_run, right_run in matches:
         lines.append(
             f"| {format_code(model)} | "
-            f"{format_pair_status(left_run, right_run, left_label, right_label)} | "
+            f"{format_pair_status(left_run, right_run)} | "
             f"{format_ppl(left_run)} | "
             f"{format_ppl(right_run)} | "
             f"{format_delta(left_run, right_run)} | "
@@ -272,53 +244,6 @@ def format_comparison_table(
             f"{format_duration(right_run)} |"
         )
     return "\n".join(lines).rstrip()
-
-
-def format_main_comparisons(
-    current_hrx: Perplexity,
-    current_vulkan: Perplexity,
-    main_hrx: Perplexity,
-    main_vulkan: Perplexity,
-    baseline_run_url: str | None = None,
-) -> str:
-    """Format both current-versus-main comparisons atomically."""
-    hrx_matches = match_runs(
-        current_hrx,
-        main_hrx,
-        left_label="Current HRX",
-        right_label="Main HRX",
-    )
-    vulkan_matches = match_runs(
-        current_vulkan,
-        main_vulkan,
-        left_label="Current Vulkan",
-        right_label="Main Vulkan",
-    )
-
-    sections = []
-    if baseline_run_url:
-        sections.append(
-            f"Main perplexity baseline: [CI run on `main`]({baseline_run_url})"
-        )
-    sections.extend(
-        (
-            format_comparison_table(
-                hrx_matches,
-                format_settings_line(current_hrx),
-                title="Perplexity current HRX/main HRX comparison",
-                left_label="Current HRX",
-                right_label="Main HRX",
-            ),
-            format_comparison_table(
-                vulkan_matches,
-                format_settings_line(current_vulkan),
-                title="Perplexity current Vulkan/main Vulkan comparison",
-                left_label="Current Vulkan",
-                right_label="Main Vulkan",
-            ),
-        )
-    )
-    return "\n\n".join(sections)
 
 
 def format_report(hrx: Perplexity, vulkan: Perplexity) -> str:
@@ -338,7 +263,6 @@ def main() -> int:
         report_label="perplexity",
         description=__doc__,
         format_report=format_report,
-        format_main_comparisons=format_main_comparisons,
     )
 
 
