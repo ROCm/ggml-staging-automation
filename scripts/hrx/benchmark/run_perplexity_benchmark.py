@@ -5,7 +5,8 @@
 
 Four sequential phases measure HRX prefill-like, Vulkan prefill-like, HRX
 decode-like, then Vulkan decode-like. Prefill-like uses a 512-token microbatch;
-decode-like uses a single token. Every phase measures all models in its batch.
+decode-like uses a single token. Both regimes evaluate 32 corpus chunks.
+Every phase measures all models in its batch.
 
 One JSON artifact contains complete model rows: each regime holds its HRX and
 Vulkan measurements, ratio, and numerical verdict. Execution and invalid-estimate
@@ -56,7 +57,7 @@ REGIMES = {
     "prefill-like": {"name": "Prefill like", "ctx": 512, "batch": 512,
                      "microbatch": 512, "chunks": 32},
     "decode-like": {"name": "Decode like", "ctx": 512, "batch": 512,
-                    "microbatch": 1, "chunks": 2},
+                    "microbatch": 1, "chunks": 32},
 }
 
 
