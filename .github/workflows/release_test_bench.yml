@@ -150,8 +150,7 @@ jobs:
       - name: Write perplexity report
         run: |
           python3 scripts/hrx/benchmark/write_perplexity_report.py \
-            "$PWD/lemonade-benchmark/perplexity-hrx.json" \
-            "$PWD/lemonade-benchmark/perplexity-vulkan.json" \
+            "$PWD/lemonade-benchmark/perplexity.json" \
             >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload benchmark results
@@ -162,8 +161,7 @@ jobs:
           path: |
             lemonade-benchmark/benchmark-hrx.json
             lemonade-benchmark/benchmark-vulkan.json
-            lemonade-benchmark/perplexity-hrx.json
-            lemonade-benchmark/perplexity-vulkan.json
+            lemonade-benchmark/perplexity.json
             lemonade-benchmark/metadata.json
           if-no-files-found: error
           retention-days: 45

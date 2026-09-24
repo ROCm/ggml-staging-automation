@@ -1,268 +1,132 @@
 #!/usr/bin/env python3
 # Copyright Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
-"""Write the HRX/Vulkan perplexity comparison report as Markdown.
+"""Render one combined perplexity artifact as one current-run comparison table.
 
-CI runs ``llama-perplexity`` over the same corpus once per backend
-(``run_perplexity_benchmark.py``), leaving ``perplexity-hrx.json`` and
-``perplexity-vulkan.json``. This script renders the pair into the GitHub step
-summary so a reviewer can see whether HRX reproduces Vulkan's estimates.
-Perplexity deltas are informational: they never fail the job, only the report
-itself can.
+Each row shows prefill-like and decode-like HRX/Vulkan estimates, their ratios
+and numerical verdicts, and the aggregate check. XFAIL and SKIP never hide raw
+numerical failures. A failed Vulkan reference makes the check FAIL regardless
+of the HRX expectation. Failed measurements remain unavailable in the table;
+details below it identify the backend, regime, error kind, log, and model batch.
 
-Terms:
-
-- A *run* is one model's measurement on one backend, keyed by model name — the
-  comparison key here is just the model. A run has ``status`` ``ok`` (with a
-  ``ppl`` estimate and uncertainty) or ``failed`` (with an ``error``, and the
-  ``log`` and batch to inspect).
-- The *settings line* is the corpus and chunking recipe every estimate in one
-  artifact was measured with. Two artifacts are only comparable when their
-  ``settings`` and corpus ``sha256`` are equal; ``check_comparable`` refuses
-  otherwise, because a PPL delta across corpora means nothing.
-
-The artifact shape, reduced to the fields this report reads::
-
-    {"settings": {"ctx": 512, "chunks": 8, "batch": 512, "extra_args": []},
-     "corpus": {"name": "wikitext-2-raw/wiki.test.raw", "sha256": "..."},
-     "models": [
-       {"model": "llama-3.1-8b", "status": "ok", "duration_s": 41.2,
-        "ppl": {"value": 6.1234, "uncertainty": 0.0312}},
-       {"model": "qwen3-8b", "status": "failed", "duration_s": 3.0,
-        "error": "exit code 1", "log": "perplexity-hrx.log", "batch": 2}]}
-
-The command line and exit-code contract (malformed input is fatal) live in
-``benchmark_report`` and are shared with the Lemonade report; this file
-supplies ``kind="perplexity"`` and pairs models by name. Both artifacts come
-from the same CI run and must contain the same model set. Recorded failures
-retain model entries; missing entries indicate an incomplete or mismatched
-pair, rather than a different benchmark tier.
-
-Output order on stdout: the partial-failure note, the settings line and
-HRX/Vulkan table. Rows follow the HRX artifact's model order.
+The CLI accepts one JSON path and writes the complete Markdown report to stdout.
+Reading or formatting errors return status 1 without printing a partial report.
+Recorded measurement failures remain reportable and do not fail the report CLI.
 """
 
 from __future__ import annotations
 
-import math
-from collections.abc import Sequence
+import argparse
+from pathlib import Path
 from typing import Any
 
 from benchmark_report import (
     UNAVAILABLE_MEASUREMENT,
-    ReportError,
     format_code,
     format_table_cell,
-    run_report_cli,
+    load_json,
+    write_report,
 )
 
 
-Perplexity = dict[str, Any]
-Run = dict[str, Any]
-ComparisonMatch = tuple[str, Run, Run]
-PARTIAL_FAILURE_NOTE = (
-    "`—` marks an unavailable measurement; failed runs are described in the "
-    "Status column with the log file and batch to inspect. Perplexity deltas "
-    "are informational and never fail the job."
-)
-
-
-def run_succeeded(run: Run) -> bool:
-    """Return whether one run produced a usable estimate."""
-    status = run["status"]
-    if status not in ("ok", "failed"):
-        raise ReportError(f"Run status must be ok or failed, got {status!r}")
-    return status == "ok"
-
-
-def run_metric(run: Run, *fields: str) -> int | float:
-    """Return one finite, non-negative measurement."""
-    value: Any = run
-    for field in fields:
-        value = value[field]
-    if (
-        type(value) not in (int, float)
-        or not math.isfinite(value)
-        or value < 0
-    ):
-        raise ReportError(
-            f"Run {'.'.join(fields)} must be a finite non-negative number"
-        )
-    return value
-
-
-def validate_run(run: Run) -> None:
-    """Validate the run fields consumed by the report."""
-    run_metric(run, "duration_s")
-    if run_succeeded(run):
-        run_metric(run, "ppl", "value")
-        run_metric(run, "ppl", "uncertainty")
-        return
-    error = run["error"]
-    error_is_string = isinstance(error, str)
-    error_is_present = error_is_string and bool(error)
-    if not error_is_present:
-        raise ReportError("Failed run must describe its error")
-
-
-def index_runs(perplexity: Perplexity, backend_label: str) -> dict[str, Run]:
-    """Index runs by model and reject ambiguous comparison identities."""
-    runs: dict[str, Run] = {}
-    for run in perplexity["models"]:
-        validate_run(run)
-        model = run["model"]
-        if model in runs:
-            raise ReportError(
-                f"Duplicate {backend_label} model: {model!r}"
-            )
-        runs[model] = run
-    return runs
-
-
-def check_comparable(left: Perplexity, right: Perplexity) -> None:
-    """Refuse to compare estimates that were not measured the same way."""
-    same_settings = left["settings"] == right["settings"]
-    same_corpus = left["corpus"]["sha256"] == right["corpus"]["sha256"]
-    if not same_settings:
-        raise ReportError(
-            "HRX and Vulkan used different perplexity settings: "
-            f"{left['settings']!r} vs {right['settings']!r}"
-        )
-    if not same_corpus:
-        raise ReportError("HRX and Vulkan used different corpora")
-
-
-def match_runs(hrx: Perplexity, vulkan: Perplexity) -> list[ComparisonMatch]:
-    """Pair the current run's models by name, independent of artifact order."""
-    check_comparable(hrx, vulkan)
-    hrx_runs = index_runs(hrx, "HRX")
-    vulkan_runs = index_runs(vulkan, "Vulkan")
-    if hrx_runs.keys() != vulkan_runs.keys():
-        raise ReportError("HRX and Vulkan model sets differ; expected the same CI run")
-    return [(model, run, vulkan_runs[model]) for model, run in hrx_runs.items()]
-
-
-def format_ppl(run: Run) -> str:
-    if not run_succeeded(run):
+def format_ppl(measurement: dict[str, Any]) -> str:
+    if measurement["status"] != "ok":
         return UNAVAILABLE_MEASUREMENT
-    return f"{run['ppl']['value']:.4f} ± {run['ppl']['uncertainty']:.4f}"
+    ppl = measurement["ppl"]
+    return f"{ppl['value']:.4f} ± {ppl['uncertainty']:.4f}"
 
 
-def format_delta(left: Run, right: Run) -> str:
-    """Express the left estimate minus the right estimate."""
-    both_succeeded = run_succeeded(left) and run_succeeded(right)
-    if not both_succeeded:
+def format_comparison(pair: dict[str, Any]) -> str:
+    """Keep numerical failures visible independently of model expectations."""
+    if pair["numerical_verdict"] == "unavailable":
         return UNAVAILABLE_MEASUREMENT
-    return f"{left['ppl']['value'] - right['ppl']['value']:+.4f}"
+    return f"{pair['ratio']:.4f} ({pair['numerical_verdict'].upper()})"
 
 
-def format_ratio(left: Run, right: Run) -> str:
-    """Express the left estimate as a multiple of the right estimate."""
-    both_succeeded = run_succeeded(left) and run_succeeded(right)
-    if not both_succeeded:
-        return UNAVAILABLE_MEASUREMENT
-    right_value = right["ppl"]["value"]
-    if right_value == 0:
-        return "N/A"
-    return f"{left['ppl']['value'] / right_value:.4f}"
+def format_check(row: dict[str, Any]) -> str:
+    if row["reference_result"] == "fail":
+        return f"FAIL (Vulkan); HRX {row['outcome']}"
+    return row["outcome"]
 
 
-def format_duration(run: Run) -> str:
-    return f"{run['duration_s']:.0f}"
-
-
-def format_run_status(run: Run, label: str) -> str:
-    """Describe one failed run with the evidence needed to inspect it."""
-    location = format_code(run["log"])
-    if run.get("batch") is not None:
-        location += f", batch {run['batch']}"
-    return f"{label} failed: {format_table_cell(run['error'])} (see {location})"
-
-
-def format_pair_status(left: Run, right: Run) -> str:
-    """Summarize failures across two backends."""
-    statuses = [
-        format_run_status(run, label)
-        for run, label in ((left, "HRX"), (right, "Vulkan"))
-        if not run_succeeded(run)
-    ]
-    return "; ".join(statuses) if statuses else "OK"
-
-
-def format_settings_line(perplexity: Perplexity) -> str:
-    """Describe how the estimates were measured."""
-    settings = perplexity["settings"]
-    corpus = perplexity["corpus"]
-    extra_args = settings.get("extra_args") or []
+def format_report(document: dict[str, Any]) -> str:
+    """Render complete model rows and their failure evidence from one artifact."""
+    corpus = document["corpus"]
+    settings = document["settings"]
+    extra_args = settings["extra_args"]
     arguments = (
-        " ".join(format_code(argument) for argument in extra_args)
-        if extra_args
-        else "_(none)_"
+        " ".join(format_code(arg) for arg in extra_args)
+        if extra_args else "_(none)_"
     )
-    return (
+    lines = [
+        "## HRX/Vulkan perplexity",
+        "",
         f"**Corpus:** {format_code(corpus['name'])} "
         f"(sha256 {format_code(corpus['sha256'][:12])}) · "
-        f"**Chunks:** {format_code(settings['chunks'])} × "
-        f"{format_code(settings['ctx'])} tokens · "
-        f"**Batch:** {format_code(settings['batch'])} · "
-        f"**Extra llama-perplexity arguments:** {arguments}"
-    )
-
-
-def format_comparison_table(
-    matches: Sequence[ComparisonMatch],
-    settings_line: str,
-) -> str:
-    """Format already-matched runs without performing I/O or validation."""
-    lines = [
-        "# Perplexity HRX/Vulkan comparison",
-        "",
-        settings_line,
-        "",
-        "Δ PPL is HRX PPL minus Vulkan PPL; ratio is HRX PPL divided by Vulkan PPL.",
+        f"**Maximum HRX/Vulkan ratio:** {settings['max_perplexity_ratio']:g} · "
+        f"**Extra llama-perplexity arguments:** {arguments}",
         "",
     ]
-    if not matches:
-        lines.append("No models were benchmarked.")
-        return "\n".join(lines)
-    lines.extend(
-        (
-            "| Model | Status | HRX PPL | Vulkan PPL | Δ PPL | "
-            "Ratio | HRX time (s) | Vulkan time (s) |",
-            "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |",
-        )
-    )
-    for model, left_run, right_run in matches:
+    for regime in document["regimes"].values():
         lines.append(
-            f"| {format_code(model)} | "
-            f"{format_pair_status(left_run, right_run)} | "
-            f"{format_ppl(left_run)} | "
-            f"{format_ppl(right_run)} | "
-            f"{format_delta(left_run, right_run)} | "
-            f"{format_ratio(left_run, right_run)} | "
-            f"{format_duration(left_run)} | "
-            f"{format_duration(right_run)} |"
+            f"- **{regime['name']}:** context {regime['ctx']}, "
+            f"batch {regime['batch']}, microbatch {regime['microbatch']}, "
+            f"chunks {regime['chunks']}."
         )
-    return "\n".join(lines).rstrip()
+    lines.extend([
+        "",
+        "Ratios are HRX PPL divided by Vulkan PPL; equality at the limit passes. "
+        "Numerical verdicts require valid measurements from both backends. "
+        "`—` marks an unavailable measurement or comparison. The check applies "
+        "the HRX expectation once across both regimes; Vulkan failures are always "
+        "fatal. XFAIL and SKIP leave the measured numerical verdicts visible.",
+        "",
+    ])
+    if not document["models"]:
+        return "\n".join([*lines, "No models were benchmarked."])
 
-
-def format_report(hrx: Perplexity, vulkan: Perplexity) -> str:
-    """Match perplexity data, then format the comparison section."""
-    matches = match_runs(hrx, vulkan)
-    return "\n\n".join(
-        (
-            PARTIAL_FAILURE_NOTE,
-            format_comparison_table(matches, format_settings_line(hrx)),
-        )
-    )
+    lines.extend([
+        "| Model | Prefill HRX PPL | Prefill Vulkan PPL | Prefill ratio (verdict) | "
+        "Decode HRX PPL | Decode Vulkan PPL | Decode ratio (verdict) | Check |",
+        "| --- | ---: | ---: | --- | ---: | ---: | --- | --- |",
+    ])
+    failures = []
+    for row in document["models"]:
+        cells = [format_code(row["model"])]
+        for regime_id in ("prefill-like", "decode-like"):
+            pair = row["regimes"][regime_id]
+            cells.extend([
+                format_ppl(pair["hrx"]),
+                format_ppl(pair["vulkan"]),
+                format_comparison(pair),
+            ])
+            for backend in ("hrx", "vulkan"):
+                measurement = pair[backend]
+                if measurement["status"] == "ok":
+                    continue
+                location = format_code(measurement["log"])
+                if row["batch"] is not None:
+                    location += f", batch {row['batch']}"
+                failures.append(
+                    f"- {format_code(row['model'])}, {regime_id}, {backend.upper()}: "
+                    f"{measurement['failure_kind']} — "
+                    f"{format_table_cell(measurement['error'])} (see {location})."
+                )
+        cells.append(format_check(row))
+        lines.append("| " + " | ".join(cells) + " |")
+    if failures:
+        lines.extend(["", "### Measurement failures", "", *failures])
+    return "\n".join(lines)
 
 
 def main() -> int:
-    return run_report_cli(
-        kind="perplexity",
-        report_label="perplexity",
-        description=__doc__,
-        format_report=format_report,
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("perplexity", type=Path)
+    args = parser.parse_args()
+
+    return write_report(
+        "perplexity",
+        lambda: format_report(load_json(args.perplexity)),
     )
 
 

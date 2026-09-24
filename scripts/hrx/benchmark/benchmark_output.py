@@ -24,7 +24,7 @@ def atomic_write_json(path: Path, data: dict[str, Any]) -> None:
 def merge_benchmark_output(
     cumulative_output: Path, batch_data: dict[str, Any]
 ) -> int:
-    """Atomically append one trusted backend batch to cumulative output."""
+    """Atomically append one trusted model batch to cumulative output."""
     if cumulative_output.exists():
         merged_data = json.loads(cumulative_output.read_text(encoding="utf-8"))
         merged_data["models"].extend(batch_data["models"])

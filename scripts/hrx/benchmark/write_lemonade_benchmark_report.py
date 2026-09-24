@@ -32,14 +32,16 @@ so their comparison keys must agree. Recorded failures still have entries;
 missing entries indicate an incomplete or mismatched pair.
 
 The runner name provides context for machine-dependent throughput differences.
-Shared CLI and failure contracts are documented in ``benchmark_report``.
+This script owns its two-input CLI; shared output and failure contracts are
+documented in ``benchmark_report``.
 """
 
 from __future__ import annotations
 
+import argparse
 import math
 import os
-from functools import partial
+from pathlib import Path
 from typing import Any
 
 from benchmark_report import (
@@ -47,7 +49,8 @@ from benchmark_report import (
     ReportError,
     format_code,
     format_table_cell,
-    run_report_cli,
+    load_json,
+    write_report,
 )
 
 Benchmark = dict[str, Any]
@@ -177,11 +180,18 @@ def format_report(
 
 
 def main() -> int:
-    return run_report_cli(
-        kind="benchmark",
-        report_label="Lemonade benchmark",
-        description=__doc__,
-        format_report=partial(format_report, runner_name=os.environ.get("RUNNER_NAME")),
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("hrx_benchmark", type=Path)
+    parser.add_argument("vulkan_benchmark", type=Path)
+    args = parser.parse_args()
+
+    return write_report(
+        "Lemonade benchmark",
+        lambda: format_report(
+            load_json(args.hrx_benchmark),
+            load_json(args.vulkan_benchmark),
+            runner_name=os.environ.get("RUNNER_NAME"),
+        ),
     )
 
 

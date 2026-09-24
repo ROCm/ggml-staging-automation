@@ -1,18 +1,25 @@
 #!/usr/bin/env python3
 # Copyright Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
-"""Run HRX and Vulkan release perplexity measurements with llama-perplexity.
+"""Measure two perplexity regimes on HRX and Vulkan over the same pinned corpus.
 
-Every selected model is measured once per backend and recorded in a stable JSON
-artifact, including failed measurements. Vulkan and unflagged HRX measurements
-are mandatory. The batched driver supplies the selected models carrying the
-HRX XFAIL policy as runtime names. A failed HRX measurement for one of those
-models is an XFAIL; a successful one is an XPASS and fails the worker so the
-stale expectation cannot pass unnoticed.
+Four sequential phases measure HRX prefill-like, Vulkan prefill-like, HRX
+decode-like, then Vulkan decode-like. Prefill-like uses a 512-token microbatch;
+decode-like uses a single token. Every phase measures all models in its batch.
 
-Only completed measurement attempts are classified this way. Invalid inputs,
-process invocation errors, result-writing errors, and cleanup failures remain
-fatal and retain their normal exception path.
+One JSON artifact contains complete model rows: each regime holds its HRX and
+Vulkan measurements, ratio, and numerical verdict. Execution and invalid-estimate
+failures remain distinct; only valid pairs receive a numerical verdict. Batch
+merging simply appends complete rows to models using the shared output helper.
+
+Each row's result and outcome aggregate HRX across both regimes before applying
+its one perplexity expectation. SKIP still collects measurements and preserves
+the raw result. Vulkan failures are always fatal and recorded in reference_result.
+The combined artifact and separate backend logs are written before returning a
+failing exit status. The report consumes this artifact as one comparison table.
+Lemonade benchmark expectations are separate.
+
+Invocation, input, writing, and cleanup errors retain their fatal exception path.
 """
 
 from __future__ import annotations
@@ -20,6 +27,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 import re
 import shlex
@@ -40,8 +48,27 @@ from run_batched_benchmark import ModelSpec, load_manifest
 
 
 FINAL_ESTIMATE_PATTERN = re.compile(
-    r"Final estimate: PPL = (?P<value>[0-9.]+) \+/- (?P<uncertainty>[0-9.]+)"
+    r"Final estimate: PPL = (?P<value>\S+) \+/- (?P<uncertainty>\S+)"
 )
+
+
+REGIMES = {
+    "prefill-like": {"name": "Prefill like", "ctx": 512, "batch": 512,
+                     "microbatch": 512, "chunks": 32},
+    "decode-like": {"name": "Decode like", "ctx": 512, "batch": 512,
+                    "microbatch": 1, "chunks": 2},
+}
+
+
+def numerical_verdict(hrx: dict, vulkan: dict, maximum: float) -> str:
+    """Execution/estimate failures cannot count as numerical detections."""
+    hrx_valid = hrx["status"] == "ok"
+    vulkan_valid = vulkan["status"] == "ok"
+    comparable = hrx_valid and vulkan_valid
+    if not comparable:
+        return "unavailable"
+    exceeds_limit = hrx["ppl"]["value"] > maximum * vulkan["ppl"]["value"]
+    return "fail" if exceeds_limit else "pass"
 
 
 class PerplexityBenchmarkError(RuntimeError):
@@ -53,7 +80,7 @@ class PerplexityPhase:
     name: str
     backend: str
     device: str
-    output: Path
+    regime_id: str
     log: Path
 
 
@@ -112,10 +139,17 @@ def parse_final_estimate(text: str) -> dict[str, float] | None:
     match = FINAL_ESTIMATE_PATTERN.search(text)
     if match is None:
         return None
-    return {
-        "value": float(match.group("value")),
-        "uncertainty": float(match.group("uncertainty")),
-    }
+    try:
+        value = float(match.group("value"))
+        uncertainty = float(match.group("uncertainty"))
+    except ValueError:
+        return None
+    value_valid = math.isfinite(value) and value > 0
+    uncertainty_valid = math.isfinite(uncertainty) and uncertainty >= 0
+    estimate_valid = value_valid and uncertainty_valid
+    if not estimate_valid:
+        return None
+    return {"value": value, "uncertainty": uncertainty}
 
 
 def run_perplexity(
@@ -127,24 +161,28 @@ def run_perplexity(
     log_handle: TextIO,
 ) -> tuple[dict[str, Any], bool]:
     """Measure one model on one device and record the outcome as a row."""
+    regime_id = phase.regime_id
+    regime = REGIMES[regime_id]
     command = [
         os.fspath(llama_perplexity),
+        *args.perplexity_arg,
         "-m",
         os.fspath(model.path),
         "-f",
         os.fspath(corpus_file),
         "-c",
-        str(args.ctx),
+        str(regime["ctx"]),
         "--chunks",
-        str(args.chunks),
+        str(regime["chunks"]),
         "-b",
-        str(args.batch),
+        str(regime["batch"]),
+        "-ub",
+        str(regime["microbatch"]),
         "--device",
         phase.device,
-        *args.perplexity_arg,
     ]
     log("++ " + shlex.join(command))
-    log_handle.write(f"===== {model.spec.name} on {phase.device} =====\n")
+    log_handle.write(f"===== {model.spec.name} [{regime_id}] on {phase.device} =====\n")
     log_handle.write("++ " + shlex.join(command) + "\n")
     log_handle.flush()
 
@@ -177,17 +215,21 @@ def run_perplexity(
     ppl = parse_final_estimate(output)
     exited_with_error = exit_code != 0
     missing_estimate = ppl is None
+    failure_kind = None
     if timed_out:
+        failure_kind = "execution"
         error: str | None = f"timed out after {args.run_timeout_seconds} seconds"
     elif exited_with_error:
+        failure_kind = "execution"
         error = f"llama-perplexity exited with status {exit_code}"
     elif missing_estimate:
-        error = "llama-perplexity did not print a final PPL estimate"
+        failure_kind = "invalid-measurement"
+        error = "llama-perplexity did not print a valid finite positive PPL estimate"
     else:
         error = None
     succeeded = error is None
 
-    summary = f"{model.spec.name} on {phase.device}: "
+    summary = f"{model.spec.name} [{regime_id}] on {phase.device}: "
     if succeeded:
         assert ppl is not None
         summary += f"PPL = {ppl['value']} +/- {ppl['uncertainty']}"
@@ -196,11 +238,9 @@ def run_perplexity(
     log(f"{summary} in {duration_s:.1f}s")
 
     row = {
-        "model": model.spec.name,
-        "file": model.spec.filename,
-        "batch": args.batch_number,
         "status": "ok" if succeeded else "failed",
         "error": error,
+        "failure_kind": failure_kind,
         "exit_code": exit_code,
         "duration_s": round(duration_s, 3),
         "ppl": ppl if succeeded else None,
@@ -216,66 +256,59 @@ def run_phase(
     models: list[ResolvedModel],
     llama_perplexity: Path,
     corpus_file: Path,
-    corpus_sha256: str,
-    hrx_xfail_models: set[str],
     args: argparse.Namespace,
-) -> tuple[dict[str, Any], bool]:
-    """Measure every staged model on one device and build the batch document."""
-    rows: list[dict[str, Any]] = []
-    has_unexpected_outcomes = False
-    phase_is_hrx = phase.backend == "hrx"
+) -> dict[str, Any]:
+    """Collect one backend/regime pair without stopping on a failed model."""
+    measurements = {}
     active_log.parent.mkdir(parents=True, exist_ok=True)
     with active_log.open("a", encoding="utf-8") as log_handle:
         for model in models:
-            row, succeeded = run_perplexity(
-                llama_perplexity,
-                model,
-                corpus_file,
-                phase,
-                args,
-                log_handle,
+            measurement, _ = run_perplexity(
+                llama_perplexity, model, corpus_file, phase, args, log_handle,
             )
-            rows.append(row)
-            model_is_flagged = model.spec.name in hrx_xfail_models
-            xfail_applies = phase_is_hrx and model_is_flagged
-            model_label = f"{model.spec.id} ({model.spec.name})"
-            if succeeded:
-                if xfail_applies:
-                    log(
-                        f"XPASS: {phase.name} perplexity for {model_label} "
-                        "completed successfully; hrx.xfail is still set"
-                    )
-                    has_unexpected_outcomes = True
-            elif xfail_applies:
-                log(
-                    f"XFAIL: {phase.name} perplexity for {model_label}: "
-                    f"{row['error']}"
-                )
-            else:
-                log(
-                    f"FAIL: {phase.name} perplexity for {model_label}: "
-                    f"{row['error']}"
-                )
-                has_unexpected_outcomes = True
-    batch_data = {
-        "schema_version": 1,
-        "backend": phase.backend,
-        "device": phase.device,
-        "llama_perplexity": os.fspath(llama_perplexity),
-        "settings": {
-            "ctx": args.ctx,
-            "chunks": args.chunks,
-            "batch": args.batch,
-            "extra_args": list(args.perplexity_arg),
-        },
-        "corpus": {
-            "name": corpus_file.name,
-            "sha256": corpus_sha256,
-            "bytes": corpus_file.stat().st_size,
-        },
-        "models": rows,
-    }
-    return batch_data, has_unexpected_outcomes
+            measurements[model.spec.name] = measurement
+    return measurements
+
+
+def evaluate_models(document: dict, xfail: set[str], skip: set[str]) -> bool:
+    """Apply the HRX expectation once; never waive a broken Vulkan reference."""
+    unexpected = False
+    maximum = document["settings"]["max_perplexity_ratio"]
+    for row in document["models"]:
+        name = row["model"]
+        hrx_failed = False
+        vulkan_failed = False
+        for regime_id, pair in row["regimes"].items():
+            measurement = pair["hrx"]
+            baseline = pair["vulkan"]
+            verdict = numerical_verdict(measurement, baseline, maximum)
+            pair["numerical_verdict"] = verdict
+            pair["ratio"] = (
+                measurement["ppl"]["value"] / baseline["ppl"]["value"]
+                if verdict != "unavailable" else None
+            )
+            measurement_failed = measurement["status"] != "ok"
+            numerically_failed = verdict == "fail"
+            hrx_failed = hrx_failed or measurement_failed or numerically_failed
+            if baseline["status"] != "ok":
+                log(f"FAIL: Vulkan perplexity for {name} [{regime_id}]: {baseline['error']}")
+                unexpected = True
+                vulkan_failed = True
+            log(f"HRX perplexity for {name} [{regime_id}]: "
+                f"measurement={measurement['status']}, numerical={verdict}, "
+                f"ratio={pair['ratio']}")
+        row["result"] = "fail" if hrx_failed else "pass"
+        row["reference_result"] = "fail" if vulkan_failed else "pass"
+        if name in skip:
+            outcome = "SKIP"
+        elif name in xfail:
+            outcome = "XFAIL" if hrx_failed else "XPASS"
+        else:
+            outcome = "FAIL" if hrx_failed else "PASS"
+        row["outcome"] = outcome
+        log(f"{outcome}: HRX aggregate perplexity for {name}")
+        unexpected = unexpected or outcome in ("FAIL", "XPASS")
+    return unexpected
 
 
 def run(args: argparse.Namespace) -> int:
@@ -289,29 +322,66 @@ def run(args: argparse.Namespace) -> int:
     models = resolve_models(args.model_manifest, models_dir, args.models)
     phases = (
         PerplexityPhase(
-            name="HRX",
+            name="HRX prefill-like",
             backend="hrx",
             device=args.hrx_device,
-            output=args.hrx_output,
+            regime_id="prefill-like",
             log=args.hrx_log,
         ),
         PerplexityPhase(
-            name="Vulkan",
+            name="Vulkan prefill-like",
             backend="vulkan",
             device=args.vulkan_device,
-            output=args.vulkan_output,
+            regime_id="prefill-like",
+            log=args.vulkan_log,
+        ),
+        PerplexityPhase(
+            name="HRX decode-like",
+            backend="hrx",
+            device=args.hrx_device,
+            regime_id="decode-like",
+            log=args.hrx_log,
+        ),
+        PerplexityPhase(
+            name="Vulkan decode-like",
+            backend="vulkan",
+            device=args.vulkan_device,
+            regime_id="decode-like",
             log=args.vulkan_log,
         ),
     )
-    has_unexpected_outcomes = False
+    batch_data = {
+        "schema_version": 2,
+        "devices": {"hrx": args.hrx_device, "vulkan": args.vulkan_device},
+        "llama_perplexity": os.fspath(llama_perplexity),
+        "regimes": REGIMES,
+        "settings": {
+            "extra_args": list(args.perplexity_arg),
+            "max_perplexity_ratio": args.max_perplexity_ratio,
+        },
+        "corpus": {
+            "name": corpus_file.name,
+            "sha256": corpus_sha256,
+            "bytes": corpus_file.stat().st_size,
+        },
+        "models": [
+            {
+                "model": model.spec.name,
+                "file": model.spec.filename,
+                "batch": args.batch_number,
+                "regimes": {regime_id: {} for regime_id in REGIMES},
+            }
+            for model in models
+        ],
+    }
 
     # Precreate debug files so early failures still leave uploadable artifacts.
-    for phase in phases:
-        phase.log.parent.mkdir(parents=True, exist_ok=True)
+    for backend_log in (args.hrx_log, args.vulkan_log):
+        backend_log.parent.mkdir(parents=True, exist_ok=True)
         if args.batched:
-            phase.log.touch(exist_ok=True)
+            backend_log.touch(exist_ok=True)
         else:
-            phase.log.write_text("", encoding="utf-8")
+            backend_log.write_text("", encoding="utf-8")
 
     log_llama_perplexity_devices(llama_perplexity)
 
@@ -324,16 +394,17 @@ def run(args: argparse.Namespace) -> int:
             log(f"Starting {phase.name} perplexity phase on {phase.device}")
             active_log = phase.log
             if args.batched:
-                active_log = state_root / phase.backend / "perplexity.log"
+                # Each phase appends only its own segment to the backend log.
+                active_log = (
+                    state_root / phase.regime_id / phase.backend / "perplexity.log"
+                )
             try:
-                batch_data, phase_has_unexpected_outcomes = run_phase(
+                measurements = run_phase(
                     phase,
                     active_log,
                     models,
                     llama_perplexity,
                     corpus_file,
-                    corpus_sha256,
-                    hrx_xfail_models,
                     args,
                 )
             finally:
@@ -348,18 +419,22 @@ def run(args: argparse.Namespace) -> int:
                             f"log to {phase.log}: {exc}"
                         )
 
-            if args.batched:
-                merged_count = merge_benchmark_output(phase.output, batch_data)
-                log(
-                    f"Merged {merged_count} {phase.backend} model(s) from "
-                    f"batch {args.batch_number} into {phase.output}"
-                )
-            else:
-                atomic_write_json(phase.output, batch_data)
-                log(f"Wrote {phase.output}")
-            has_unexpected_outcomes = (
-                has_unexpected_outcomes or phase_has_unexpected_outcomes
-            )
+            for row in batch_data["models"]:
+                row["regimes"][phase.regime_id][phase.backend] = measurements[
+                    row["model"]
+                ]
+
+        has_unexpected_outcomes = evaluate_models(
+            batch_data, hrx_xfail_models,
+            set(args.hrx_skip_models),
+        )
+        if args.batched:
+            merged_count = merge_benchmark_output(args.output, batch_data)
+            log(f"Merged {merged_count} model(s) from "
+                f"batch {args.batch_number} into {args.output}")
+        else:
+            atomic_write_json(args.output, batch_data)
+            log(f"Wrote {args.output}")
 
     if has_unexpected_outcomes:
         log(
@@ -378,15 +453,12 @@ def main() -> int:
     parser.add_argument("--models-dir", type=Path, required=True)
     parser.add_argument("--batched", action="store_true")
     parser.add_argument("--batch-number", type=int)
-    parser.add_argument("--hrx-output", type=Path, required=True)
-    parser.add_argument("--vulkan-output", type=Path, required=True)
+    parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--hrx-log", type=Path, required=True)
     parser.add_argument("--vulkan-log", type=Path, required=True)
     parser.add_argument("--hrx-device", default="HRX0")
     parser.add_argument("--vulkan-device", default="Vulkan0")
-    parser.add_argument("--ctx", type=int, default=512)
-    parser.add_argument("--chunks", type=int, default=32)
-    parser.add_argument("--batch", type=int, default=512)
+    parser.add_argument("--max-perplexity-ratio", type=float, default=1.10)
     parser.add_argument("--run-timeout-seconds", type=float, default=1800.0)
     parser.add_argument(
         "--perplexity-arg",
@@ -395,8 +467,14 @@ def main() -> int:
         help="Extra argument forwarded to llama-perplexity (repeatable).",
     )
     parser.add_argument("--hrx-xfail-models", nargs="*", required=True)
+    parser.add_argument("--hrx-skip-models", nargs="*", default=[])
     parser.add_argument("--models", nargs="+", required=True)
     args = parser.parse_args()
+    ratio_is_finite = math.isfinite(args.max_perplexity_ratio)
+    ratio_is_positive = args.max_perplexity_ratio > 0
+    ratio_is_valid = ratio_is_finite and ratio_is_positive
+    if not ratio_is_valid:
+        parser.error("--max-perplexity-ratio must be finite and positive")
     if args.batched and args.batch_number is None:
         parser.error("--batch-number is required with --batched")
     if args.batch_number is not None and not args.batched:

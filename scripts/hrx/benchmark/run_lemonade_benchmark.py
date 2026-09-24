@@ -6,9 +6,13 @@
 Each backend gets a fresh daemon configured to use the packaged llama-server
 and the requested device. The worker validates Lemonade's JSON before merging
 the batch into the stable artifacts. The batch driver supplies the selected
-runtime model names and the subset whose HRX results are expected to fail.
+runtime model names and the subset whose HRX throughput is expected to fail.
 Vulkan results are always mandatory; a successful flagged HRX model is an
-XPASS so stale expectations cannot hide fixes.
+XPASS so stale expectations cannot hide fixes. Separately named skipped checks
+still collect measurements but log SKIP without enforcing the HRX result.
+
+Only ``chat-short`` and ``chat-long-output`` are collected: they capture
+short-response and sustained generation throughput for the CI report.
 
 Process, daemon, configuration, benchmark-document, and result-artifact errors
 are always fatal. Only outcomes represented by an otherwise valid Lemonade
@@ -159,6 +163,7 @@ def summarize_benchmark(
     expected_backend: str,
     expected_models: list[str],
     hrx_xfail_models: set[str],
+    hrx_skip_models: set[str] | frozenset[str] = frozenset(),
 ) -> tuple[int, int, bool]:
     """Validate one complete document and classify binary model outcomes."""
     scenario_count = 0
@@ -243,11 +248,19 @@ def summarize_benchmark(
         model_is_flagged = model in hrx_xfail_models
         xfail_applies = backend_is_hrx and model_is_flagged
 
+        # Skipping the result check still requires a model measurement.
+        model_is_skipped = model in hrx_skip_models
+        skip_applies = backend_is_hrx and model_is_skipped and model_is_present
+        if skip_applies:
+            outcome = "PASS" if model_succeeded else "FAIL"
+            log(f"SKIP: {backend_label} throughput for {model} (measured {outcome})")
+            continue
+
         if model_succeeded:
             if xfail_applies:
                 log(
                     f"XPASS: {backend_label} throughput for {model} "
-                    "completed successfully; hrx.xfail is still set"
+                    "completed successfully; this check expects failure"
                 )
                 has_unexpected_outcomes = True
             continue
@@ -280,8 +293,9 @@ def run_benchmark(
     hrx_xfail_models: set[str],
     *,
     env: dict[str, str],
+    hrx_skip_models: set[str] | frozenset[str] = frozenset(),
 ) -> tuple[dict[str, Any], bool]:
-    """Run and summarize one backend's complete benchmark suite."""
+    """Run and summarize one backend's short and sustained generation scenarios."""
     output.parent.mkdir(parents=True, exist_ok=True)
     output.unlink(missing_ok=True)
     command = [
@@ -293,6 +307,10 @@ def run_benchmark(
         "1",
         "--runs",
         "3",
+        "--scenarios",
+        "chat-short",
+        "--scenarios",
+        "chat-long-output",
         f"--llamacpp-args={BENCHMARK_BACKEND_ARGS}",
         "--response-log",
         os.fspath(response_log),
@@ -312,6 +330,7 @@ def run_benchmark(
             expected_backend=backend,
             expected_models=models,
             hrx_xfail_models=hrx_xfail_models,
+            hrx_skip_models=hrx_skip_models,
         )
     )
     log(
@@ -531,6 +550,7 @@ def run(args: argparse.Namespace) -> int:
                     args.models,
                     hrx_xfail_models,
                     env=env,
+                    hrx_skip_models=set(args.hrx_skip_models),
                 )
             finally:
                 try:
@@ -609,6 +629,7 @@ def main() -> int:
     parser.add_argument("--hrx-response-log", type=Path, required=True)
     parser.add_argument("--vulkan-response-log", type=Path, required=True)
     parser.add_argument("--hrx-xfail-models", nargs="*", required=True)
+    parser.add_argument("--hrx-skip-models", nargs="*", default=[])
     parser.add_argument("--models", nargs="+", required=True)
     args = parser.parse_args()
     if args.batched and args.batch_number is None:

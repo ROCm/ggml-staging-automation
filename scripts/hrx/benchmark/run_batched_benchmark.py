@@ -13,9 +13,10 @@ Terms:
 - Benchmark worker: a command from the benchmark specification (for example
   run_perplexity_benchmark.py). It is invoked once per batch and is expected to
   merge its per-batch results itself.
-- HRX XFAIL: optional per-model manifest metadata passed to benchmark workers
-  for the resident models in each batch. It defaults to false and never
-  relaxes Vulkan measurements.
+- HRX expected result: ``hrx.expected_results`` maps benchmark-spec IDs to
+  "pass", "fail", or "skip" for each model. Omitted checks expect a pass.
+  Expected failures become strict worker XFAILs; skipped checks still collect
+  measurements but do not enforce the HRX result. Neither expectation relaxes Vulkan measurements.
 
 Why this exists: CI runners for the HRX release benchmarks have far less free
 disk than the full model set requires. Instead of pinning benchmarks to
@@ -32,9 +33,9 @@ Boundary contract:
   file fails the run before any download.
 - Worker invocation: each worker's argv is run verbatim with the batch-managed
   arguments appended: --batched --batch-number N --models-dir DIR
-  --hrx-xfail-models [NAME...] --models NAME... The XFAIL names are the
-  flagged subset of the resident runtime model names. A spec that already
-  carries any managed argument is rejected so a worker cannot be pointed at
+  --hrx-xfail-models [NAME...] --hrx-skip-models [NAME...] --models NAME...
+  The names select strict expected failures or skipped checks.
+  A spec that already carries any managed argument is rejected so a worker cannot be pointed at
   the wrong models or supplied conflicting failure policy.
 - Exit status: 0 only if every download, every worker, and every cleanup
   succeeded. Failures are collected and summarized on stderr rather than
@@ -102,7 +103,7 @@ class DownloadError(RuntimeError):
 class ModelSpec:
     id: str
     tier: str
-    hrx_xfail: bool
+    hrx_expected_results: dict[str, str]
     name: str
     directory: str
     repository: str
@@ -190,7 +191,9 @@ def _validate_repository(repository: str, context: str) -> None:
         )
 
 
-def load_manifest(path: Path) -> ModelManifest:
+def load_manifest(
+    path: Path, *, known_checks: set[str] | None = None
+) -> ModelManifest:
     """Load and validate an ordered, cumulative model-tier manifest."""
     root = _require_object(_load_json(path, "model manifest"), "manifest")
     raw_tiers = root.get("tiers")
@@ -234,11 +237,20 @@ def load_manifest(path: Path) -> ModelManifest:
         sha256 = _require_string(entry, "sha256", context)
         size_bytes = entry.get("size_bytes")
         hrx = _require_object(entry.get("hrx", {}), f"{context}.hrx")
-        hrx_xfail = hrx.get("xfail", False)
-        if type(hrx_xfail) is not bool:
-            raise BatchBenchmarkError(
-                f"{context}.hrx.xfail must be a Boolean when present"
-            )
+        expected_results = _require_object(
+            hrx.get("expected_results", {}), f"{context}.hrx.expected_results"
+        )
+        for check, result in expected_results.items():
+            _require_string_value(check, f"{context}.hrx.expected_results key")
+            if result not in ("pass", "fail", "skip"):
+                raise BatchBenchmarkError(
+                    f"{context}.hrx.expected_results[{check!r}] must be 'pass', 'fail', or 'skip'"
+                )
+            if known_checks is not None:
+                if check not in known_checks:
+                    raise BatchBenchmarkError(
+                        f"{context}.hrx.expected_results references unknown check {check!r}"
+                    )
 
         _validate_local_name(directory, "directory", context)
         _validate_local_name(filename, "filename", context)
@@ -271,7 +283,7 @@ def load_manifest(path: Path) -> ModelManifest:
             ModelSpec(
                 id=model_id,
                 tier=tier,
-                hrx_xfail=hrx_xfail,
+                hrx_expected_results=expected_results,
                 name=name,
                 directory=directory,
                 repository=repository,
@@ -306,6 +318,7 @@ def load_benchmark_spec(path: Path) -> list[BenchmarkSpec]:
         "--batch-number",
         "--models-dir",
         "--hrx-xfail-models",
+        "--hrx-skip-models",
         "--models",
     }
     for entry_index, raw_entry in enumerate(entries):
@@ -618,7 +631,17 @@ def build_benchmark_command(
         "--models-dir",
         os.fspath(models_dir),
         "--hrx-xfail-models",
-        *(model.name for model in resident if model.hrx_xfail),
+        *(
+            model.name
+            for model in resident
+            if model.hrx_expected_results.get(benchmark.id, "pass") == "fail"
+        ),
+        "--hrx-skip-models",
+        *(
+            model.name
+            for model in resident
+            if model.hrx_expected_results.get(benchmark.id, "pass") == "skip"
+        ),
         "--models",
         *(model.name for model in resident),
     ]
@@ -646,7 +669,9 @@ def run(args: argparse.Namespace) -> int:
 
     try:
         benchmarks = load_benchmark_spec(args.benchmark_spec)
-        manifest = load_manifest(args.model_manifest)
+        manifest = load_manifest(
+            args.model_manifest, known_checks={benchmark.id for benchmark in benchmarks}
+        )
         selected = select_models(manifest, args.model_tier)
         work_root = prepare_work_root(args.work_root)
 
