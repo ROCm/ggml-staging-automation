@@ -77,7 +77,6 @@
       "sha256": "7b064f5842bf9532c91456deda288a1b672397a54fa729aa665952863033557c",
       "hrx": {
         "expected_results": {
-          "perplexity": "fail",
           "lemonade": "skip"
         }
       }
@@ -105,8 +104,7 @@
       "sha256": "64913247e927414ecf47fd3e9ea8e3f0c9acae293f583dfa7e24b8872e20fa4c",
       "hrx": {
         "expected_results": {
-          "lemonade": "skip",
-          "perplexity": "fail"
+          "lemonade": "skip"
         }
       }
     },
@@ -144,8 +142,7 @@
       "sha256": "33bcc57074ec7b6eada5a90651ee546ec0c2b271002c22baf9f1b2dd1e8f75cb",
       "hrx": {
         "expected_results": {
-          "lemonade": "skip",
-          "perplexity": "fail"
+          "lemonade": "skip"
         }
       }
     },
@@ -178,8 +175,7 @@
       "sha256": "c876f159707a4e4f70e045106c69db15bfc935a4981706fd4f65c6e7ea1e81c5",
       "hrx": {
         "expected_results": {
-          "lemonade": "skip",
-          "perplexity": "fail"
+          "lemonade": "skip"
         }
       }
     },
@@ -195,7 +191,6 @@
       "sha256": "92f4a83cdfe691b216a949f915e47f35f0ed85b833aa03490c719160ac5cdf7a",
       "hrx": {
         "expected_results": {
-          "perplexity": "fail",
           "lemonade": "skip"
         }
       }
@@ -223,7 +218,6 @@
       "sha256": "284a335aa3fb2ced3b1b01fcb40b08aa783e3b70832767f0dd2e3fdfa134bd54",
       "hrx": {
         "expected_results": {
-          "perplexity": "fail",
           "lemonade": "skip"
         }
       }
@@ -240,7 +234,6 @@
       "sha256": "4524b3f997f0f06444e568d1f26e2efd69effa3218c7ad3047432fb171e42168",
       "hrx": {
         "expected_results": {
-          "perplexity": "fail",
           "lemonade": "skip"
         }
       }
@@ -257,8 +250,7 @@
       "sha256": "3d7c6c90dd98717a203adb22d5eacd2581850e40aa5327e144b97766cae5f7e3",
       "hrx": {
         "expected_results": {
-          "lemonade": "skip",
-          "perplexity": "fail"
+          "lemonade": "skip"
         }
       }
     },
@@ -274,7 +266,6 @@
       "sha256": "88c00229914083cd112853aab84ed51b87bdf6b9ce42f532d8c85c7c63b1730a",
       "hrx": {
         "expected_results": {
-          "perplexity": "fail",
           "lemonade": "skip"
         }
       }
@@ -291,7 +282,6 @@
       "sha256": "55175400e3f509a9616227afeffd58d87e80b9f628a5d3d54ada884d85221fed",
       "hrx": {
         "expected_results": {
-          "perplexity": "fail",
           "lemonade": "skip"
         }
       }
@@ -308,7 +298,6 @@
       "sha256": "b1b3de114215d9507409a662a501a631095a479a419584e8a2ded6304b19b4f5",
       "hrx": {
         "expected_results": {
-          "perplexity": "fail",
           "lemonade": "skip"
         }
       }
@@ -325,8 +314,7 @@
       "sha256": "35032c422dd565a192ce3600db179963126e77279cc72cdcc22a201bd6059cf4",
       "hrx": {
         "expected_results": {
-          "lemonade": "skip",
-          "perplexity": "fail"
+          "lemonade": "skip"
         }
       }
     },
@@ -415,7 +403,6 @@
       "sha256": "9ed150d4367e68df0ac8e1540f6ddc65b42d0ee26378329d1ecbca60f93fc5f8",
       "hrx": {
         "expected_results": {
-          "perplexity": "fail",
           "lemonade": "skip"
         }
       }
