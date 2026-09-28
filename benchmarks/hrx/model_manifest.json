@@ -9,7 +9,7 @@
       "tier": "full",
       "hrx": {
         "expected_results": {
-          "lemonade": "skip",
+          "lemonade-benchmark": "skip",
           "perplexity": "fail"
         }
       },
@@ -78,7 +78,7 @@
       "hrx": {
         "expected_results": {
           "perplexity": "fail",
-          "lemonade": "skip"
+          "lemonade-benchmark": "skip"
         }
       }
     },
@@ -105,7 +105,7 @@
       "sha256": "64913247e927414ecf47fd3e9ea8e3f0c9acae293f583dfa7e24b8872e20fa4c",
       "hrx": {
         "expected_results": {
-          "lemonade": "skip",
+          "lemonade-benchmark": "skip",
           "perplexity": "fail"
         }
       }
@@ -144,7 +144,7 @@
       "sha256": "33bcc57074ec7b6eada5a90651ee546ec0c2b271002c22baf9f1b2dd1e8f75cb",
       "hrx": {
         "expected_results": {
-          "lemonade": "skip",
+          "lemonade-benchmark": "skip",
           "perplexity": "fail"
         }
       }
@@ -162,7 +162,7 @@
       "hrx": {
         "expected_results": {
           "perplexity": "fail",
-          "lemonade": "skip"
+          "lemonade-benchmark": "skip"
         }
       }
     },
@@ -178,7 +178,7 @@
       "sha256": "c876f159707a4e4f70e045106c69db15bfc935a4981706fd4f65c6e7ea1e81c5",
       "hrx": {
         "expected_results": {
-          "lemonade": "skip",
+          "lemonade-benchmark": "skip",
           "perplexity": "fail"
         }
       }
@@ -196,7 +196,7 @@
       "hrx": {
         "expected_results": {
           "perplexity": "fail",
-          "lemonade": "skip"
+          "lemonade-benchmark": "skip"
         }
       }
     },
@@ -224,7 +224,7 @@
       "hrx": {
         "expected_results": {
           "perplexity": "fail",
-          "lemonade": "skip"
+          "lemonade-benchmark": "skip"
         }
       }
     },
@@ -241,7 +241,7 @@
       "hrx": {
         "expected_results": {
           "perplexity": "fail",
-          "lemonade": "skip"
+          "lemonade-benchmark": "skip"
         }
       }
     },
@@ -257,7 +257,7 @@
       "sha256": "3d7c6c90dd98717a203adb22d5eacd2581850e40aa5327e144b97766cae5f7e3",
       "hrx": {
         "expected_results": {
-          "lemonade": "skip",
+          "lemonade-benchmark": "skip",
           "perplexity": "fail"
         }
       }
@@ -275,7 +275,7 @@
       "hrx": {
         "expected_results": {
           "perplexity": "fail",
-          "lemonade": "skip"
+          "lemonade-benchmark": "skip"
         }
       }
     },
@@ -292,7 +292,7 @@
       "hrx": {
         "expected_results": {
           "perplexity": "fail",
-          "lemonade": "skip"
+          "lemonade-benchmark": "skip"
         }
       }
     },
@@ -309,7 +309,7 @@
       "hrx": {
         "expected_results": {
           "perplexity": "fail",
-          "lemonade": "skip"
+          "lemonade-benchmark": "skip"
         }
       }
     },
@@ -325,7 +325,7 @@
       "sha256": "35032c422dd565a192ce3600db179963126e77279cc72cdcc22a201bd6059cf4",
       "hrx": {
         "expected_results": {
-          "lemonade": "skip",
+          "lemonade-benchmark": "skip",
           "perplexity": "fail"
         }
       }
@@ -365,7 +365,7 @@
       "hrx": {
         "expected_results": {
           "perplexity": "fail",
-          "lemonade": "skip"
+          "lemonade-benchmark": "skip"
         }
       }
     },
@@ -382,7 +382,7 @@
       "hrx": {
         "expected_results": {
           "perplexity": "fail",
-          "lemonade": "skip"
+          "lemonade-benchmark": "skip"
         }
       }
     },
@@ -399,7 +399,7 @@
       "hrx": {
         "expected_results": {
           "perplexity": "fail",
-          "lemonade": "skip"
+          "lemonade-benchmark": "skip"
         }
       }
     },
@@ -416,7 +416,7 @@
       "hrx": {
         "expected_results": {
           "perplexity": "fail",
-          "lemonade": "skip"
+          "lemonade-benchmark": "skip"
         }
       }
     },
@@ -433,7 +433,7 @@
       "hrx": {
         "expected_results": {
           "perplexity": "fail",
-          "lemonade": "skip"
+          "lemonade-benchmark": "skip"
         }
       }
     },
@@ -450,7 +450,7 @@
       "hrx": {
         "expected_results": {
           "perplexity": "fail",
-          "lemonade": "skip"
+          "lemonade-benchmark": "skip"
         }
       }
     }
