@@ -12,6 +12,10 @@ on:
     - cron: "0 2 * * *"
   workflow_dispatch:
     inputs:
+      skip_benchmarks:
+        description: 'JSON list of benchmark IDs to skip, e.g. ["lemonade-benchmark"] or ["perplexity"].'
+        type: string
+        default: '[]'
       version:
         description: "Release tag/version. Defaults to hrx-b<workflow run number>."
         required: false
@@ -102,6 +106,7 @@ jobs:
       release_artifact_name: ${{ needs.prepare_release.outputs.artifact_name }}
       package_root_name: llama-${{ needs.prepare_release.outputs.version }}
       model_tier: full
+      skip_benchmarks: ${{ inputs.skip_benchmarks || '[]' }}
       allow_failure: true
 
   publish_release:
