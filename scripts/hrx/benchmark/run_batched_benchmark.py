@@ -29,7 +29,9 @@ Boundary contract:
 
 - Inputs: --benchmark-spec (ordered "benchmarks" with "id" and "argv"),
   --model-manifest (ordered "tiers" and "models"), --model-tier, --work-root,
-  and --max-disk-gib. Both JSON files are fully validated up front; a malformed
+  and --max-disk-gib. Optional --skip-benchmarks is a JSON array of IDs
+  to omit; the remaining workers run in specification order.
+  Both JSON files are fully validated up front; a malformed
   file fails the run before any download.
 - Worker invocation: each worker's argv is run verbatim with the batch-managed
   arguments appended: --batched --batch-number N --models-dir DIR
@@ -376,6 +378,32 @@ def load_benchmark_spec(path: Path) -> list[BenchmarkSpec]:
     return benchmarks
 
 
+def select_benchmarks(
+    benchmarks: list[BenchmarkSpec],
+    requested: str,
+) -> list[BenchmarkSpec]:
+    """Validate the user skip list and preserve specification order."""
+    try:
+        ids = json.loads(requested)
+    except json.JSONDecodeError as exc:
+        raise BatchBenchmarkError("--skip-benchmarks must be a JSON array of IDs") from exc
+    if not isinstance(ids, list):
+        raise BatchBenchmarkError("--skip-benchmarks must be a JSON array of IDs")
+    for benchmark_id in ids:
+        _require_string_value(benchmark_id, "--skip-benchmarks entry")
+    known_ids = {benchmark.id for benchmark in benchmarks}
+    unknown_ids = set(ids) - known_ids
+    if unknown_ids:
+        raise BatchBenchmarkError(
+            f"Unknown benchmark IDs: {', '.join(sorted(unknown_ids))}; "
+            f"available IDs: {', '.join(sorted(known_ids))}"
+        )
+    selected = [benchmark for benchmark in benchmarks if benchmark.id not in ids]
+    if not selected:
+        raise BatchBenchmarkError("--skip-benchmarks must leave at least one benchmark")
+    return selected
+
+
 def select_models(
     manifest: ModelManifest,
     requested_tier: str,
@@ -672,6 +700,9 @@ def run(args: argparse.Namespace) -> int:
         manifest = load_manifest(
             args.model_manifest, known_checks={benchmark.id for benchmark in benchmarks}
         )
+        # Model expectations may refer to workers omitted from this run.
+        benchmarks = select_benchmarks(benchmarks, args.skip_benchmarks)
+        log(f"Selected benchmarks: {', '.join(benchmark.id for benchmark in benchmarks)}")
         selected = select_models(manifest, args.model_tier)
         work_root = prepare_work_root(args.work_root)
 
@@ -795,6 +826,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         type=Path,
         required=True,
         help="JSON command list; relative argv paths use the current directory",
+    )
+    parser.add_argument(
+        "--skip-benchmarks",
+        default="[]",
+        help='JSON array of benchmark IDs to skip, e.g. ["perplexity"]; default: []',
     )
     parser.add_argument("--model-manifest", type=Path, required=True)
     parser.add_argument("--model-tier", required=True, metavar="TIER")

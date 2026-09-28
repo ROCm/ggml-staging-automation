@@ -9,6 +9,10 @@ name: CI
 on:
   workflow_dispatch:
     inputs:
+      skip_benchmarks:
+        description: 'JSON list of benchmark IDs to skip, e.g. ["lemonade-benchmark"] or ["perplexity"].'
+        type: string
+        default: '[]'
       model_tier:
         description: Model tier to benchmark.
         required: true
@@ -52,3 +56,4 @@ jobs:
       release_artifact_name: llama-cpp-linux-x86_64
       package_root_name: llama.cpp-install
       model_tier: ${{ github.event_name == 'pull_request' && 'smoke' || inputs.model_tier || 'full' }}
+      skip_benchmarks: ${{ inputs.skip_benchmarks || '[]' }}

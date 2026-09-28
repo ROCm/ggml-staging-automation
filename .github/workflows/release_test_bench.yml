@@ -9,6 +9,10 @@ name: Benchmark llama.cpp Release Linux
 on:
   workflow_call:
     inputs:
+      skip_benchmarks:
+        description: 'JSON list of benchmark IDs to skip, e.g. ["lemonade-benchmark"] or ["perplexity"].'
+        type: string
+        default: '[]'
       name:
         type: string
         default: Release tests
@@ -98,6 +102,7 @@ jobs:
             --output-dir release/benchmark-package
 
       - name: Build Lemonade
+        if: ${{ !contains(fromJSON(inputs.skip_benchmarks), 'lemonade-benchmark') }}
         run: |
           python3 scripts/hrx/build/build_lemonade.py \
             --source-dir "$PWD/lemonade-source" \
@@ -116,6 +121,7 @@ jobs:
             --lemonade-commit "$LEMONADE_COMMIT"
 
       - name: Fetch perplexity corpus
+        if: ${{ !contains(fromJSON(inputs.skip_benchmarks), 'perplexity') }}
         run: |
           python3 scripts/hrx/benchmark/fetch_wikitext2.py \
             --output-dir "$PWD/perplexity-corpus"
@@ -124,12 +130,14 @@ jobs:
         id: benchmark
         continue-on-error: true
         env:
+          SKIP_BENCHMARKS: ${{ inputs.skip_benchmarks }}
           BENCHMARK_MODEL_TIER: ${{ inputs.model_tier }}
         run: |
           set -euo pipefail
           python3 scripts/hrx/benchmark/run_batched_benchmark.py \
             --benchmark-spec "$PWD/benchmarks/hrx/benchmark_spec.json" \
             --model-manifest "$PWD/benchmarks/hrx/model_manifest.json" \
+            --skip-benchmarks "$SKIP_BENCHMARKS" \
             --model-tier "$BENCHMARK_MODEL_TIER" \
             --work-root "$RUNNER_TEMP/$BENCHMARK_STATE_NAME" \
             --max-disk-gib 40
@@ -141,6 +149,7 @@ jobs:
           rm -rf "$PWD/perplexity-corpus"
 
       - name: Write Lemonade benchmark report
+        if: ${{ !contains(fromJSON(inputs.skip_benchmarks), 'lemonade-benchmark') }}
         run: |
           python3 scripts/hrx/benchmark/write_lemonade_benchmark_report.py \
             "$PWD/lemonade-benchmark/benchmark-hrx.json" \
@@ -148,6 +157,7 @@ jobs:
             >> "$GITHUB_STEP_SUMMARY"
 
       - name: Write perplexity report
+        if: ${{ !contains(fromJSON(inputs.skip_benchmarks), 'perplexity') }}
         run: |
           python3 scripts/hrx/benchmark/write_perplexity_report.py \
             "$PWD/lemonade-benchmark/perplexity.json" \
