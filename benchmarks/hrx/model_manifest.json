@@ -143,7 +143,6 @@
       "sha256": "08b4c8b88efb38ea0b59aa0dd4c8259ada515fd66448136df737a273b7da2d47",
       "hrx": {
         "expected_results": {
-          "perplexity": "fail",
           "lemonade-benchmark": "skip"
         }
       }
@@ -354,7 +353,6 @@
       "sha256": "3177ebd67afe4438374da19e690bc1b98756f7e0fea9240e1be404336156a7b5",
       "hrx": {
         "expected_results": {
-          "perplexity": "fail",
           "lemonade-benchmark": "skip"
         }
       }
@@ -371,7 +369,6 @@
       "sha256": "0af96165ea615bea39a04118d63f0b6d35908aea850ee4a51aa6151d851b8b35",
       "hrx": {
         "expected_results": {
-          "perplexity": "fail",
           "lemonade-benchmark": "skip"
         }
       }
