@@ -31,22 +31,8 @@ permissions:
   actions: read
 
 jobs:
-  llama_cpp_linux:
-    name: Linux / HRX
-    uses: ./.github/workflows/build_llama_cpp_linux.yml
-    permissions:
-      contents: read
-    with:
-      name: Build
-      artifact_name: llama-cpp-linux-x86_64
-      build_type: Release
-      hrx_build_type: Release
-      package_root_name: llama.cpp-install
-      upload_artifact: true
-
   llama_cpp_release_bench:
     name: Linux / HRX release benchmark
-    needs: llama_cpp_linux
     uses: ./.github/workflows/release_test_bench.yml
     permissions:
       contents: read

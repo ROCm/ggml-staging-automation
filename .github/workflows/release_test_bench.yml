@@ -90,6 +90,19 @@ jobs:
         with:
           name: ${{ inputs.release_artifact_name }}
           path: artifacts
+          # Replay the exact package that produced the NaN witness.
+          run-id: 36619770135
+          github-token: ${{ github.token }}
+
+      - name: Record replay package and runner environment
+        env:
+          REPLAY_RUNNER_NAME: ${{ runner.name }}
+        run: |
+          echo "Runner: $REPLAY_RUNNER_NAME"
+          uname -a
+          cat /etc/os-release
+          cat /proc/meminfo
+          echo "dcdd7899f5b12ca05ea5709a70d83cc3a4c778ebae74ad89d766af5bc3d55719  artifacts/llama-cpp-linux-x86_64.tar.gz" | sha256sum --check
 
       - name: Extract release package
         env:
