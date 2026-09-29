@@ -70,7 +70,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: AaronStGeorge/lemonade
-          ref: hrx-integration
+          ref: a655fffbf750871793bf81fba0fd266ec5aa9d07
           path: lemonade-source
           persist-credentials: false
 
