@@ -140,12 +140,7 @@
       "revision": "c90975dbd40c0c7b275fefaae758c3415c906238",
       "filename": "gemma-3-270m-it-UD-IQ2_M.gguf",
       "size_bytes": 182787104,
-      "sha256": "08b4c8b88efb38ea0b59aa0dd4c8259ada515fd66448136df737a273b7da2d47",
-      "hrx": {
-        "expected_results": {
-          "lemonade-benchmark": "skip"
-        }
-      }
+      "sha256": "08b4c8b88efb38ea0b59aa0dd4c8259ada515fd66448136df737a273b7da2d47"
     },
     {
       "id": "qwen3-1.7b",
@@ -350,12 +345,7 @@
       "revision": "6ab461498e2023f6e3c1baea90a8f0fe38ab64d0",
       "filename": "Qwen3.5-0.8B-UD-Q4_K_XL.gguf",
       "size_bytes": 558772480,
-      "sha256": "3177ebd67afe4438374da19e690bc1b98756f7e0fea9240e1be404336156a7b5",
-      "hrx": {
-        "expected_results": {
-          "lemonade-benchmark": "skip"
-        }
-      }
+      "sha256": "3177ebd67afe4438374da19e690bc1b98756f7e0fea9240e1be404336156a7b5"
     },
     {
       "id": "qwen3.5-2b",
@@ -366,12 +356,7 @@
       "revision": "f6d5376be1edb4d416d56da11e5397a961aca8ae",
       "filename": "Qwen3.5-2B-UD-Q4_K_XL.gguf",
       "size_bytes": 1339752704,
-      "sha256": "0af96165ea615bea39a04118d63f0b6d35908aea850ee4a51aa6151d851b8b35",
-      "hrx": {
-        "expected_results": {
-          "lemonade-benchmark": "skip"
-        }
-      }
+      "sha256": "0af96165ea615bea39a04118d63f0b6d35908aea850ee4a51aa6151d851b8b35"
     }
   ]
 }
