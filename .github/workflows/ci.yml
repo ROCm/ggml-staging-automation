@@ -20,6 +20,10 @@ jobs:
         if: ${{ contains(runner.name, 'halobox-b13') }}
         run: exit 1
 
+      - name: Reject host with repeated baseline device initialization timeouts
+        if: ${{ runner.name == 'CS-RORDMZ-DT243' }}
+        run: exit 1
+
       - name: Checkout comparison harness
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
