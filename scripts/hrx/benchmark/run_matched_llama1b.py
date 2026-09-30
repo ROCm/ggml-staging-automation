@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 # Copyright Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
-"""Compare the two PR 123 packages on one GPU, preserving every measurement.
+"""Compare block metadata reuse with PR 123 on one GPU, preserving every measurement.
 
-The pinned packages were built by the complete before/after smoke workflows.
-This supplementary experiment removes differing runner hardware as a timing
-confounder. It uses existing verified model/corpus download helpers and the
+The baseline package is PR 123; this workflow builds the metadata reuse
+candidate. This isolated follow-up removes differing runner hardware as a
+timing confounder. It uses existing verified model/corpus download helpers and the
 unchanged perplexity worker; llama-bench runs in alternating package order.
 
 Three rounds retain all five repetitions for each shape/backend. JSON records
@@ -37,8 +37,8 @@ from run_batched_benchmark import download_model, load_manifest
 ROOT = Path(__file__).resolve().parents[3]
 MODEL_ID = "llama-3.2-1b-instruct"
 SOURCES = {
-    "before": {"run_id": 36658659019, "llama_cpp": "2ba2ddc76a8a2d977ce94a65c07e20cc0896e384"},
-    "after": {"run_id": 36658779016, "llama_cpp": "63805bc03cba4c276a0f67f6dd7677d2cdfe6f27"},
+    "before": {"run_id": 36658779016, "llama_cpp": "63805bc03cba4c276a0f67f6dd7677d2cdfe6f27"},
+    "after": {"run_id": os.environ.get("GITHUB_RUN_ID"), "llama_cpp": "b0ff6238026a7c846a0d6ba9144e48c2d40ba38a"},
 }
 ROUNDS = 3
 REPETITIONS = 5
@@ -210,7 +210,8 @@ def experiment(args: argparse.Namespace, output: Path, summary: dict) -> None:
                          "--archive", str(archive), "--package-root-name", "llama.cpp-install", "--output-dir", str(install)],
                         f"extract-{side}", output, env)
             summary["packages"][side] = {"archive_sha256": sha256_file(archive),
-                "binary_sha256": {name: sha256_file(install / "bin" / name) for name in ("llama-bench", "llama-perplexity")}}
+                "binary_sha256": {name: sha256_file(install / "bin" / name) for name in ("llama-bench", "llama-perplexity")},
+                "library_sha256": {path.name: sha256_file(path) for path in sorted((install / "lib").glob("*.so*")) if path.is_file()}}
             installs[side] = install
             environments[side] = dict(env, LD_LIBRARY_PATH=str(install / "lib"))
             run_command([str(install / "bin/llama-bench"), "--list-devices"], f"devices-{side}", output, environments[side])
