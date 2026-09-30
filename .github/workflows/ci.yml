@@ -8,15 +8,95 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
-  standalone_package:
-    name: Build standalone metadata reuse
-    uses: ./.github/workflows/build_llama_cpp_linux.yml
-    with:
-      name: Build
-      artifact_name: llama-cpp-linux-x86_64
-      build_type: Release
-      hrx_build_type: Release
-      package_root_name: llama.cpp-install
-      upload_artifact: true
+  matched_smoke:
+    name: Standalone metadata reuse versus graph base, full smoke
+    runs-on: linux-gfx1151-gpu-rocm
+    timeout-minutes: 360
+    steps:
+      - name: Reject known faulty halobox-b13 runner
+        if: ${{ contains(runner.name, 'halobox-b13') }}
+        run: exit 1
+
+      - name: Reject host with repeated baseline device initialization timeouts
+        if: ${{ runner.name == 'CS-RORDMZ-DT243' }}
+        run: exit 1
+
+      - name: Checkout comparison harness
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Vulkan driver
+        run: |
+          sudo -n apt-get update
+          sudo -n apt-get install -y --no-install-recommends mesa-vulkan-drivers
+
+      - name: Checkout pinned Lemonade integration
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: AaronStGeorge/lemonade
+          ref: a655fffbf750871793bf81fba0fd266ec5aa9d07
+          path: lemonade-source
+          persist-credentials: false
+
+      - name: Download baseline source-built release
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: llama-cpp-linux-x86_64
+          run-id: 36658659019
+          github-token: ${{ github.token }}
+          path: matched-packages/before
+
+      - name: Download standalone candidate source-built release
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: llama-cpp-linux-x86_64
+          run-id: 36738082276
+          github-token: ${{ github.token }}
+          path: matched-packages/after
+
+      - name: Build Lemonade once for both versions
+        run: |
+          python3 scripts/hrx/build/build_lemonade.py \
+            --source-dir "$PWD/lemonade-source" \
+            --build-dir "$PWD/lemonade-source/build"
+
+      - name: Run full smoke A-B, B-A, A-B and unchanged perplexity checks
+        run: |
+          python3 scripts/hrx/benchmark/run_matched_smoke.py \
+            --packages-dir "$PWD/matched-packages" \
+            --lemonade-build-dir "$PWD/lemonade-source/build" \
+            --output-dir "$PWD/matched-results" \
+            --before-commit 2ba2ddc76a8a2d977ce94a65c07e20cc0896e384 \
+            --after-commit 2362cea4ba5aa60ca0a3ba0cf4941c772846dc54 \
+            --hrx-system-commit 32b86d42d96a8e3098d9a56bea201e5f83d44f85 \
+            --lemonade-commit a655fffbf750871793bf81fba0fd266ec5aa9d07 \
+            --before-run-id 36658659019 \
+            --after-run-id 36738082276
+
+      - name: Evaluate every model against the two-percent margin
+        if: ${{ always() && hashFiles('matched-results/matched-smoke.json') != '' }}
+        run: |
+          python3 scripts/hrx/benchmark/report_matched_smoke.py \
+            --input "$PWD/matched-results/matched-smoke.json" \
+            --output-dir "$PWD/matched-results"
+
+      - name: Publish comparison table in job summary
+        if: ${{ always() && hashFiles('matched-results/report.md') != '' }}
+        run: cat matched-results/report.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload raw comparison evidence and complete tables
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: matched-smoke-standalone-metadata-gfx1151
+          path: matched-results
+          if-no-files-found: warn
+          retention-days: 45
+
+      - name: Remove downloaded release archives
+        if: ${{ always() }}
+        run: rm -rf "$PWD/matched-packages"
