@@ -3,8 +3,8 @@
 # SPDX-License-Identifier: MIT
 """Compare block metadata reuse with PR 123 on one GPU, preserving every measurement.
 
-The baseline package is PR 123; this workflow builds the metadata reuse
-candidate. This isolated follow-up removes differing runner hardware as a
+The baseline package is PR 123; the metadata reuse candidate comes from
+its pinned completed source build. This isolated follow-up removes differing runner hardware as a
 timing confounder. It uses existing verified model/corpus download helpers and the
 unchanged perplexity worker; llama-bench runs in alternating package order.
 
@@ -38,7 +38,7 @@ ROOT = Path(__file__).resolve().parents[3]
 MODEL_ID = "llama-3.2-1b-instruct"
 SOURCES = {
     "before": {"run_id": 36658779016, "llama_cpp": "63805bc03cba4c276a0f67f6dd7677d2cdfe6f27"},
-    "after": {"run_id": os.environ.get("GITHUB_RUN_ID"), "llama_cpp": "b0ff6238026a7c846a0d6ba9144e48c2d40ba38a"},
+    "after": {"run_id": 36711935840, "llama_cpp": "b0ff6238026a7c846a0d6ba9144e48c2d40ba38a"},
 }
 ROUNDS = 3
 REPETITIONS = 5
