@@ -1,59 +1,62 @@
 # Copyright 2026 The HRX Authors
-#
-# Licensed under the Apache License v2.0 with LLVM Exceptions.
-# See https://llvm.org/LICENSE.txt for license information.
 # SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 
 name: CI
 
 on:
   workflow_dispatch:
-    inputs:
-      skip_benchmarks:
-        description: 'JSON list of benchmark IDs to skip, e.g. ["lemonade-benchmark"] or ["perplexity"].'
-        type: string
-        default: '[]'
-      model_tier:
-        description: Model tier to benchmark.
-        required: true
-        type: choice
-        default: full
-        options:
-          - smoke
-          - full
-  pull_request:
-  push:
-    branches:
-      - main
 
 permissions:
   contents: read
   actions: read
 
 jobs:
-  llama_cpp_linux:
-    name: Linux / HRX
-    uses: ./.github/workflows/build_llama_cpp_linux.yml
-    permissions:
-      contents: read
-    with:
-      name: Build
-      artifact_name: llama-cpp-linux-x86_64
-      build_type: Release
-      hrx_build_type: Release
-      package_root_name: llama.cpp-install
-      upload_artifact: true
+  matched_llama1b:
+    name: Paired Llama 1B on one gfx1151 runner
+    runs-on: linux-gfx1151-gpu-rocm
+    timeout-minutes: 45
+    steps:
+      - name: Checkout comparison harness
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
-  llama_cpp_release_bench:
-    name: Linux / HRX release benchmark
-    needs: llama_cpp_linux
-    uses: ./.github/workflows/release_test_bench.yml
-    permissions:
-      contents: read
-      actions: read
-    with:
-      name: Release benchmark
-      release_artifact_name: llama-cpp-linux-x86_64
-      package_root_name: llama.cpp-install
-      model_tier: ${{ github.event_name == 'pull_request' && 'smoke' || inputs.model_tier || 'full' }}
-      skip_benchmarks: ${{ inputs.skip_benchmarks || '[]' }}
+      - name: Install Vulkan driver
+        run: |
+          sudo -n apt-get update
+          sudo -n apt-get install -y --no-install-recommends mesa-vulkan-drivers
+
+      - name: Download baseline source-built release
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: llama-cpp-linux-x86_64
+          run-id: 36658659019
+          github-token: ${{ github.token }}
+          path: matched-packages/before
+
+      - name: Download candidate source-built release
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: llama-cpp-linux-x86_64
+          run-id: 36658779016
+          github-token: ${{ github.token }}
+          path: matched-packages/after
+
+      - name: Run interleaved throughput and unchanged perplexity checks
+        run: |
+          python3 scripts/hrx/benchmark/run_matched_llama1b.py \
+            --packages-dir "$PWD/matched-packages" \
+            --output-dir "$PWD/matched-results"
+
+      - name: Upload raw comparison evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: matched-llama1b-gfx1151
+          path: matched-results
+          if-no-files-found: error
+          retention-days: 45
+
+      - name: Remove downloaded release archives
+        if: ${{ always() }}
+        run: rm -rf "$PWD/matched-packages"
