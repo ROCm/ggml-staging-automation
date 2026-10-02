@@ -123,13 +123,32 @@ jobs:
           delete-branch: true
           base: main
           title: Bump integration submodules
+          # Keep rendered table source below 72 columns so squash merging
+          # cannot wrap rows. Long URLs live in separate reference definitions.
           body: |
             Automated update of the integration submodules:
 
-            | Submodule | Tracked branch | From | To |
-            | --- | --- | --- | --- |
-            | [`hrx-system`](https://github.com/ROCm/hrx-system) | `main` | [`${{ steps.submodules.outputs.hrx_from_short }}`](https://github.com/ROCm/hrx-system/commit/${{ steps.submodules.outputs.hrx_from }}) | [`${{ steps.submodules.outputs.hrx_to_short }}`](https://github.com/ROCm/hrx-system/commit/${{ steps.submodules.outputs.hrx_to }}) |
-            | [`llama.cpp`](https://github.com/AMD-Ecosystem/llama.cpp) | `hrx-graph-develop-v2` | [`${{ steps.submodules.outputs.llama_from_short }}`](https://github.com/AMD-Ecosystem/llama.cpp/commit/${{ steps.submodules.outputs.llama_from }}) | [`${{ steps.submodules.outputs.llama_to_short }}`](https://github.com/AMD-Ecosystem/llama.cpp/commit/${{ steps.submodules.outputs.llama_to }}) |
+            | Submodule | From | To |
+            | --- | --- | --- |
+            | [hrx-system][h] | [`${{ steps.submodules.outputs.hrx_from_short }}`][h0] | [`${{ steps.submodules.outputs.hrx_to_short }}`][h1] |
+            | [llama.cpp][l] | [`${{ steps.submodules.outputs.llama_from_short }}`][l0] | [`${{ steps.submodules.outputs.llama_to_short }}`][l1] |
+
+            Tracked branches:
+            - hrx-system: `main`
+            - llama.cpp: `hrx-graph-develop-v2`
+
+            [h]:
+              https://github.com/ROCm/hrx-system
+            [h0]:
+              https://github.com/ROCm/hrx-system/commit/${{ steps.submodules.outputs.hrx_from }}
+            [h1]:
+              https://github.com/ROCm/hrx-system/commit/${{ steps.submodules.outputs.hrx_to }}
+            [l]:
+              https://github.com/AMD-Ecosystem/llama.cpp
+            [l0]:
+              https://github.com/AMD-Ecosystem/llama.cpp/commit/${{ steps.submodules.outputs.llama_from }}
+            [l1]:
+              https://github.com/AMD-Ecosystem/llama.cpp/commit/${{ steps.submodules.outputs.llama_to }}
 
             While this PR is open, newer pins are not pushed. Merge it once
             its checks pass, or close it and the next scheduled run re-creates
