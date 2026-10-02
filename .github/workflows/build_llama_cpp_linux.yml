@@ -9,6 +9,9 @@ name: Build llama.cpp Linux
 on:
   workflow_call:
     inputs:
+      llama_cpp_commit:
+        type: string
+        default: ""
       name:
         type: string
         default: Build
@@ -57,6 +60,12 @@ jobs:
 
       - name: Initialize submodules
         run: git submodule update --init hrx-system llama.cpp
+
+      - name: Select comparison source
+        if: ${{ inputs.llama_cpp_commit != '' }}
+        env:
+          LLAMA_CPP_COMMIT: ${{ inputs.llama_cpp_commit }}
+        run: git -C llama.cpp checkout --detach "$LLAMA_CPP_COMMIT"
 
       - name: Select Python 3.12
         run: echo "/opt/python/cp312-cp312/bin" >> "$GITHUB_PATH"
