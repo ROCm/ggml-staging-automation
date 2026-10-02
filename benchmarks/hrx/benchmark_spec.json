@@ -1,6 +1,21 @@
 {
   "benchmarks": [
     {
+      "id": "paired-prefill",
+      "argv": [
+        "python3",
+        "scripts/hrx/benchmark/run_paired_prefill.py",
+        "--llama-bench",
+        "release/benchmark-package/bin/llama-bench",
+        "--model-manifest",
+        "benchmarks/hrx/model_manifest.json",
+        "--output",
+        "lemonade-benchmark/paired-prefill.json",
+        "--logs-dir",
+        "lemonade-benchmark-debug/paired-prefill"
+      ]
+    },
+    {
       "id": "lemonade-benchmark",
       "argv": [
         "python3",

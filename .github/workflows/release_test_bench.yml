@@ -173,6 +173,7 @@ jobs:
             lemonade-benchmark/benchmark-vulkan.json
             lemonade-benchmark/perplexity.json
             lemonade-benchmark/metadata.json
+            lemonade-benchmark/paired-prefill.json
           if-no-files-found: error
           retention-days: 45
 
@@ -189,6 +190,7 @@ jobs:
             lemonade-benchmark-debug/responses-vulkan.jsonl
             lemonade-benchmark-debug/perplexity-hrx.log
             lemonade-benchmark-debug/perplexity-vulkan.log
+            lemonade-benchmark-debug/paired-prefill/
           if-no-files-found: warn
 
       - name: Fail unexpected benchmark results
