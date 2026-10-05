@@ -5,4 +5,4 @@
 [submodule "llama.cpp"]
 	path = llama.cpp
 	url = https://github.com/AMD-Ecosystem/llama.cpp.git
-	branch = hrx-graph-develop-v2
+	branch = experiment/bh6-q1-metadata
