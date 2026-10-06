@@ -5,4 +5,4 @@
 [submodule "llama.cpp"]
 	path = llama.cpp
 	url = https://github.com/AMD-Ecosystem/llama.cpp.git
-	branch = hrx-graph-develop-v2
+	branch = perf/hrx-tiled-dequant-load-reuse
