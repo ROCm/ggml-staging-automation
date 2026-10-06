@@ -54,6 +54,12 @@ jobs:
       BENCHMARK_ARTIFACT_NAME: lemonade-bench-${{ matrix.gpu_target }}
       BENCHMARK_STATE_NAME: lemonade-bench-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.gpu_target }}
     steps:
+      - name: Reject known-problematic halobox-b13
+        if: ${{ contains(runner.name, 'halobox-b13') }}
+        run: |
+          echo '::error::halobox-b13 is excluded from this experiment; retry on another runner.'
+          exit 1
+
       - name: Install Vulkan driver
         # llama.cpp bundles the Vulkan loader but discovers the GPU through
         # the host ICD, so the runner must provide one.
