@@ -48,10 +48,7 @@ jobs:
             runs_on: linux-gfx1151-gpu-rocm
           # - gpu_target: gfx1201
           #   runs_on: linux-gfx120X-gpu-rocm
-    # Exclude the Halobox pool: halobox-b13 has known reliability issues.
-    runs-on:
-      group: default
-      labels: ${{ matrix.runs_on }}
+    runs-on: ${{ matrix.runs_on }}
     timeout-minutes: 360
     env:
       BENCHMARK_ARTIFACT_NAME: lemonade-bench-${{ matrix.gpu_target }}
