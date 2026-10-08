@@ -54,12 +54,12 @@ jobs:
       BENCHMARK_ARTIFACT_NAME: lemonade-bench-${{ matrix.gpu_target }}
       BENCHMARK_STATE_NAME: lemonade-bench-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.gpu_target }}
     steps:
-      - name: Install Vulkan driver and memory diagnostics
+      - name: Install Vulkan driver
         # llama.cpp bundles the Vulkan loader but discovers the GPU through
         # the host ICD, so the runner must provide one.
         run: |
           sudo -n apt-get update
-          sudo -n apt-get install -y --no-install-recommends mesa-vulkan-drivers dmidecode
+          sudo -n apt-get install -y --no-install-recommends mesa-vulkan-drivers
 
       - name: Checkout automation repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

@@ -3,10 +3,10 @@
 # SPDX-License-Identifier: MIT
 """Report Linux memory and reject undersized full-model benchmark runners.
 
-On APUs, GTT uses system RAM and GPU-reported pools can overlap. Keep the
-kernel counters separate: their sum is not a reliable physical-memory total
-or a guarantee that an HRX allocation will succeed. Use firmware-reported
-installed RAM for the capacity gate, before firmware's CPU/GPU reservation.
+On Strix Halo, Linux MemTotal excludes firmware-reserved VRAM. Add only the
+APU's physical VRAM counter to estimate capacity; GTT overlaps system RAM.
+This filters undersized machines, but does not guarantee an HRX allocation
+will succeed. All counters are read without elevated privileges.
 """
 
 from __future__ import annotations
@@ -14,11 +14,10 @@ from __future__ import annotations
 import argparse
 import os
 import platform
-import re
-import subprocess
 from pathlib import Path
 
-FULL_MODEL_MINIMUM_GIB = 64
+# Accept 64 GiB machines with some memory reserved for firmware and the kernel.
+FULL_MODEL_MINIMUM_GIB = 60
 
 
 def format_memory(size_bytes: int) -> str:
@@ -35,28 +34,23 @@ def report_counter(path: Path, *, unit_bytes: int = 1) -> None:
     print(f"{path}: {format_memory(value)}")
 
 
-def installed_memory() -> int:
-    result = subprocess.run(
-        ["sudo", "-n", "dmidecode", "--type", "17"],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    sizes = re.findall(r"^\s*Size: (.+)$", result.stdout, re.MULTILINE)
-    if not sizes:
-        raise ValueError("SMBIOS has no memory-device sizes")
-    total = 0
-    units = {"kB": 2**10, "MB": 2**20, "GB": 2**30, "TB": 2**40}
-    for size in sizes:
-        if size == "No Module Installed":
+def strix_halo_vram() -> int:
+    devices = []
+    for path in Path("/sys/class/kfd/kfd/topology/nodes").glob("*/properties"):
+        properties = dict(line.split() for line in path.read_text().splitlines())
+        if properties.get("gfx_target_version") != "110501":
             continue
-        match = re.fullmatch(r"(\d+) (kB|MB|GB|TB)", size)
-        if match is None:
-            raise ValueError(f"Unknown SMBIOS memory-device size: {size}")
-        total += int(match[1]) * units[match[2]]
-    if total == 0:
-        raise ValueError("SMBIOS reports no installed memory")
-    return total
+        domain = int(properties["domain"])
+        location = int(properties["location_id"])
+        bus = location >> 8
+        slot = (location & 0xFF) >> 3
+        function = location & 7
+        devices.append(f"{domain:04x}:{bus:02x}:{slot:02x}.{function}")
+    if len(devices) != 1:
+        raise ValueError(f"Expected one Strix Halo APU; found {devices}")
+    device = Path("/sys/bus/pci/devices") / devices[0]
+    print(f"Strix Halo PCI device: {devices[0]}")
+    return int((device / "mem_info_vram_total").read_text())
 
 
 def main() -> int:
@@ -71,10 +65,12 @@ def main() -> int:
             break
 
     print("\nLinux memory (excludes firmware-reserved memory):")
+    memory = {}
     for line in Path("/proc/meminfo").read_text().splitlines():
         name, value = line.split(":", 1)
         if name in ("MemTotal", "MemAvailable", "SwapTotal", "SwapFree"):
-            print(f"{name}: {format_memory(int(value.split()[0]) * 1024)}")
+            memory[name] = int(value.split()[0]) * 1024
+            print(f"{name}: {format_memory(memory[name])}")
 
     print("\nAMDGPU memory counters (GTT overlaps system RAM; do not sum pools):")
     devices = sorted(Path("/sys/bus/pci/drivers/amdgpu").glob("????:??:??.?"))
@@ -91,22 +87,22 @@ def main() -> int:
     )
 
     try:
-        capacity = installed_memory()
-    except (OSError, subprocess.CalledProcessError, ValueError) as error:
-        print(f"\nInstalled RAM: unavailable ({error})")
+        capacity = memory["MemTotal"] + strix_halo_vram()
+    except (OSError, KeyError, ValueError) as error:
+        print(f"\nStrix Halo memory capacity: unavailable ({error})")
         if args.model_tier == "full":
-            print("::error::Cannot verify installed RAM for full-model benchmarks.")
+            print("::error::Cannot verify memory capacity for full-model benchmarks.")
             return 1
         return 0
 
-    print(f"\nInstalled RAM (SMBIOS): {format_memory(capacity)}")
+    print(f"\nMemTotal + physical APU VRAM: {format_memory(capacity)}")
     is_full_tier = args.model_tier == "full"
     is_undersized = capacity < FULL_MODEL_MINIMUM_GIB * 2**30
     reject_runner = is_full_tier and is_undersized
     if reject_runner:
         print(
             f"::error::Full-model benchmarks require at least "
-            f"{FULL_MODEL_MINIMUM_GIB} GiB installed RAM; "
+            f"{FULL_MODEL_MINIMUM_GIB} GiB of MemTotal + physical APU VRAM; "
             f"this runner has {format_memory(capacity)}."
         )
         return 1
