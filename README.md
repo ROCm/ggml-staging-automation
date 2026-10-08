@@ -74,6 +74,29 @@ Windows support is intentionally not implemented yet. The scripts and CMake
 layout keep runtime libraries adjacent so the later Windows flow can use the
 same basic packaging model with DLL copying instead of ELF RPATHs.
 
+## CI model coverage
+
+PR CI runs the `smoke` model tier by default. Apply the `ci:full-models` PR
+label to run the cumulative `full` tier, including every model in
+`benchmarks/hrx/model_manifest.json`. Adding the label starts a full CI run;
+later commits and reopens keep full coverage while the label remains. Removing
+it takes effect on the next normal PR update without starting another run.
+Other label changes do not start builds or benchmarks.
+
+New commits and applying `ci:full-models` cancel older CI runs for the same
+PR. Non-PR runs supersede older runs on the same branch. Unrelated label
+events do not cancel active CI.
+
+New integration-submodule bump PRs receive `ci:full-models` automatically.
+Pushes to `main` run full coverage, and manual CI runs select their tier with
+the `model_tier` input, which defaults to `smoke`.
+
+Full coverage retains the manifest's per-model HRX expectations. A `fail`
+expectation is strict: a failure is XFAIL, while an unexpected pass is XPASS
+and fails CI so that the stale expectation can be removed. A `skip` still
+collects measurements without enforcing the HRX result. Neither setting
+relaxes Vulkan validation.
+
 ## Releases
 
 The `Release` workflow (`.github/workflows/release.yml`) runs nightly and can

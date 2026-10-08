@@ -24,6 +24,11 @@
     {
       "id": "qwen3-30b-a3b-instruct-2507",
       "tier": "full",
+      "hrx": {
+        "expected_results": {
+          "perplexity": "fail"
+        }
+      },
       "name": "extra.Qwen3-30B-A3B-Instruct-2507-GGUF",
       "directory": "Qwen3-30B-A3B-Instruct-2507-GGUF",
       "repository": "unsloth/Qwen3-30B-A3B-Instruct-2507-GGUF",
@@ -46,6 +51,11 @@
     {
       "id": "mistral-small-3.2-24b",
       "tier": "full",
+      "hrx": {
+        "expected_results": {
+          "perplexity": "fail"
+        }
+      },
       "name": "extra.Mistral-Small-3.2-24B-Instruct-2506-GGUF",
       "directory": "Mistral-Small-3.2-24B-Instruct-2506-GGUF",
       "repository": "bartowski/mistralai_Mistral-Small-3.2-24B-Instruct-2506-GGUF",
