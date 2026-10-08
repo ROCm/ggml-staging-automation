@@ -8,6 +8,12 @@ memory capacity is Linux MemTotal plus firmware-reserved VRAM. GTT overlaps
 system RAM and is not added. All counters are read without elevated
 privileges. Passing this capacity check does not guarantee that every
 backend allocation will succeed.
+
+Counter reads follow Lemonade's LinuxSystemInfo::get_physical_memory()
+(MemTotal) and get_amd_vram() (mem_info_vram_total), without sudo:
+https://github.com/AaronStGeorge/lemonade/blob/a655fffbf750871793bf81fba0fd266ec5aa9d07/src/cpp/server/system_info.cpp
+Lemonade reports RAM and VRAM separately. Their sum and the minimum below
+are CI policy; Lemonade's APU GPU-budget calculation uses VRAM plus GTT.
 """
 
 from __future__ import annotations
