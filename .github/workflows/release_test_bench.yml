@@ -48,9 +48,9 @@ jobs:
             runs_on: linux-gfx1151-gpu-rocm
           # - gpu_target: gfx1201
           #   runs_on: linux-gfx120X-gpu-rocm
-    # Full-tier models exceed the capacity of the shared pool's 32 GiB runners.
+    # Exclude the Halobox pool: halobox-b13 has known reliability issues.
     runs-on:
-      group: linux-halobox-runner-group
+      group: default
       labels: ${{ matrix.runs_on }}
     timeout-minutes: 360
     env:
