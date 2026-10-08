@@ -3,10 +3,11 @@
 # SPDX-License-Identifier: MIT
 """Report Linux memory and reject undersized full-model benchmark runners.
 
-On Strix Halo, Linux MemTotal excludes firmware-reserved VRAM. Add only the
-APU's physical VRAM counter to estimate capacity; GTT overlaps system RAM.
-This filters undersized machines, but does not guarantee an HRX allocation
-will succeed. All counters are read without elevated privileges.
+CI specifies the runner's memory layout and minimum full-model capacity.
+Unified-memory runners add Linux MemTotal and firmware-reserved VRAM;
+discrete GPUs use VRAM alone. GTT overlaps system RAM and is not added.
+All counters are read without elevated privileges. Passing this capacity
+check does not guarantee that every backend allocation will succeed.
 """
 
 from __future__ import annotations
@@ -15,10 +16,6 @@ import argparse
 import os
 import platform
 from pathlib import Path
-
-# Accept 64 GiB machines with some memory reserved for firmware and the kernel.
-FULL_MODEL_MINIMUM_GIB = 60
-
 
 def format_memory(size_bytes: int) -> str:
     return f"{size_bytes / 2**30:.2f} GiB ({size_bytes} bytes)"
@@ -34,28 +31,11 @@ def report_counter(path: Path, *, unit_bytes: int = 1) -> None:
     print(f"{path}: {format_memory(value)}")
 
 
-def strix_halo_vram() -> int:
-    devices = []
-    for path in Path("/sys/class/kfd/kfd/topology/nodes").glob("*/properties"):
-        properties = dict(line.split() for line in path.read_text().splitlines())
-        if properties.get("gfx_target_version") != "110501":
-            continue
-        domain = int(properties["domain"])
-        location = int(properties["location_id"])
-        bus = location >> 8
-        slot = (location & 0xFF) >> 3
-        function = location & 7
-        devices.append(f"{domain:04x}:{bus:02x}:{slot:02x}.{function}")
-    if len(devices) != 1:
-        raise ValueError(f"Expected one Strix Halo APU; found {devices}")
-    device = Path("/sys/bus/pci/devices") / devices[0]
-    print(f"Strix Halo PCI device: {devices[0]}")
-    return int((device / "mem_info_vram_total").read_text())
-
-
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model-tier", choices=("smoke", "full"), required=True)
+    parser.add_argument("--memory-layout", choices=("unified", "discrete"), required=True)
+    parser.add_argument("--minimum-gib", type=int, required=True)
     args = parser.parse_args()
     print(f"Runner: {os.environ.get('RUNNER_NAME', platform.node())}")
     print(f"Host: {platform.node()}; kernel: {platform.release()}")
@@ -87,22 +67,28 @@ def main() -> int:
     )
 
     try:
-        capacity = memory["MemTotal"] + strix_halo_vram()
+        if len(devices) != 1:
+            raise ValueError(f"Expected one AMDGPU device; found {len(devices)}")
+        capacity = int((devices[0] / "mem_info_vram_total").read_text())
+        capacity_label = "Dedicated VRAM"
+        if args.memory_layout == "unified":
+            capacity += memory["MemTotal"]
+            capacity_label = "MemTotal + physical APU VRAM"
     except (OSError, KeyError, ValueError) as error:
-        print(f"\nStrix Halo memory capacity: unavailable ({error})")
+        print(f"\nMemory capacity: unavailable ({error})")
         if args.model_tier == "full":
             print("::error::Cannot verify memory capacity for full-model benchmarks.")
             return 1
         return 0
 
-    print(f"\nMemTotal + physical APU VRAM: {format_memory(capacity)}")
+    print(f"\n{capacity_label}: {format_memory(capacity)}")
     is_full_tier = args.model_tier == "full"
-    is_undersized = capacity < FULL_MODEL_MINIMUM_GIB * 2**30
+    is_undersized = capacity < args.minimum_gib * 2**30
     reject_runner = is_full_tier and is_undersized
     if reject_runner:
         print(
             f"::error::Full-model benchmarks require at least "
-            f"{FULL_MODEL_MINIMUM_GIB} GiB of MemTotal + physical APU VRAM; "
+            f"{args.minimum_gib} GiB of {capacity_label}; "
             f"this runner has {format_memory(capacity)}."
         )
         return 1
