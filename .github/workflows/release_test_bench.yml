@@ -48,7 +48,10 @@ jobs:
             runs_on: linux-gfx1151-gpu-rocm
           # - gpu_target: gfx1201
           #   runs_on: linux-gfx120X-gpu-rocm
-    runs-on: ${{ matrix.runs_on }}
+    # Full-tier models exceed the capacity of the shared pool's 32 GiB runners.
+    runs-on:
+      group: linux-halobox-runner-group
+      labels: ${{ matrix.runs_on }}
     timeout-minutes: 360
     env:
       BENCHMARK_ARTIFACT_NAME: lemonade-bench-${{ matrix.gpu_target }}
