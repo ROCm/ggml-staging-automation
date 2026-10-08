@@ -46,9 +46,6 @@ jobs:
         include:
           - gpu_target: gfx1151
             runs_on: linux-gfx1151-gpu-rocm
-            memory_layout: unified
-            # Allow firmware/kernel reservations on 64 GiB machines.
-            full_model_minimum_gib: 60
           # - gpu_target: gfx1201
           #   runs_on: linux-gfx120X-gpu-rocm
     runs-on: ${{ matrix.runs_on }}
@@ -72,13 +69,11 @@ jobs:
       - name: Check runner memory
         env:
           BENCHMARK_MODEL_TIER: ${{ inputs.model_tier }}
-          MEMORY_LAYOUT: ${{ matrix.memory_layout }}
-          FULL_MODEL_MINIMUM_GIB: ${{ matrix.full_model_minimum_gib }}
+          GPU_TARGET: ${{ matrix.gpu_target }}
         run: |
           python3 scripts/hrx/ci/report_runner_memory.py \
             --model-tier "$BENCHMARK_MODEL_TIER" \
-            --memory-layout "$MEMORY_LAYOUT" \
-            --minimum-gib "$FULL_MODEL_MINIMUM_GIB"
+            --gpu-target "$GPU_TARGET"
 
       - name: Checkout Lemonade HRX integration
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

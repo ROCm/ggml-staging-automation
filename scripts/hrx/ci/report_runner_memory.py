@@ -3,11 +3,11 @@
 # SPDX-License-Identifier: MIT
 """Report Linux memory and reject undersized full-model benchmark runners.
 
-CI specifies the runner's memory layout and minimum full-model capacity.
-Unified-memory runners add Linux MemTotal and firmware-reserved VRAM;
-discrete GPUs use VRAM alone. GTT overlaps system RAM and is not added.
-All counters are read without elevated privileges. Passing this capacity
-check does not guarantee that every backend allocation will succeed.
+CI supplies the GPU target; currently only gfx1151 is supported. Its unified
+memory capacity is Linux MemTotal plus firmware-reserved VRAM. GTT overlaps
+system RAM and is not added. All counters are read without elevated
+privileges. Passing this capacity check does not guarantee that every
+backend allocation will succeed.
 """
 
 from __future__ import annotations
@@ -16,6 +16,10 @@ import argparse
 import os
 import platform
 from pathlib import Path
+
+# Allow firmware/kernel reservations on 64 GiB gfx1151 machines.
+FULL_MODEL_MINIMUM_GIB = 60
+
 
 def format_memory(size_bytes: int) -> str:
     return f"{size_bytes / 2**30:.2f} GiB ({size_bytes} bytes)"
@@ -34,11 +38,11 @@ def report_counter(path: Path, *, unit_bytes: int = 1) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model-tier", choices=("smoke", "full"), required=True)
-    parser.add_argument("--memory-layout", choices=("unified", "discrete"), required=True)
-    parser.add_argument("--minimum-gib", type=int, required=True)
+    parser.add_argument("--gpu-target", choices=("gfx1151",), required=True)
     args = parser.parse_args()
     print(f"Runner: {os.environ.get('RUNNER_NAME', platform.node())}")
     print(f"Host: {platform.node()}; kernel: {platform.release()}")
+    print(f"GPU target: {args.gpu_target}")
     for line in Path("/proc/cpuinfo").read_text().splitlines():
         if line.startswith("model name"):
             print(f"CPU: {line.split(':', 1)[1].strip()}")
@@ -69,11 +73,8 @@ def main() -> int:
     try:
         if len(devices) != 1:
             raise ValueError(f"Expected one AMDGPU device; found {len(devices)}")
-        capacity = int((devices[0] / "mem_info_vram_total").read_text())
-        capacity_label = "Dedicated VRAM"
-        if args.memory_layout == "unified":
-            capacity += memory["MemTotal"]
-            capacity_label = "MemTotal + physical APU VRAM"
+        vram = int((devices[0] / "mem_info_vram_total").read_text())
+        capacity = memory["MemTotal"] + vram
     except (OSError, KeyError, ValueError) as error:
         print(f"\nMemory capacity: unavailable ({error})")
         if args.model_tier == "full":
@@ -81,14 +82,14 @@ def main() -> int:
             return 1
         return 0
 
-    print(f"\n{capacity_label}: {format_memory(capacity)}")
+    print(f"\nMemTotal + physical APU VRAM: {format_memory(capacity)}")
     is_full_tier = args.model_tier == "full"
-    is_undersized = capacity < args.minimum_gib * 2**30
+    is_undersized = capacity < FULL_MODEL_MINIMUM_GIB * 2**30
     reject_runner = is_full_tier and is_undersized
     if reject_runner:
         print(
             f"::error::Full-model benchmarks require at least "
-            f"{args.minimum_gib} GiB of {capacity_label}; "
+            f"{FULL_MODEL_MINIMUM_GIB} GiB of MemTotal + physical APU VRAM; "
             f"this runner has {format_memory(capacity)}."
         )
         return 1
