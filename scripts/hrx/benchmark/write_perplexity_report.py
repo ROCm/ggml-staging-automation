@@ -4,8 +4,8 @@
 """Render one combined perplexity artifact as one current-run comparison table.
 
 Each row shows prefill-like and decode-like HRX/Vulkan estimates, their ratios
-and numerical verdicts, and the aggregate check. XFAIL and SKIP never hide raw
-numerical failures. A failed Vulkan reference makes the check FAIL regardless
+and numerical verdicts, and the aggregate check. XFAIL and report-only checks
+never hide raw numerical failures. A failed Vulkan reference makes the check FAIL regardless
 of the HRX expectation. Failed measurements remain unavailable in the table;
 details below it identify the backend, regime, error kind, log, and model batch.
 
@@ -47,7 +47,7 @@ def format_check(row: dict[str, Any]) -> str:
     if row["reference_result"] == "fail":
         return f"FAIL (Vulkan); HRX {row['outcome']}"
     if row["outcome"] == "SKIP":
-        return f"REPORT ONLY (measured {row['result'].upper()})"
+        return f"{row['result'].upper()} (report only)"
     return row["outcome"]
 
 
@@ -81,7 +81,8 @@ def format_report(document: dict[str, Any]) -> str:
         "Numerical verdicts require valid measurements from both backends. "
         "`—` marks an unavailable measurement or comparison. The check applies "
         "the HRX expectation once across both regimes; Vulkan failures are always "
-        "fatal. XFAIL and SKIP leave the measured numerical verdicts visible.",
+        "fatal. XFAIL and report-only checks leave the measured numerical "
+        "verdicts visible.",
         "",
     ])
     if not document["models"]:

@@ -32,9 +32,8 @@ so their comparison keys must agree. Recorded failures still have entries;
 missing entries indicate an incomplete or mismatched pair.
 
 The runner name provides context for machine-dependent throughput differences.
-The worker adds model-level check outcomes and log diagnostics. Report-only
-checks show their measured result; diagnostic excerpts include the backend,
-log filename, and batch so failures remain actionable in a green CI run.
+The worker adds model-level check outcomes. Report-only checks show their
+measured result even when it does not block CI.
 This script owns its two-input CLI; shared output and failure contracts are
 documented in ``benchmark_report``.
 """
@@ -141,7 +140,7 @@ def format_report(
                     f"**Arguments:** {format_code(arguments or '<none>')}",
                     "",
                 ])
-            lines.append("| Model | Vulkan tok/s | HRX tok/s | HRX / Vulkan | HRX check |")
+            lines.append("| Model | Vulkan tok/s | HRX tok/s | HRX / Vulkan | HRX result |")
             lines.append("| --- | ---: | ---: | ---: | --- |")
             notes = []
             for key in model_keys:
@@ -179,31 +178,12 @@ def format_report(
                 model = hrx_models[key[0]]
                 check = model["outcome"]
                 if check == "SKIP":
-                    check = f"REPORT ONLY (measured {model['result'].upper()})"
+                    check = f"{model['result'].upper()} (report only)"
                 values.append(check)
                 lines.append("| " + " | ".join(values) + " |")
             if notes:
                 lines.extend(["", "\n\n".join(notes)])
             lines.append("")
-    diagnostics = []
-    for backend, benchmark in (("HRX", hrx), ("Vulkan", vulkan)):
-        for model in benchmark["models"]:
-            for diagnostic in model["diagnostics"]:
-                location = format_code(model["log"])
-                if model["batch"] is not None:
-                    location += f", batch {model['batch']}"
-                diagnostics.append(
-                    f"- {format_code(model['model'])}, {backend}: "
-                    f"**{diagnostic['kind']}** — {format_code(diagnostic['message'])} "
-                    f"(see {location})."
-                )
-    if diagnostics:
-        lines.extend([
-            "", "## Backend diagnostics", "",
-            "First log example per error kind and model, including warmup. "
-            "Generic compute errors do not establish allocation failure.",
-            "", *diagnostics,
-        ])
     return "\n".join(lines).rstrip()
 
 

@@ -10,9 +10,7 @@ runtime model names and the subset whose HRX throughput is expected to fail.
 Vulkan results are always mandatory; a successful flagged HRX model is an
 XPASS so stale expectations cannot hide fixes. Separately named skipped checks
 still collect measurements but log SKIP without enforcing the HRX result.
-Artifacts retain each model's expectation, measured result, check outcome, and
-the first allocation/compute error examples from its daemon log, including
-warmup. These diagnostics do not change the measured outcome.
+Artifacts retain each model's expectation, measured result, and check outcome.
 
 Only ``chat-short`` and ``chat-long-output`` are collected: they capture
 short-response and sustained generation throughput for the CI report.
@@ -37,7 +35,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from benchmark_diagnostics import model_diagnostics
 from benchmark_output import append_batch_log, atomic_write_json, merge_benchmark_output
 
 
@@ -593,14 +590,6 @@ def run(args: argparse.Namespace) -> int:
                 cache_dir=cache_dir,
                 llama_server=llama_server,
             )
-            diagnostics = model_diagnostics(
-                active_phase.server_log.read_text(encoding="utf-8", errors="replace"),
-                args.models,
-            )
-            for model in batch_data["models"]:
-                model["diagnostics"] = diagnostics[model["model"]]
-                model["log"] = phase.server_log.name
-                model["batch"] = args.batch_number
             if args.batched:
                 merged_count = merge_benchmark_output(
                     phase.output,

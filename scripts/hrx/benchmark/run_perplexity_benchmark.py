@@ -9,8 +9,7 @@ decode-like uses a single token. Every phase measures all models in its batch.
 
 One JSON artifact contains complete model rows: each regime holds its HRX and
 Vulkan measurements, ratio, and numerical verdict. Execution and invalid-estimate
-failures remain distinct; explicit allocation failures retain their log evidence
-as a separate failure kind. Only valid pairs receive a numerical verdict. Batch
+failures remain distinct; only valid pairs receive a numerical verdict. Batch
 merging simply appends complete rows to models using the shared output helper.
 
 Each row's result and outcome aggregate HRX across both regimes before applying
@@ -40,7 +39,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, TextIO
 
-from benchmark_diagnostics import failure_kind as log_failure_kind
 from benchmark_output import (
     append_batch_log,
     atomic_write_json,
@@ -230,15 +228,6 @@ def run_perplexity(
     else:
         error = None
     succeeded = error is None
-    if not succeeded:
-        allocation_error = next(
-            (line.strip() for line in output.splitlines()
-             if log_failure_kind(line) == "allocation"),
-            None,
-        )
-        if allocation_error:
-            failure_kind = "allocation"
-            error = f"{error}; {allocation_error}"
 
     summary = f"{model.spec.name} [{regime_id}] on {phase.device}: "
     if succeeded:
