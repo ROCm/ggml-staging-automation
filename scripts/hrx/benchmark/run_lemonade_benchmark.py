@@ -10,6 +10,9 @@ runtime model names and the subset whose HRX throughput is expected to fail.
 Vulkan results are always mandatory; a successful flagged HRX model is an
 XPASS so stale expectations cannot hide fixes. Separately named skipped checks
 still collect measurements but log SKIP without enforcing the HRX result.
+Artifacts retain each model's expectation, measured result, check outcome, and
+the first allocation/compute error examples from its daemon log, including
+warmup. These diagnostics do not change the measured outcome.
 
 Only ``chat-short`` and ``chat-long-output`` are collected: they capture
 short-response and sustained generation throughput for the CI report.
@@ -34,7 +37,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from benchmark_output import append_batch_log, merge_benchmark_output
+from benchmark_diagnostics import model_diagnostics
+from benchmark_output import append_batch_log, atomic_write_json, merge_benchmark_output
 
 
 BENCHMARK_BACKEND_ARGS = "--ignore-eos"
@@ -241,6 +245,7 @@ def summarize_benchmark(
     has_unexpected_outcomes = False
     backend_label = expected_backend.upper()
     backend_is_hrx = expected_backend == "hrx"
+    model_rows = {row["model"]: row for row in raw_models}
     for model in expected_models:
         model_is_present = model in model_failed
         model_has_failed = model_failed.get(model, True)
@@ -252,34 +257,29 @@ def summarize_benchmark(
         model_is_skipped = model in hrx_skip_models
         skip_applies = backend_is_hrx and model_is_skipped and model_is_present
         if skip_applies:
+            outcome = "SKIP"
+            expectation = "skip"
+        elif xfail_applies:
+            outcome = "XPASS" if model_succeeded else "XFAIL"
+            expectation = "fail"
+        else:
             outcome = "PASS" if model_succeeded else "FAIL"
-            log(f"SKIP: {backend_label} throughput for {model} (measured {outcome})")
-            continue
-
-        if model_succeeded:
-            if xfail_applies:
-                log(
-                    f"XPASS: {backend_label} throughput for {model} "
-                    "completed successfully; this check expects failure"
-                )
-                has_unexpected_outcomes = True
-            continue
-
+            expectation = "pass"
         if model_is_present:
-            failure_reason = "reported failed runs"
+            model_rows[model]["expected_result"] = expectation
+            model_rows[model]["result"] = "pass" if model_succeeded else "fail"
+            model_rows[model]["outcome"] = outcome
+        if skip_applies:
+            measured = "PASS" if model_succeeded else "FAIL"
+            detail = f"(measured {measured}; report only)"
+        elif model_succeeded:
+            detail = "completed successfully"
+        elif model_is_present:
+            detail = "reported failed runs"
         else:
-            failure_reason = "is absent from a valid benchmark document"
-        if xfail_applies:
-            log(
-                f"XFAIL: {backend_label} throughput for {model} "
-                f"{failure_reason}"
-            )
-        else:
-            log(
-                f"FAIL: {backend_label} throughput for {model} "
-                f"{failure_reason}"
-            )
-            has_unexpected_outcomes = True
+            detail = "is absent from a valid benchmark document"
+        log(f"{outcome}: {backend_label} throughput for {model} {detail}")
+        has_unexpected_outcomes = has_unexpected_outcomes or outcome in ("FAIL", "XPASS")
 
     return scenario_count, failed_scenario_count, has_unexpected_outcomes
 
@@ -593,6 +593,14 @@ def run(args: argparse.Namespace) -> int:
                 cache_dir=cache_dir,
                 llama_server=llama_server,
             )
+            diagnostics = model_diagnostics(
+                active_phase.server_log.read_text(encoding="utf-8", errors="replace"),
+                args.models,
+            )
+            for model in batch_data["models"]:
+                model["diagnostics"] = diagnostics[model["model"]]
+                model["log"] = phase.server_log.name
+                model["batch"] = args.batch_number
             if args.batched:
                 merged_count = merge_benchmark_output(
                     phase.output,
@@ -602,6 +610,8 @@ def run(args: argparse.Namespace) -> int:
                     f"Merged {merged_count} {phase.backend} model(s) from "
                     f"batch {args.batch_number} into {phase.output}"
                 )
+            else:
+                atomic_write_json(phase.output, batch_data)
             has_unexpected_outcomes = (
                 has_unexpected_outcomes or phase_has_unexpected_outcomes
             )

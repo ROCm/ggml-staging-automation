@@ -46,6 +46,8 @@ def format_comparison(pair: dict[str, Any]) -> str:
 def format_check(row: dict[str, Any]) -> str:
     if row["reference_result"] == "fail":
         return f"FAIL (Vulkan); HRX {row['outcome']}"
+    if row["outcome"] == "SKIP":
+        return f"REPORT ONLY (measured {row['result'].upper()})"
     return row["outcome"]
 
 

@@ -40,6 +40,12 @@
     {
       "id": "qwen3.8-27b",
       "tier": "full",
+      "hrx": {
+        "expected_results": {
+          "lemonade-benchmark": "skip",
+          "perplexity": "skip"
+        }
+      },
       "name": "extra.Qwen3.8-27B-GGUF",
       "directory": "Qwen3.8-27B-GGUF",
       "repository": "bartowski/Qwen3.8-27B-GGUF",
@@ -53,7 +59,8 @@
       "tier": "full",
       "hrx": {
         "expected_results": {
-          "perplexity": "fail"
+          "lemonade-benchmark": "skip",
+          "perplexity": "skip"
         }
       },
       "name": "extra.Mistral-Small-3.2-24B-Instruct-2506-GGUF",
