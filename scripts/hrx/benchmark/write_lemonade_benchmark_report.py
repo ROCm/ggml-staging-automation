@@ -177,7 +177,7 @@ def format_report(
                 )
                 model = hrx_models[key[0]]
                 check = model["outcome"]
-                if check == "SKIP":
+                if check == "REPORT_ONLY":
                     check = f"{model['result'].upper()} (report only)"
                 values.append(check)
                 lines.append("| " + " | ".join(values) + " |")

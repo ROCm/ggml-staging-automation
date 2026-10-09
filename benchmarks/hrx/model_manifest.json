@@ -9,7 +9,7 @@
       "tier": "full",
       "hrx": {
         "expected_results": {
-          "lemonade-benchmark": "skip",
+          "lemonade-benchmark": "report-only",
           "perplexity": "fail"
         }
       },
@@ -42,8 +42,8 @@
       "tier": "full",
       "hrx": {
         "expected_results": {
-          "lemonade-benchmark": "skip",
-          "perplexity": "skip"
+          "lemonade-benchmark": "report-only",
+          "perplexity": "report-only"
         }
       },
       "name": "extra.Qwen3.8-27B-GGUF",
@@ -59,8 +59,8 @@
       "tier": "full",
       "hrx": {
         "expected_results": {
-          "lemonade-benchmark": "skip",
-          "perplexity": "skip"
+          "lemonade-benchmark": "report-only",
+          "perplexity": "report-only"
         }
       },
       "name": "extra.Mistral-Small-3.2-24B-Instruct-2506-GGUF",
