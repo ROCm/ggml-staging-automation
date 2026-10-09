@@ -123,6 +123,7 @@ jobs:
           delete-branch: true
           base: main
           title: Bump integration submodules
+          labels: ci:full-models
           # Keep rendered table source below 72 columns so squash merging
           # cannot wrap rows. Long URLs live in separate reference definitions.
           body: |

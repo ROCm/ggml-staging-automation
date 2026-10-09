@@ -74,6 +74,12 @@ Windows support is intentionally not implemented yet. The scripts and CMake
 layout keep runtime libraries adjacent so the later Windows flow can use the
 same basic packaging model with DLL copying instead of ELF RPATHs.
 
+## CI model coverage
+
+PR CI runs the `smoke` model tier by default. Apply the `ci:full-models` PR
+label to run the cumulative `full` tier, including every model in
+`benchmarks/hrx/model_manifest.json`.
+
 ## Releases
 
 The `Release` workflow (`.github/workflows/release.yml`) runs nightly and can

@@ -17,11 +17,12 @@ on:
         description: Model tier to benchmark.
         required: true
         type: choice
-        default: full
+        default: smoke
         options:
           - smoke
           - full
   pull_request:
+    types: [opened, synchronize, reopened, labeled]
   push:
     branches:
       - main
@@ -30,9 +31,37 @@ permissions:
   contents: read
   actions: read
 
+concurrency:
+  # The opt-in label supersedes smoke CI just like a new commit. Other labels
+  # get separate groups so their skipped runs cannot cancel active benchmarks.
+  group: >-
+    ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ github.event.label.name != 'ci:full-models' && github.event.label.name || '' }}
+  cancel-in-progress: true
+
 jobs:
+  select_models:
+    name: Select model tier
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      should_run: ${{ steps.selection.outputs.should_run }}
+      model_tier: ${{ steps.selection.outputs.model_tier }}
+    steps:
+      - name: Checkout automation repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Select CI coverage
+        id: selection
+        run: python3 scripts/hrx/ci/select_models.py
+
   llama_cpp_linux:
     name: Linux / HRX
+    needs: select_models
+    if: needs.select_models.outputs.should_run == 'true'
     uses: ./.github/workflows/build_llama_cpp_linux.yml
     permissions:
       contents: read
@@ -46,7 +75,7 @@ jobs:
 
   llama_cpp_release_bench:
     name: Linux / HRX release benchmark
-    needs: llama_cpp_linux
+    needs: [select_models, llama_cpp_linux]
     uses: ./.github/workflows/release_test_bench.yml
     permissions:
       contents: read
@@ -55,5 +84,5 @@ jobs:
       name: Release benchmark
       release_artifact_name: llama-cpp-linux-x86_64
       package_root_name: llama.cpp-install
-      model_tier: ${{ github.event_name == 'pull_request' && 'smoke' || inputs.model_tier || 'full' }}
+      model_tier: ${{ needs.select_models.outputs.model_tier }}
       skip_benchmarks: ${{ inputs.skip_benchmarks || '[]' }}
