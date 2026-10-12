@@ -28,6 +28,12 @@ def merge_benchmark_output(
     if cumulative_output.exists():
         merged_data = json.loads(cumulative_output.read_text(encoding="utf-8"))
         merged_data["models"].extend(batch_data["models"])
+        # An entirely skipped first HRX batch has no measured hardware metadata.
+        has_measured_hardware = bool(batch_data.get("hardware"))
+        missing_hardware = not merged_data.get("hardware")
+        populate_hardware = has_measured_hardware and missing_hardware
+        if populate_hardware:
+            merged_data["hardware"] = batch_data["hardware"]
     else:
         merged_data = batch_data
 

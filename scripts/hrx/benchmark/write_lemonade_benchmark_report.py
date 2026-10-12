@@ -28,7 +28,9 @@ end-of-text stopping and do not prevent comparing the supplied rates.
 
 Backend is excluded from the comparison key because it is the variable being
 compared. Both artifacts come from the same model tier and scenario selection,
-so their comparison keys must agree. Recorded failures still have entries;
+so their comparison keys must agree except for explicit HRX SKIP models.
+Skipped models retain their Vulkan rows and have no HRX measurements.
+Recorded failures still have entries;
 missing entries indicate an incomplete or mismatched pair.
 
 The runner name provides context for machine-dependent throughput differences.
@@ -109,10 +111,15 @@ def format_report(
 ) -> str:
     """Build scenario tables from validated indexes, preserving model order."""
     indexes = {"Vulkan": index_scenarios(vulkan), "HRX": index_scenarios(hrx)}
-    if indexes["HRX"].keys() != indexes["Vulkan"].keys():
-        raise ReportError("HRX and Vulkan scenario keys differ; expected the same CI run")
-    keys = list(indexes["HRX"])
     hrx_models = {model["model"]: model for model in hrx["models"]}
+    vulkan_models = {model["model"] for model in vulkan["models"]}
+    if hrx_models.keys() != vulkan_models:
+        raise ReportError("HRX and Vulkan model sets differ; expected the same CI run")
+    skipped = {name for name, model in hrx_models.items() if model["outcome"] == "SKIP"}
+    expected_hrx_keys = {key for key in indexes["Vulkan"] if key[0] not in skipped}
+    if indexes["HRX"].keys() != expected_hrx_keys:
+        raise ReportError("HRX and Vulkan scenario keys differ; expected the same CI run")
+    keys = list(indexes["Vulkan"])
     lines = ["# Lemonade benchmarks"]
     if runner_name:
         lines.extend(["", f"**Runner:** {format_code(runner_name)}"])
@@ -148,6 +155,13 @@ def format_report(
                 values = [format_table_cell(model_name)]
                 rates = {}
                 for backend, index in indexes.items():
+                    is_hrx = backend == "HRX"
+                    model_skipped = key[0] in skipped
+                    skipped_measurement = is_hrx and model_skipped
+                    if skipped_measurement:
+                        values.append(UNAVAILABLE_MEASUREMENT)
+                        rates[backend] = None
+                        continue
                     scenario = index[key]
                     rate = mean_tps(scenario)
                     values.append(
