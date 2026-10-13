@@ -9,7 +9,7 @@
       "tier": "full",
       "hrx": {
         "expected_results": {
-          "lemonade-benchmark": "skip",
+          "lemonade-benchmark": "report-only",
           "perplexity": "fail"
         }
       },
@@ -26,7 +26,6 @@
       "tier": "full",
       "hrx": {
         "expected_results": {
-          "lemonade-benchmark": "skip",
           "perplexity": "fail"
         }
       },

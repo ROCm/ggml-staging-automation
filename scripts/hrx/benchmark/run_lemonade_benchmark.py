@@ -11,8 +11,6 @@ Vulkan results are always mandatory; a successful flagged HRX model is an
 XPASS so stale expectations cannot hide fixes. Separately named report-only checks
 still collect measurements but log REPORT_ONLY without enforcing the HRX result.
 Artifacts retain each model's expectation, measured result, and check outcome.
-Models skipped while perplexity is expected to fail have explicit SKIP rows
-without HRX measurements. Their Vulkan measurements remain mandatory.
 
 Only ``chat-short`` and ``chat-long-output`` are collected: they capture
 short-response and sustained generation throughput for the CI report.
@@ -34,7 +32,6 @@ import sys
 import tempfile
 import time
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -446,29 +443,6 @@ def log_llama_server_devices(llama_server: Path, env: dict[str, str]) -> None:
     log(result.stdout.rstrip())
 
 
-def skipped_model(model: str) -> dict[str, Any]:
-    return {
-        "model": model,
-        "expected_result": "skip",
-        "result": "skip",
-        "outcome": "SKIP",
-        "results": [],
-    }
-
-
-def publish_phase(
-    phase: BenchmarkPhase, data: dict[str, Any], args: argparse.Namespace
-) -> None:
-    if args.batched:
-        merged_count = merge_benchmark_output(phase.output, data)
-        log(
-            f"Merged {merged_count} {phase.backend} model(s) from "
-            f"batch {args.batch_number} into {phase.output}"
-        )
-    else:
-        atomic_write_json(phase.output, data)
-
-
 def run(args: argparse.Namespace) -> int:
     port = 13305
     lemonade_build = args.lemonade_build_dir.resolve()
@@ -476,7 +450,6 @@ def run(args: argparse.Namespace) -> int:
     llama_server = args.llama_server.resolve()
     models_dir = args.models_dir.resolve()
     hrx_xfail_models = set(args.hrx_xfail_models)
-    hrx_skip_models = set(args.hrx_skip_models)
     phases = (
         BenchmarkPhase(
             name="HRX",
@@ -532,20 +505,6 @@ def run(args: argparse.Namespace) -> int:
 
         # Run benchmarks
         for phase in phases:
-            is_hrx = phase.backend == "hrx"
-            skipped = []
-            if is_hrx:
-                skipped = [model for model in args.models if model in hrx_skip_models]
-            phase_models = [model for model in args.models if model not in skipped]
-            for model in skipped:
-                log(f"SKIP: HRX throughput for {model} (perplexity is expected to fail)")
-            if not phase_models:
-                publish_phase(phase, {
-                    "timestamp": datetime.now(timezone.utc).isoformat(),
-                    "hardware": {},
-                    "models": [skipped_model(model) for model in skipped],
-                }, args)
-                continue
             log(
                 f"Starting {phase.name} benchmark phase on {phase.device}"
             )
@@ -585,7 +544,7 @@ def run(args: argparse.Namespace) -> int:
                     phase.backend,
                     active_phase.output,
                     active_phase.response_log,
-                    phase_models,
+                    args.models,
                     hrx_xfail_models,
                     env=env,
                     hrx_report_only_models=set(args.hrx_report_only_models),
@@ -631,8 +590,17 @@ def run(args: argparse.Namespace) -> int:
                 cache_dir=cache_dir,
                 llama_server=llama_server,
             )
-            batch_data["models"].extend(skipped_model(model) for model in skipped)
-            publish_phase(phase, batch_data, args)
+            if args.batched:
+                merged_count = merge_benchmark_output(
+                    phase.output,
+                    batch_data,
+                )
+                log(
+                    f"Merged {merged_count} {phase.backend} model(s) from "
+                    f"batch {args.batch_number} into {phase.output}"
+                )
+            else:
+                atomic_write_json(phase.output, batch_data)
             has_unexpected_outcomes = (
                 has_unexpected_outcomes or phase_has_unexpected_outcomes
             )
@@ -661,7 +629,6 @@ def main() -> int:
     parser.add_argument("--vulkan-response-log", type=Path, required=True)
     parser.add_argument("--hrx-xfail-models", nargs="*", required=True)
     parser.add_argument("--hrx-report-only-models", nargs="*", default=[])
-    parser.add_argument("--hrx-skip-models", nargs="*", default=[])
     parser.add_argument("--models", nargs="+", required=True)
     args = parser.parse_args()
     if args.batched and args.batch_number is None:

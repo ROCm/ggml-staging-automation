@@ -14,11 +14,9 @@ Terms:
   run_perplexity_benchmark.py). It is invoked once per batch and is expected to
   merge its per-batch results itself.
 - HRX expected result: ``hrx.expected_results`` maps benchmark-spec IDs to
-  "pass", "fail", "report-only", or "skip" for each model. Omitted checks expect a pass.
+  "pass", "fail", or "report-only" for each model. Omitted checks expect a pass.
   Expected failures become strict worker XFAILs; report-only checks still collect
   measurements but do not enforce the HRX result. Neither expectation relaxes Vulkan measurements.
-  A throughput "skip" omits HRX measurements while a model's perplexity is
-  expected to fail; remove both expectations when perplexity recovers.
 
 Why this exists: CI runners for the HRX release benchmarks have far less free
 disk than the full model set requires. Instead of pinning benchmarks to
@@ -39,7 +37,6 @@ Boundary contract:
   arguments appended: --batched --batch-number N --models-dir DIR
   --hrx-xfail-models [NAME...] --hrx-report-only-models [NAME...] --models NAME...
   The names select strict expected failures or report-only checks.
-  Throughput workers also receive --hrx-skip-models when skips are selected.
   A spec that already carries any managed argument is rejected so a worker cannot be pointed at
   the wrong models or supplied conflicting failure policy.
 - Exit status: 0 only if every download, every worker, and every cleanup
@@ -247,18 +244,9 @@ def load_manifest(
         )
         for check, result in expected_results.items():
             _require_string_value(check, f"{context}.hrx.expected_results key")
-            if result not in ("pass", "fail", "report-only", "skip"):
+            if result not in ("pass", "fail", "report-only"):
                 raise BatchBenchmarkError(
-                    f"{context}.hrx.expected_results[{check!r}] must be 'pass', 'fail', 'report-only', or 'skip'"
-                )
-            skips_measurement = result == "skip"
-            is_throughput = check == "lemonade-benchmark"
-            perplexity_expected_to_fail = expected_results.get("perplexity") == "fail"
-            permitted_skip = is_throughput and perplexity_expected_to_fail
-            invalid_skip = skips_measurement and not permitted_skip
-            if invalid_skip:
-                raise BatchBenchmarkError(
-                    f"{context}: only HRX throughput with expected failing perplexity may be skipped"
+                    f"{context}.hrx.expected_results[{check!r}] must be 'pass', 'fail', or 'report-only'"
                 )
             if known_checks is not None:
                 if check not in known_checks:
@@ -333,7 +321,6 @@ def load_benchmark_spec(path: Path) -> list[BenchmarkSpec]:
         "--models-dir",
         "--hrx-xfail-models",
         "--hrx-report-only-models",
-        "--hrx-skip-models",
         "--models",
     }
     for entry_index, raw_entry in enumerate(entries):
@@ -664,7 +651,7 @@ def build_benchmark_command(
     models_dir: Path,
     resident: list[ModelSpec],
 ) -> list[str]:
-    command = [
+    return [
         *benchmark.argv,
         "--batched",
         "--batch-number",
@@ -686,14 +673,6 @@ def build_benchmark_command(
         "--models",
         *(model.name for model in resident),
     ]
-    skipped = [
-        model.name
-        for model in resident
-        if model.hrx_expected_results.get(benchmark.id) == "skip"
-    ]
-    if skipped:
-        command.extend(["--hrx-skip-models", *skipped])
-    return command
 
 
 def _format_bytes(value: int) -> str:
