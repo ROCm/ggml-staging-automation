@@ -6,7 +6,8 @@
 KFD GPU nodes establish the ROCr ordinal before any HRX executable starts.
 The pinned process must then enumerate exactly one HRX device on gfx1151.
 Console output is retained even on crashes; only completed supported cases
-count as execution evidence, since upstream summaries also count skips.
+count as execution evidence; upstream can report success when all devices
+are skipped.
 """
 
 from __future__ import annotations
@@ -55,16 +56,28 @@ def test_evidence(log: str, device: str) -> dict:
     section = selected[0]
     if "  Device description:" not in section:
         raise RuntimeError(f"{device} was skipped or did not initialize")
-    cases = re.findall(r"^  (\S+\(.*\)): (OK|FAIL)$", section, re.MULTILINE)
+    cases = re.findall(r"  (\S+\(.*\)): [^\n]*?\b(OK|FAIL)$", section, re.MULTILINE)
     passed = sum(status == "OK" for _, status in cases)
     failures = [case for case, status in cases if status == "FAIL"]
     summaries = re.findall(r"^  (\d+)/(\d+) tests passed$", section, re.MULTILINE)
     status = re.search(rf"^  Backend {re.escape(device)}: (OK|FAIL)$", section, re.MULTILINE)
-    completed = bool(summaries) and status is not None
+    has_summary = bool(summaries)
+    has_backend_status = status is not None
+    completed = has_summary and has_backend_status
+    executed = len(cases)
+    failed = len(failures)
+    if has_summary:
+        # Allocation failures can return without printing a case result. The
+        # test summary excludes unsupported cases and accounts for these too.
+        passed, executed = map(int, summaries[-1])
+        failed = executed - passed
+    failed_list = re.search(r"^Failing tests:\n(.*?)^  Backend ", section, re.MULTILINE | re.DOTALL)
+    if failed_list:
+        failures = [line.strip() for line in failed_list[1].splitlines() if line.strip()]
     return {
-        "executed": len(cases),
+        "executed": executed,
         "passed": passed,
-        "failed": len(failures),
+        "failed": failed,
         "failing_cases": failures,
         "unsupported": len(re.findall(r"^  .*: not supported ", section, re.MULTILINE)),
         "suite_completed": completed,

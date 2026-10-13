@@ -19,12 +19,12 @@ class BackendEvidenceTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             test_evidence("Backend 1/2: HRX0\n  Skipping\nBackend 2/2: CPU\n  Skipping\n2/2 backends passed\nOK\n", "HRX0")
 
-    def test_upstream_summary_includes_unsupported_cases(self):
+    def test_unsupported_cases_do_not_count_as_execution(self):
         evidence = test_evidence(
             "Backend 1/2: HRX0\n  Device description: AMD (gfx1151)\n"
             "  ADD(type=f32): \x1b[1;32mOK\x1b[0m\n"
             "  MUL(type=f32): not supported [HRX0] \n"
-            "  2/2 tests passed\n  Backend HRX0: OK\n"
+            "  1/1 tests passed\n  Backend HRX0: OK\n"
             "Backend 2/2: CPU\n  Skipping\n2/2 backends passed\nOK\n", "HRX0")
         self.assertEqual(evidence["executed"], 1)
         self.assertEqual(evidence["unsupported"], 1)
@@ -36,6 +36,30 @@ class BackendEvidenceTests(unittest.TestCase):
         self.assertEqual(evidence["failed"], 1)
         self.assertEqual(evidence["failing_cases"], ["ADD(type=f32)"])
         self.assertFalse(evidence["suite_completed"])
+
+    def test_diagnostics_before_failure(self):
+        log = (
+            "Backend 1/2: HRX0\n  Device description: AMD (gfx1151)\n"
+            "  ADD(type=f32): compare failed FAIL\n"
+            "[HRX0] ERR = 1.0 > 0.1   MUL(type=f32): FAIL\n"
+        )
+        evidence = test_evidence(log, "HRX0")
+        self.assertEqual(evidence["executed"], 2)
+        self.assertEqual(evidence["failed"], 2)
+        self.assertEqual(evidence["failing_cases"], ["ADD(type=f32)", "MUL(type=f32)"])
+
+    def test_allocation_failure_accounted_for_by_summary(self):
+        log = (
+            "Backend 1/2: HRX0\n  Device description: AMD (gfx1151)\n"
+            "failed to allocate tensors [HRX0] \n  ADD(type=f32): OK\n"
+            "  1/2 tests passed\n\nFailing tests:\n  MUL(type=f32)\n  Backend HRX0: FAIL\n"
+        )
+        evidence = test_evidence(log, "HRX0")
+        self.assertEqual(evidence["executed"], 2)
+        self.assertEqual(evidence["passed"], 1)
+        self.assertEqual(evidence["failed"], 1)
+        self.assertEqual(evidence["failing_cases"], ["MUL(type=f32)"])
+        self.assertTrue(evidence["suite_completed"])
 
 
 if __name__ == "__main__":
