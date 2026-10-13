@@ -14,6 +14,7 @@ from hrx_build import REPO_ROOT, add_common_path_args, python_executable, run
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     add_common_path_args(parser)
+    parser.add_argument("--build-tests", choices=("true", "false"), default="false")
     parser.add_argument("--skip-fetch", action="store_true")
     parser.add_argument("--skip-validate", action="store_true")
     parser.add_argument("--build-type", default="Release", help="llama.cpp build type")
@@ -74,6 +75,7 @@ def main() -> int:
             "--build-type",
             args.build_type,
             *vulkan_sdk_args,
+            *(["--build-tests"] if args.build_tests == "true" else []),
         ]
     )
     if not args.skip_validate:

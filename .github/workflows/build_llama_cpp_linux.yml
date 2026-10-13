@@ -9,6 +9,9 @@ name: Build llama.cpp Linux
 on:
   workflow_call:
     inputs:
+      build_tests:
+        type: boolean
+        default: false
       name:
         type: string
         default: Build
@@ -70,16 +73,19 @@ jobs:
       - name: Build and validate llama.cpp
         env:
           BUILD_TYPE: ${{ inputs.build_type }}
+          BUILD_TESTS: ${{ inputs.build_tests }}
           HRX_BUILD_TYPE: ${{ inputs.hrx_build_type }}
         run: |
           python3 scripts/hrx/build/build_all.py \
             --build-type "$BUILD_TYPE" \
             --hrx-build-type "$HRX_BUILD_TYPE" \
+            --build-tests "$BUILD_TESTS" \
             --vulkan-sdk-dir "$PWD/build/vulkan-sdk"
 
       - name: Package llama.cpp artifacts
         if: ${{ inputs.upload_artifact }}
         env:
+          BUILD_TESTS: ${{ inputs.build_tests }}
           ARTIFACT_NAME: ${{ inputs.artifact_name }}
           PACKAGE_FILE_NAME: ${{ inputs.package_file_name }}
           PACKAGE_ROOT_NAME: ${{ inputs.package_root_name }}
@@ -91,6 +97,7 @@ jobs:
 
           python3 scripts/hrx/package/build_artifacts_from_llama_cpp_install.py \
             --llama-install-dir "$PWD/build/llama.cpp-install" \
+            --include-tests "$BUILD_TESTS" \
             --release-package-file "$package_dir/$package_file_name" \
             --package-root-name "$PACKAGE_ROOT_NAME"
 
