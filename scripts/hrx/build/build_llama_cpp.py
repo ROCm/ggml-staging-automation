@@ -134,6 +134,8 @@ def build_llama_cpp(
         # llama.cpp vendors ggml without its standalone tests directory.
         "-DGGML_BUILD_TESTS=OFF",
         f"-DGGML_BUILD_EXAMPLES={'ON' if build_examples else 'OFF'}",
+        # HRX tests in a sibling directory link the backend's package imports.
+        f"-DCMAKE_FIND_PACKAGE_TARGETS_GLOBAL={'ON' if llama_build_tests else 'OFF'}",
         f"-DLLAMA_BUILD_TESTS={'ON' if llama_build_tests else 'OFF'}",
         f"-DLLAMA_TESTS_INSTALL={'ON' if llama_build_tests else 'OFF'}",
         f"-DLLAMA_BUILD_EXAMPLES={'ON' if build_examples else 'OFF'}",
