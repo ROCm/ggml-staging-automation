@@ -1,35 +1,24 @@
 # Copyright Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
 #
-# Based on ROCm/TheRock@6d754c2 (.github/dependabot.yml); extended with
-# the pip ecosystem (root requirements.txt) and 7-day cooldowns (zizmor
-# dependabot-cooldown audit). Not a direct copy.
+# Dependabot version updates. See
+# https://docs.github.com/en/code-security/reference/supply-chain-security/dependabot-options-reference
 
 version: 2
 updates:
-
-  # Check for updates to GitHub Actions. Dependabot understands the
-  # "full commit SHA with the tag in a comment" pinning style used in
-  # the workflows.
   - package-ecosystem: "github-actions"
+    # "/" covers .github/workflows; composite actions keep their own `uses:`
+    # pins, so .github/actions has to be listed separately to get bumped.
     directory: "/"
     schedule:
-      interval: "weekly"
+      interval: "daily"
+      # Wait a week before adopting newly released action versions.
     cooldown:
       default-days: 7
+      exclude:
+        - "ROCm/rocm-security-gh*"
     groups:
+      rocm-security-gh:
+        patterns: ["ROCm/rocm-security-gh*"]
       github-actions:
-        patterns:
-          - "*"
-
-  # Root requirements.txt.
-  - package-ecosystem: "pip"
-    directory: "/"
-    schedule:
-      interval: "weekly"
-    cooldown:
-      default-days: 7
-    groups:
-      pip:
-        patterns:
-          - "*"
+        patterns: ["*"]
