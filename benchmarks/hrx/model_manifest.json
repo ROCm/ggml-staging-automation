@@ -24,12 +24,6 @@
     {
       "id": "qwen3-30b-a3b-instruct-2507",
       "tier": "full",
-      "hrx": {
-        "expected_results": {
-          "lemonade-benchmark": "report-only",
-          "perplexity": "fail"
-        }
-      },
       "name": "extra.Qwen3-30B-A3B-Instruct-2507-GGUF",
       "directory": "Qwen3-30B-A3B-Instruct-2507-GGUF",
       "repository": "unsloth/Qwen3-30B-A3B-Instruct-2507-GGUF",
