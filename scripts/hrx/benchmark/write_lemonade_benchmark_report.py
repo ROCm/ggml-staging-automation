@@ -32,6 +32,8 @@ so their comparison keys must agree. Recorded failures still have entries;
 missing entries indicate an incomplete or mismatched pair.
 
 The runner name provides context for machine-dependent throughput differences.
+The worker adds model-level check outcomes. Report-only checks show their
+measured result even when it does not block CI.
 This script owns its two-input CLI; shared output and failure contracts are
 documented in ``benchmark_report``.
 """
@@ -110,6 +112,7 @@ def format_report(
     if indexes["HRX"].keys() != indexes["Vulkan"].keys():
         raise ReportError("HRX and Vulkan scenario keys differ; expected the same CI run")
     keys = list(indexes["HRX"])
+    hrx_models = {model["model"]: model for model in hrx["models"]}
     lines = ["# Lemonade benchmarks"]
     if runner_name:
         lines.extend(["", f"**Runner:** {format_code(runner_name)}"])
@@ -137,8 +140,8 @@ def format_report(
                     f"**Arguments:** {format_code(arguments or '<none>')}",
                     "",
                 ])
-            lines.append("| Model | Vulkan tok/s | HRX tok/s | HRX / Vulkan |")
-            lines.append("| --- | ---: | ---: | ---: |")
+            lines.append("| Model | Vulkan tok/s | HRX tok/s | HRX / Vulkan | HRX result |")
+            lines.append("| --- | ---: | ---: | ---: | --- |")
             notes = []
             for key in model_keys:
                 model_name = key[0].removeprefix("extra.")
@@ -172,6 +175,11 @@ def format_report(
                     if comparable
                     else UNAVAILABLE_MEASUREMENT
                 )
+                model = hrx_models[key[0]]
+                check = model["outcome"]
+                if check == "REPORT_ONLY":
+                    check = f"{model['result'].upper()} (report only)"
+                values.append(check)
                 lines.append("| " + " | ".join(values) + " |")
             if notes:
                 lines.extend(["", "\n\n".join(notes)])

@@ -13,7 +13,7 @@ failures remain distinct; only valid pairs receive a numerical verdict. Batch
 merging simply appends complete rows to models using the shared output helper.
 
 Each row's result and outcome aggregate HRX across both regimes before applying
-its one perplexity expectation. SKIP still collects measurements and preserves
+its one perplexity expectation. REPORT_ONLY still collects measurements and preserves
 the raw result. Vulkan failures are always fatal and recorded in reference_result.
 The combined artifact and separate backend logs are written before returning a
 failing exit status. The report consumes this artifact as one comparison table.
@@ -270,7 +270,7 @@ def run_phase(
     return measurements
 
 
-def evaluate_models(document: dict, xfail: set[str], skip: set[str]) -> bool:
+def evaluate_models(document: dict, xfail: set[str], report_only: set[str]) -> bool:
     """Apply the HRX expectation once; never waive a broken Vulkan reference."""
     unexpected = False
     maximum = document["settings"]["max_perplexity_ratio"]
@@ -299,8 +299,8 @@ def evaluate_models(document: dict, xfail: set[str], skip: set[str]) -> bool:
                 f"ratio={pair['ratio']}")
         row["result"] = "fail" if hrx_failed else "pass"
         row["reference_result"] = "fail" if vulkan_failed else "pass"
-        if name in skip:
-            outcome = "SKIP"
+        if name in report_only:
+            outcome = "REPORT_ONLY"
         elif name in xfail:
             outcome = "XFAIL" if hrx_failed else "XPASS"
         else:
@@ -426,7 +426,7 @@ def run(args: argparse.Namespace) -> int:
 
         has_unexpected_outcomes = evaluate_models(
             batch_data, hrx_xfail_models,
-            set(args.hrx_skip_models),
+            set(args.hrx_report_only_models),
         )
         if args.batched:
             merged_count = merge_benchmark_output(args.output, batch_data)
@@ -467,7 +467,7 @@ def main() -> int:
         help="Extra argument forwarded to llama-perplexity (repeatable).",
     )
     parser.add_argument("--hrx-xfail-models", nargs="*", required=True)
-    parser.add_argument("--hrx-skip-models", nargs="*", default=[])
+    parser.add_argument("--hrx-report-only-models", nargs="*", default=[])
     parser.add_argument("--models", nargs="+", required=True)
     args = parser.parse_args()
     ratio_is_finite = math.isfinite(args.max_perplexity_ratio)

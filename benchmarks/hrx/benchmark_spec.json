@@ -1,7 +1,7 @@
 {
   "benchmarks": [
     {
-      "id": "lemonade",
+      "id": "lemonade-benchmark",
       "argv": [
         "python3",
         "scripts/hrx/benchmark/run_lemonade_benchmark.py",

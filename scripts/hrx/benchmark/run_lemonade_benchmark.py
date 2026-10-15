@@ -8,8 +8,9 @@ and the requested device. The worker validates Lemonade's JSON before merging
 the batch into the stable artifacts. The batch driver supplies the selected
 runtime model names and the subset whose HRX throughput is expected to fail.
 Vulkan results are always mandatory; a successful flagged HRX model is an
-XPASS so stale expectations cannot hide fixes. Separately named skipped checks
-still collect measurements but log SKIP without enforcing the HRX result.
+XPASS so stale expectations cannot hide fixes. Separately named report-only checks
+still collect measurements but log REPORT_ONLY without enforcing the HRX result.
+Artifacts retain each model's expectation, measured result, and check outcome.
 
 Only ``chat-short`` and ``chat-long-output`` are collected: they capture
 short-response and sustained generation throughput for the CI report.
@@ -34,7 +35,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from benchmark_output import append_batch_log, merge_benchmark_output
+from benchmark_output import append_batch_log, atomic_write_json, merge_benchmark_output
 
 
 BENCHMARK_BACKEND_ARGS = "--ignore-eos"
@@ -163,7 +164,7 @@ def summarize_benchmark(
     expected_backend: str,
     expected_models: list[str],
     hrx_xfail_models: set[str],
-    hrx_skip_models: set[str] | frozenset[str] = frozenset(),
+    hrx_report_only_models: set[str] | frozenset[str] = frozenset(),
 ) -> tuple[int, int, bool]:
     """Validate one complete document and classify binary model outcomes."""
     scenario_count = 0
@@ -241,6 +242,7 @@ def summarize_benchmark(
     has_unexpected_outcomes = False
     backend_label = expected_backend.upper()
     backend_is_hrx = expected_backend == "hrx"
+    model_rows = {row["model"]: row for row in raw_models}
     for model in expected_models:
         model_is_present = model in model_failed
         model_has_failed = model_failed.get(model, True)
@@ -248,38 +250,33 @@ def summarize_benchmark(
         model_is_flagged = model in hrx_xfail_models
         xfail_applies = backend_is_hrx and model_is_flagged
 
-        # Skipping the result check still requires a model measurement.
-        model_is_skipped = model in hrx_skip_models
-        skip_applies = backend_is_hrx and model_is_skipped and model_is_present
-        if skip_applies:
+        # Report-only checks still require a model measurement.
+        model_is_report_only = model in hrx_report_only_models
+        report_only_applies = backend_is_hrx and model_is_report_only and model_is_present
+        if report_only_applies:
+            outcome = "REPORT_ONLY"
+            expectation = "report-only"
+        elif xfail_applies:
+            outcome = "XPASS" if model_succeeded else "XFAIL"
+            expectation = "fail"
+        else:
             outcome = "PASS" if model_succeeded else "FAIL"
-            log(f"SKIP: {backend_label} throughput for {model} (measured {outcome})")
-            continue
-
-        if model_succeeded:
-            if xfail_applies:
-                log(
-                    f"XPASS: {backend_label} throughput for {model} "
-                    "completed successfully; this check expects failure"
-                )
-                has_unexpected_outcomes = True
-            continue
-
+            expectation = "pass"
         if model_is_present:
-            failure_reason = "reported failed runs"
+            model_rows[model]["expected_result"] = expectation
+            model_rows[model]["result"] = "pass" if model_succeeded else "fail"
+            model_rows[model]["outcome"] = outcome
+        if report_only_applies:
+            measured = "PASS" if model_succeeded else "FAIL"
+            detail = f"(measured {measured}; report only)"
+        elif model_succeeded:
+            detail = "completed successfully"
+        elif model_is_present:
+            detail = "reported failed runs"
         else:
-            failure_reason = "is absent from a valid benchmark document"
-        if xfail_applies:
-            log(
-                f"XFAIL: {backend_label} throughput for {model} "
-                f"{failure_reason}"
-            )
-        else:
-            log(
-                f"FAIL: {backend_label} throughput for {model} "
-                f"{failure_reason}"
-            )
-            has_unexpected_outcomes = True
+            detail = "is absent from a valid benchmark document"
+        log(f"{outcome}: {backend_label} throughput for {model} {detail}")
+        has_unexpected_outcomes = has_unexpected_outcomes or outcome in ("FAIL", "XPASS")
 
     return scenario_count, failed_scenario_count, has_unexpected_outcomes
 
@@ -293,7 +290,7 @@ def run_benchmark(
     hrx_xfail_models: set[str],
     *,
     env: dict[str, str],
-    hrx_skip_models: set[str] | frozenset[str] = frozenset(),
+    hrx_report_only_models: set[str] | frozenset[str] = frozenset(),
 ) -> tuple[dict[str, Any], bool]:
     """Run and summarize one backend's short and sustained generation scenarios."""
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -330,7 +327,7 @@ def run_benchmark(
             expected_backend=backend,
             expected_models=models,
             hrx_xfail_models=hrx_xfail_models,
-            hrx_skip_models=hrx_skip_models,
+            hrx_report_only_models=hrx_report_only_models,
         )
     )
     log(
@@ -550,7 +547,7 @@ def run(args: argparse.Namespace) -> int:
                     args.models,
                     hrx_xfail_models,
                     env=env,
-                    hrx_skip_models=set(args.hrx_skip_models),
+                    hrx_report_only_models=set(args.hrx_report_only_models),
                 )
             finally:
                 try:
@@ -602,6 +599,8 @@ def run(args: argparse.Namespace) -> int:
                     f"Merged {merged_count} {phase.backend} model(s) from "
                     f"batch {args.batch_number} into {phase.output}"
                 )
+            else:
+                atomic_write_json(phase.output, batch_data)
             has_unexpected_outcomes = (
                 has_unexpected_outcomes or phase_has_unexpected_outcomes
             )
@@ -629,7 +628,7 @@ def main() -> int:
     parser.add_argument("--hrx-response-log", type=Path, required=True)
     parser.add_argument("--vulkan-response-log", type=Path, required=True)
     parser.add_argument("--hrx-xfail-models", nargs="*", required=True)
-    parser.add_argument("--hrx-skip-models", nargs="*", default=[])
+    parser.add_argument("--hrx-report-only-models", nargs="*", default=[])
     parser.add_argument("--models", nargs="+", required=True)
     args = parser.parse_args()
     if args.batched and args.batch_number is None:

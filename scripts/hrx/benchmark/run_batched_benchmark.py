@@ -14,8 +14,8 @@ Terms:
   run_perplexity_benchmark.py). It is invoked once per batch and is expected to
   merge its per-batch results itself.
 - HRX expected result: ``hrx.expected_results`` maps benchmark-spec IDs to
-  "pass", "fail", or "skip" for each model. Omitted checks expect a pass.
-  Expected failures become strict worker XFAILs; skipped checks still collect
+  "pass", "fail", or "report-only" for each model. Omitted checks expect a pass.
+  Expected failures become strict worker XFAILs; report-only checks still collect
   measurements but do not enforce the HRX result. Neither expectation relaxes Vulkan measurements.
 
 Why this exists: CI runners for the HRX release benchmarks have far less free
@@ -29,12 +29,14 @@ Boundary contract:
 
 - Inputs: --benchmark-spec (ordered "benchmarks" with "id" and "argv"),
   --model-manifest (ordered "tiers" and "models"), --model-tier, --work-root,
-  and --max-disk-gib. Both JSON files are fully validated up front; a malformed
+  and --max-disk-gib. Optional --skip-benchmarks is a JSON array of IDs
+  to omit; the remaining workers run in specification order.
+  Both JSON files are fully validated up front; a malformed
   file fails the run before any download.
 - Worker invocation: each worker's argv is run verbatim with the batch-managed
   arguments appended: --batched --batch-number N --models-dir DIR
-  --hrx-xfail-models [NAME...] --hrx-skip-models [NAME...] --models NAME...
-  The names select strict expected failures or skipped checks.
+  --hrx-xfail-models [NAME...] --hrx-report-only-models [NAME...] --models NAME...
+  The names select strict expected failures or report-only checks.
   A spec that already carries any managed argument is rejected so a worker cannot be pointed at
   the wrong models or supplied conflicting failure policy.
 - Exit status: 0 only if every download, every worker, and every cleanup
@@ -242,9 +244,9 @@ def load_manifest(
         )
         for check, result in expected_results.items():
             _require_string_value(check, f"{context}.hrx.expected_results key")
-            if result not in ("pass", "fail", "skip"):
+            if result not in ("pass", "fail", "report-only"):
                 raise BatchBenchmarkError(
-                    f"{context}.hrx.expected_results[{check!r}] must be 'pass', 'fail', or 'skip'"
+                    f"{context}.hrx.expected_results[{check!r}] must be 'pass', 'fail', or 'report-only'"
                 )
             if known_checks is not None:
                 if check not in known_checks:
@@ -318,7 +320,7 @@ def load_benchmark_spec(path: Path) -> list[BenchmarkSpec]:
         "--batch-number",
         "--models-dir",
         "--hrx-xfail-models",
-        "--hrx-skip-models",
+        "--hrx-report-only-models",
         "--models",
     }
     for entry_index, raw_entry in enumerate(entries):
@@ -374,6 +376,32 @@ def load_benchmark_spec(path: Path) -> list[BenchmarkSpec]:
         benchmarks.append(BenchmarkSpec(id=benchmark_id, argv=tuple(argv)))
 
     return benchmarks
+
+
+def select_benchmarks(
+    benchmarks: list[BenchmarkSpec],
+    requested: str,
+) -> list[BenchmarkSpec]:
+    """Validate the user skip list and preserve specification order."""
+    try:
+        ids = json.loads(requested)
+    except json.JSONDecodeError as exc:
+        raise BatchBenchmarkError("--skip-benchmarks must be a JSON array of IDs") from exc
+    if not isinstance(ids, list):
+        raise BatchBenchmarkError("--skip-benchmarks must be a JSON array of IDs")
+    for benchmark_id in ids:
+        _require_string_value(benchmark_id, "--skip-benchmarks entry")
+    known_ids = {benchmark.id for benchmark in benchmarks}
+    unknown_ids = set(ids) - known_ids
+    if unknown_ids:
+        raise BatchBenchmarkError(
+            f"Unknown benchmark IDs: {', '.join(sorted(unknown_ids))}; "
+            f"available IDs: {', '.join(sorted(known_ids))}"
+        )
+    selected = [benchmark for benchmark in benchmarks if benchmark.id not in ids]
+    if not selected:
+        raise BatchBenchmarkError("--skip-benchmarks must leave at least one benchmark")
+    return selected
 
 
 def select_models(
@@ -636,11 +664,11 @@ def build_benchmark_command(
             for model in resident
             if model.hrx_expected_results.get(benchmark.id, "pass") == "fail"
         ),
-        "--hrx-skip-models",
+        "--hrx-report-only-models",
         *(
             model.name
             for model in resident
-            if model.hrx_expected_results.get(benchmark.id, "pass") == "skip"
+            if model.hrx_expected_results.get(benchmark.id, "pass") == "report-only"
         ),
         "--models",
         *(model.name for model in resident),
@@ -672,6 +700,9 @@ def run(args: argparse.Namespace) -> int:
         manifest = load_manifest(
             args.model_manifest, known_checks={benchmark.id for benchmark in benchmarks}
         )
+        # Model expectations may refer to workers omitted from this run.
+        benchmarks = select_benchmarks(benchmarks, args.skip_benchmarks)
+        log(f"Selected benchmarks: {', '.join(benchmark.id for benchmark in benchmarks)}")
         selected = select_models(manifest, args.model_tier)
         work_root = prepare_work_root(args.work_root)
 
@@ -795,6 +826,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         type=Path,
         required=True,
         help="JSON command list; relative argv paths use the current directory",
+    )
+    parser.add_argument(
+        "--skip-benchmarks",
+        default="[]",
+        help='JSON array of benchmark IDs to skip, e.g. ["perplexity"]; default: []',
     )
     parser.add_argument("--model-manifest", type=Path, required=True)
     parser.add_argument("--model-tier", required=True, metavar="TIER")
