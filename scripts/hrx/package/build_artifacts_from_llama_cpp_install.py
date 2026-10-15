@@ -129,6 +129,7 @@ def main() -> int:
         type=Path,
         default=DEFAULT_LLAMA_INSTALL_DIR,
     )
+    parser.add_argument("--include-tests", choices=("true", "false"), default="false")
     parser.add_argument("--release-package-file", type=Path, required=True)
     parser.add_argument("--package-root-name", default="llama.cpp-install")
     args = parser.parse_args()
@@ -139,6 +140,8 @@ def main() -> int:
     package_root = PurePosixPath(args.package_root_name)
 
     release = release_entries(install_dir)
+    if args.include_tests == "true":
+        release.extend(glob_install_tree(install_dir, "bin/test-backend-ops"))
 
     release_archived = create_package(
         package_file=args.release_package_file,

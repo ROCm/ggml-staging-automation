@@ -80,6 +80,24 @@ PR CI runs the `smoke` model tier by default. Apply the `ci:full-models` PR
 label to run the cumulative `full` tier, including every model in
 `benchmarks/hrx/model_manifest.json`.
 
+## HRX backend correctness CI
+
+Dispatch `CI` on the desired branch with `backend_tests_only=true` to build
+and package `test-backend-ops`, then run its full correctness mode on the
+`linux-gfx1151-gpu-rocm` runner. This mode skips model benchmarks and needs
+no model downloads. Ordinary CI keeps its existing model coverage.
+
+```bash
+gh workflow run ci.yml --ref <branch> -f backend_tests_only=true
+```
+
+The `hrx-backend-tests-gfx1151` artifact contains GPU identity, the ROCr pin,
+automation and submodule commits, exact commands, device discovery output,
+the full test log, and `results.json`. A successful result requires supported
+HRX cases to execute and the suite to finish successfully; upstream's
+all-skipped success is rejected. Backend failures preserve their logs and
+fail the job. Discovery or packaging failures do not establish correctness.
+
 ## Releases
 
 The `Release` workflow (`.github/workflows/release.yml`) runs nightly and can
