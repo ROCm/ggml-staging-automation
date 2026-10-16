@@ -76,9 +76,13 @@ same basic packaging model with DLL copying instead of ELF RPATHs.
 
 ## CI model coverage
 
-PR CI runs the `smoke` model tier by default. Apply the `ci:full-models` PR
-label to run the cumulative `full` tier, including every model in
-`benchmarks/hrx/model_manifest.json`.
+PR CI defaults to `single` (Qwen3-0.6B). The cumulative `small` tier covers
+Lemonade's smaller-model suite; `all` covers every model. Automated submodule
+bumps use `all`.
+
+Apply `ci:single-model`, `ci:small-models`, or `ci:all-models` to start CI with
+that coverage; the highest selected tier wins. Manual CI runs also offer all
+three tiers.
 
 ## Releases
 
