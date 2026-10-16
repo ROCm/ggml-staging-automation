@@ -76,9 +76,32 @@ same basic packaging model with DLL copying instead of ELF RPATHs.
 
 ## CI model coverage
 
-PR CI runs the `smoke` model tier by default. Apply the `ci:full-models` PR
-label to run the cumulative `full` tier, including every model in
-`benchmarks/hrx/model_manifest.json`.
+PR CI defaults to the `single` tier (Qwen3-0.6B). Tiers are cumulative:
+`small` contains the existing smaller-model Lemonade suite (currently 25
+models, including some larger than 1 GB); `all` includes every model.
+Both Lemonade benchmarking and perplexity run on HRX and Vulkan.
+
+Apply `ci:single-model`, `ci:small-models`, or `ci:all-models` to request
+coverage explicitly. Adding a coverage label starts CI; the highest selected
+tier wins and remains selected on subsequent PR updates. Unrelated labels do
+not start builds or benchmarks. Removing a coverage label takes effect on
+the next normal PR update. Automated submodule bump PRs request `all`.
+Manual CI runs offer all three tiers and default to `single`.
+
+Unlabeled PRs run builds and benchmarks only when their complete diff changes
+submodule pointers (`llama.cpp`, `hrx-system`), `.gitmodules`,
+`requirements.txt`, `rocm-version.json`, scripts under
+`scripts/hrx/{build,benchmark,package,ci}/`, files under `benchmarks/hrx/`,
+or the `ci.yml`, `build_llama_cpp_linux.yml`, or `release_test_bench.yml`
+workflows. Documentation, security tooling (including Zizmor), and
+bump/release orchestration alone do not trigger these jobs. Coverage labels
+and manual dispatch override this filter. A documentation-only update to a
+PR with earlier relevant changes still runs CI.
+
+New commits and coverage-label requests cancel superseded CI on the same PR.
+There are no push-to-main CI builds or benchmarks, and releases do not run
+GPU benchmarks. CPU security checks and release publishing retain their own
+triggers.
 
 ## Releases
 

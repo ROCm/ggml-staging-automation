@@ -17,25 +17,23 @@ on:
         description: Model tier to benchmark.
         required: true
         type: choice
-        default: smoke
+        default: single
         options:
-          - smoke
-          - full
+          - single
+          - small
+          - all
   pull_request:
     types: [opened, synchronize, reopened, labeled]
-  push:
-    branches:
-      - main
 
 permissions:
   contents: read
   actions: read
 
 concurrency:
-  # The opt-in label supersedes smoke CI just like a new commit. Other labels
+  # Coverage labels supersede active CI just like a new commit. Other labels
   # get separate groups so their skipped runs cannot cancel active benchmarks.
   group: >-
-    ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ github.event.label.name != 'ci:full-models' && github.event.label.name || '' }}
+    ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ !contains(fromJSON('["ci:single-model","ci:small-models","ci:all-models"]'), github.event.label.name) && github.event.label.name || '' }}
   cancel-in-progress: true
 
 jobs:
@@ -53,6 +51,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0
 
       - name: Select CI coverage
         id: selection
