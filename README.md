@@ -84,10 +84,6 @@ Apply `ci:single-model`, `ci:small-models`, or `ci:all-models` to start CI with
 that coverage; the highest selected tier wins. Manual CI runs also offer all
 three tiers.
 
-Builds and benchmarks run for PR changes affecting build or benchmark inputs.
-Coverage labels and manual runs bypass this filter. GPU benchmarks do not
-run automatically after merging or during releases.
-
 ## Releases
 
 The `Release` workflow (`.github/workflows/release.yml`) runs nightly and can
