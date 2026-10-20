@@ -12,6 +12,9 @@ on:
       name:
         type: string
         default: Build
+      runs_on:
+        type: string
+        default: aws-linux-scale-rocm-prod
       artifact_name:
         type: string
         default: llama-cpp-linux-x86_64
@@ -37,7 +40,7 @@ permissions:
 jobs:
   build_llama_cpp_linux:
     name: ${{ inputs.name }}
-    runs-on: aws-linux-scale-rocm-prod
+    runs-on: ${{ inputs.runs_on }}
     timeout-minutes: 90
     container:
       image: quay.io/pypa/manylinux_2_34_x86_64@sha256:d53167459147625634b49200f780617700ade2a8d64934a3b3a3b07ac840593d
