@@ -54,6 +54,13 @@ def main():
     env = dict(os.environ)
     env["GGML_HRX_LOG_DEVICE_EVENTS"] = "1"
     capture("devices-inherited", [binary, "--list-devices"], args.output, env)
+    # Compare the same UID with the device's owning group, without changing
+    # device permissions or the runner account's persistent group membership.
+    if Path("/dev/kfd").exists():
+        device_group = os.stat("/dev/kfd").st_gid
+        capture("devices-with-gpu-group",
+                ["sudo", "-n", "-u", f"#{os.getuid()}", "-g", f"#{device_group}",
+                 binary, "--list-devices"], args.output, env)
     capture("dependencies", ["ldd", binary], args.output, env)
     env["VK_LOADER_DEBUG"] = "error,warn"
     env["LD_DEBUG"] = "libs"
