@@ -90,8 +90,15 @@ def main() -> int:
                     "--vulkan-log", str(prefix.with_suffix(".vulkan.log")),
                     "--hrx-xfail-models", "--models", MODEL,
                 ]
+                print(f"Starting {variant} repetition {repetition}", flush=True)
                 with prefix.with_suffix(".console.log").open("w") as log:
-                    result = subprocess.run(command, stdout=log, stderr=subprocess.STDOUT)
+                    with subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                          text=True, bufsize=1) as result:
+                        for line in result.stdout:
+                            log.write(line)
+                            log.flush()
+                            print(line, end="", flush=True)
+                        result.wait()
                 results.append({"variant": variant, "repetition": repetition, "exit_code": result.returncode})
                 repaired_package = variant == "fixed"
                 worker_failed = result.returncode != 0

@@ -125,14 +125,25 @@ def resolve_models(
 
 def log_llama_perplexity_devices(llama_perplexity: Path) -> None:
     """Record the devices llama-perplexity enumerates before measuring."""
-    result = subprocess.run(
-        [os.fspath(llama_perplexity), "--list-devices"],
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-    )
+    log("Starting llama-perplexity --list-devices (60-second timeout)")
+    try:
+        result = subprocess.run(
+            [os.fspath(llama_perplexity), "--list-devices"],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            timeout=60,
+        )
+    except subprocess.TimeoutExpired as exc:
+        output = exc.stdout or ""
+        if isinstance(output, bytes):
+            output = output.decode("utf-8", errors="replace")
+        log(output.rstrip())
+        raise PerplexityBenchmarkError("Device discovery timed out after 60 seconds") from exc
     log(f"llama-perplexity --list-devices (exit {result.returncode}):")
     log(result.stdout.rstrip())
+    if result.returncode != 0:
+        raise PerplexityBenchmarkError(f"Device discovery failed with exit {result.returncode}")
 
 
 def parse_final_estimate(text: str) -> dict[str, float] | None:

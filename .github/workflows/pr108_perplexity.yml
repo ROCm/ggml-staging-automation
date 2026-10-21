@@ -4,6 +4,12 @@ on:
   push:
     branches: [users/astgeorg/pr108-perplexity-runners]
   workflow_dispatch:
+    inputs:
+      mode:
+        description: Run perplexity or device initialization diagnostics
+        type: choice
+        default: perplexity
+        options: [perplexity, devices]
 
 permissions:
   contents: read
@@ -17,7 +23,7 @@ jobs:
       matrix:
         replica: [1, 2, 3, 4]
     runs-on: linux-gfx1151-gpu-rocm
-    timeout-minutes: 12
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -53,7 +59,15 @@ jobs:
             --archive build/pr108-artifacts/original/llama-cpp-linux-x86_64.tar.gz \
             --package-root-name llama.cpp-install --output-dir build/pr108-original
 
+      - name: Repeat single-model perplexity
+        if: inputs.mode != 'devices'
+        run: |
+          python3 scripts/hrx/benchmark/run_pr108_perplexity.py \
+            --original-package build/pr108-original --fixed-package build/pr108-fixed \
+            --output-dir build/pr108-results --repetitions 5
+
       - name: Diagnose device discovery
+        if: inputs.mode == 'devices'
         run: |
           python3 scripts/hrx/benchmark/diagnose_pr108_devices.py \
             --original-package build/pr108-original --fixed-package build/pr108-fixed \
