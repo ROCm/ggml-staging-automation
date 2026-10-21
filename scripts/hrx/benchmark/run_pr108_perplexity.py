@@ -45,6 +45,7 @@ def select_gpu() -> dict:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--prior-package", type=Path)
     parser.add_argument("--original-package", type=Path, required=True)
     parser.add_argument("--fixed-package", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
@@ -78,8 +79,13 @@ def main() -> int:
         models = inputs / "models"
         download_model(model, models)
         corpus = fetch_corpus(inputs / "corpus")
+        packages = [("original", args.original_package), ("fixed", args.fixed_package)]
+        if args.prior_package:
+            packages.insert(0, ("prior", args.prior_package))
         for repetition in range(1, args.repetitions + 1):
-            for variant, package in (("original", args.original_package), ("fixed", args.fixed_package)):
+            # Alternate ordering to reduce systematic warmup and ordering effects.
+            ordered_packages = packages if repetition % 2 else list(reversed(packages))
+            for variant, package in ordered_packages:
                 prefix = output / f"{variant}-{repetition}"
                 command = [
                     sys.executable, str(Path(__file__).with_name("run_perplexity_benchmark.py")),

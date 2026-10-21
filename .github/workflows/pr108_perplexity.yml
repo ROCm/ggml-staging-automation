@@ -50,6 +50,14 @@ jobs:
           run-id: '39413873090'
           github-token: ${{ github.token }}
 
+      - name: Download prior green package
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: llama-cpp-linux-x86_64
+          path: build/pr108-artifacts/prior
+          run-id: '38892690651'
+          github-token: ${{ github.token }}
+
       - name: Extract packages
         run: |
           python3 scripts/hrx/package/extract_release_package.py \
@@ -59,12 +67,16 @@ jobs:
             --archive build/pr108-artifacts/original/llama-cpp-linux-x86_64.tar.gz \
             --package-root-name llama.cpp-install --output-dir build/pr108-original
 
+          python3 scripts/hrx/package/extract_release_package.py \
+            --archive build/pr108-artifacts/prior/llama-cpp-linux-x86_64.tar.gz \
+            --package-root-name llama.cpp-install --output-dir build/pr108-prior
+
       - name: Repeat single-model perplexity
         if: inputs.mode != 'devices'
         run: |
           python3 scripts/hrx/benchmark/run_pr108_perplexity.py \
             --original-package build/pr108-original --fixed-package build/pr108-fixed \
-            --output-dir build/pr108-results --repetitions 5
+            --prior-package build/pr108-prior --output-dir build/pr108-results --repetitions 5
 
       - name: Diagnose device discovery
         if: inputs.mode == 'devices'
@@ -83,4 +95,4 @@ jobs:
 
       - name: Remove packages from self-hosted runner
         if: always()
-        run: rm -rf build/pr108-artifacts build/pr108-fixed build/pr108-original
+        run: rm -rf build/pr108-artifacts build/pr108-fixed build/pr108-original build/pr108-prior
