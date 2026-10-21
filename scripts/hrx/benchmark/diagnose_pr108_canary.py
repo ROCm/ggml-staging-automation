@@ -59,7 +59,9 @@ def main():
     if Path("/dev/kfd").exists():
         device_group = os.stat("/dev/kfd").st_gid
         capture("devices-with-gpu-group",
-                ["sudo", "-n", "-u", f"#{os.getuid()}", "-g", f"#{device_group}",
+                ["sudo", "-n", "setpriv", "--reuid", str(os.getuid()),
+                 "--regid", str(os.getgid()), "--groups",
+                 ",".join(str(group) for group in sorted(set(os.getgroups() + [device_group]))),
                  binary, "--list-devices"], args.output, env)
     capture("dependencies", ["ldd", binary], args.output, env)
     env["VK_LOADER_DEBUG"] = "error,warn"
