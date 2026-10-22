@@ -23,8 +23,8 @@ jobs:
         # Temporary workaround for canary containers missing host GPU groups.
         run: |
           for gid in $(stat -c %g /dev/kfd /dev/dri/renderD* | sort -u); do
-            getent group "$gid" >/dev/null || sudo -n groupadd -g "$gid" "ci-gpu-$gid"
-            sudo -n usermod -aG "$gid" "$(id -un)"
+            getent group "$gid" >/dev/null || sudo -n /usr/sbin/groupadd -g "$gid" "ci-gpu-$gid"
+            sudo -n /usr/sbin/usermod -aG "$gid" "$(id -un)"
           done
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:

@@ -70,8 +70,8 @@ jobs:
         # Temporary workaround for canary containers missing host GPU groups.
         run: |
           for gid in $(stat -c %g /dev/kfd /dev/dri/renderD* | sort -u); do
-            getent group "$gid" >/dev/null || sudo -n groupadd -g "$gid" "ci-gpu-$gid"
-            sudo -n usermod -aG "$gid" "$(id -un)"
+            getent group "$gid" >/dev/null || sudo -n /usr/sbin/groupadd -g "$gid" "ci-gpu-$gid"
+            sudo -n /usr/sbin/usermod -aG "$gid" "$(id -un)"
           done
 
       - name: Checkout Lemonade HRX integration
