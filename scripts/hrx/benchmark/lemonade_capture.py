@@ -20,7 +20,16 @@ from pathlib import Path
 
 
 @contextmanager
-def capture_responses(target_port: int, output: Path):
+def capture_responses(target_port: int, output: Path, model_name: str):
+    routes = (
+        ("GET", "/api/v1/system-info"),
+        ("GET", "/api/v1/system-stats"),
+        ("GET", "/api/v1/health"),
+        ("GET", "/api/v1/models/" + model_name),
+        ("POST", "/api/v1/load"),
+        ("POST", "/api/v1/unload"),
+        ("POST", "/api/v1/chat/completions"),
+    )
     records = []
     errors = []
     lock = threading.Lock()
@@ -33,9 +42,14 @@ def capture_responses(target_port: int, output: Path):
             connection = http.client.HTTPConnection("127.0.0.1", target_port, timeout=3600)
             try:
                 body = self.rfile.read(int(self.headers.get("Content-Length", "0")))
-                headers = {k: v for k, v in self.headers.items()
-                           if k.lower() not in ("host", "connection", "transfer-encoding")}
-                connection.request(self.command, self.path, body, headers)
+                route = next(((method, path) for method, path in routes
+                              if (self.command, self.path) == (method, path)), None)
+                if route is None:
+                    self.send_error(404, "Not a benchmark endpoint")
+                    return
+                method, path = route
+                headers = {"Content-Type": "application/json", "Accept-Encoding": "gzip, deflate"}
+                connection.request(method, path, body, headers)
                 response = connection.getresponse()
                 payload = response.read()
                 is_completion = self.path.endswith("/chat/completions")
@@ -53,9 +67,10 @@ def capture_responses(target_port: int, output: Path):
                         with output.open("a", encoding="utf-8") as stream:
                             stream.write(json.dumps(record) + "\n")
                 self.send_response(response.status)
-                for key, value in response.getheaders():
-                    if key.lower() not in ("connection", "transfer-encoding", "content-length"):
-                        self.send_header(key, value)
+                self.send_header("Content-Type", "application/json")
+                for encoding in ("gzip", "deflate"):
+                    if response.getheader("Content-Encoding") == encoding:
+                        self.send_header("Content-Encoding", encoding)
                 self.send_header("Content-Length", str(len(payload)))
                 self.end_headers()
                 self.wfile.write(payload)

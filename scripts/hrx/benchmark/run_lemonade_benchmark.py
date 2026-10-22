@@ -197,7 +197,7 @@ def classify(expectation, succeeded):
 def run_case(executable, model, backend, mode, root, env, port, response_log):
     name = registration_name(model, backend, mode)
     output = root / f"{name}.json"
-    with capture_responses(port, response_log) as (capture_port, records):
+    with capture_responses(port, response_log, name) as (capture_port, records):
         command = [str(executable), "--host", "127.0.0.1", "--port", str(capture_port),
                    "bench", "--backend", backend, "--ctx-size", "4096",
                    "--warmup", "1", "--runs", "3", "--scenarios", SCENARIOS[0],

@@ -110,7 +110,7 @@ class MtpCI(unittest.TestCase):
         manifest = load_manifest(ROOT / "benchmarks/hrx/model_manifest.json")
         model = replace(manifest.models[0], expected_results={}, mtp=("off", "on"))
         @contextmanager
-        def captured(_port, _path):
+        def captured(_port, _path, _model):
             yield 1234, records
         def bench(command, **_kwargs):
             name = command[-1]
@@ -137,7 +137,7 @@ class MtpCI(unittest.TestCase):
         manifest = load_manifest(ROOT / "benchmarks/hrx/model_manifest.json")
         model = next(m for m in manifest.models if m.id == "qwen3.5-35b-a3b-mtp")
         @contextmanager
-        def captured(_port, _path):
+        def captured(_port, _path, _model):
             yield 1234, []
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -169,6 +169,7 @@ class MtpCI(unittest.TestCase):
                 self.rfile.read(int(self.headers["Content-Length"]))
                 self.send_response(200)
                 self.send_header("Content-Encoding", "gzip")
+                self.send_header("X-Upstream-Only", "discard")
                 self.send_header("Content-Length", str(len(payload)))
                 self.end_headers()
                 self.wfile.write(payload)
@@ -177,14 +178,22 @@ class MtpCI(unittest.TestCase):
         thread.start()
         try:
             with tempfile.TemporaryDirectory() as tmp:
-                with capture_responses(server.server_port, Path(tmp) / "responses") as (port, records):
+                with capture_responses(server.server_port, Path(tmp) / "responses", "fixture") as (port, records):
                     connection = http.client.HTTPConnection("127.0.0.1", port)
                     connection.request("POST", "/api/v1/chat/completions", json.dumps({"model": "fixture"}))
                     reply = connection.getresponse()
                     self.assertEqual(reply.status, 200)
                     self.assertEqual(reply.read(), payload)
                     self.assertEqual(reply.getheader("Content-Encoding"), "gzip")
+                    self.assertIsNone(reply.getheader("X-Upstream-Only"))
                     connection.close()
+                    for path in ("http://example.com/api/v1/chat/completions", "/api/v1/models/other"):
+                        connection = http.client.HTTPConnection("127.0.0.1", port)
+                        connection.request("GET", path)
+                        reply = connection.getresponse()
+                        self.assertEqual(reply.status, 404)
+                        reply.read()
+                        connection.close()
                 self.assertEqual(draft_metrics(records)["accepted"], 3)
         finally:
             server.shutdown()
