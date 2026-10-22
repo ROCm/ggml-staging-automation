@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import os
 import shutil
+import time
 from pathlib import Path
 
 from hrx_build import (
@@ -173,6 +174,7 @@ def main() -> int:
     parser.add_argument("--build-type", default="Release")
     parser.add_argument("--target", default="all")
     parser.add_argument("--no-install", action="store_true")
+    parser.add_argument("--build-hrx-tests", action="store_true")
     parser.add_argument("--build-tests", action="store_true")
     parser.add_argument("--build-examples", action="store_true")
     parser.add_argument("--backend-dl", action="store_true")
@@ -202,6 +204,15 @@ def main() -> int:
         backend_dl=args.backend_dl,
         extra_cmake_args=extra_cmake_args,
     )
+    if args.build_hrx_tests:
+        # Build only the HRX suites after installing the ordinary release tree.
+        start = time.monotonic()
+        env = rocm_env(args.rocm_root.resolve())
+        run(["cmake", "-S", REPO_ROOT / "llama.cpp", "-B", args.llama_build_dir,
+             "-DLLAMA_BUILD_TESTS=ON"], env=env)
+        run(["cmake", "--build", args.llama_build_dir, "--target",
+             "test-hrx-buffer", "hrx-backend-test", "test-hrx-loom-jit", "test-hrx-ops"], env=env)
+        print(f"HRX test configure/build overhead: {time.monotonic() - start:.3f} seconds", flush=True)
     return 0
 
 
