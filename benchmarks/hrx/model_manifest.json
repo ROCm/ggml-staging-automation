@@ -7,7 +7,7 @@
   "models": [
     {
       "id": "qwen3.5-35b-a3b-mtp",
-      "tier": "single",
+      "tier": "all",
       "name": "Qwen3.5-35B-A3B-MTP-GGUF",
       "repository": "unsloth/Qwen3.5-35B-A3B-MTP-GGUF",
       "revision": "63af8373893a7a73c6dfcb84cb63d815981da5e0",
@@ -150,7 +150,7 @@
     },
     {
       "id": "qwen3-0.6b",
-      "tier": "small",
+      "tier": "single",
       "name": "Qwen3-0.6B-GGUF",
       "repository": "unsloth/Qwen3-0.6B-GGUF",
       "revision": "50968a4468ef4233ed78cd7c3de230dd1d61a56b",
