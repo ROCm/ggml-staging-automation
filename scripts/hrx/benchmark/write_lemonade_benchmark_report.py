@@ -93,8 +93,8 @@ def format_report(hrx, vulkan, *, runner_name=None):
               "actual drafting is not verified.", ""]
     for scenario in dict.fromkeys(key[2] for key in h):
         lines += [f"## {format_table_cell(scenario)}", "",
-                  "| Model / test mode | Context | Vulkan tok/s | HRX tok/s | HRX / Vulkan | Vulkan result | HRX result |",
-                  "| --- | ---: | ---: | ---: | ---: | --- | --- |"]
+                  "| Model / test mode | Vulkan tok/s | HRX tok/s | HRX / Vulkan | HRX result |",
+                  "| --- | ---: | ---: | ---: | --- |"]
         for key, (hm, hr) in h.items():
             if key[2] != scenario:
                 continue
@@ -109,8 +109,7 @@ def format_report(hrx, vulkan, *, runner_name=None):
             rate_text = lambda rate: "—" if rate is None else f"{rate:.1f}"
             outcome = lambda model: (f"{model['result'].upper()} (report only)"
                 if model["outcome"] == "REPORT_ONLY" else model["outcome"])
-            cells = [key[0], str(key[1]), rate_text(vr), rate_text(hr), ratio,
-                     outcome(vm), outcome(hm)]
+            cells = [key[0], rate_text(vr), rate_text(hr), ratio, outcome(hm)]
             lines.append("| " + " | ".join(format_table_cell(c) for c in cells) + " |")
         lines.append("")
     errors = [(backend, model["model"], error)
