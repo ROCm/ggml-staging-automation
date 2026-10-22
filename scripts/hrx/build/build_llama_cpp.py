@@ -209,7 +209,7 @@ def main() -> int:
         start = time.monotonic()
         env = rocm_env(args.rocm_root.resolve())
         run(["cmake", "-S", REPO_ROOT / "llama.cpp", "-B", args.llama_build_dir,
-             "-DLLAMA_BUILD_TESTS=ON"], env=env)
+             "-DLLAMA_BUILD_TESTS=ON", "-DCMAKE_FIND_PACKAGE_TARGETS_GLOBAL=ON"], env=env)
         run(["cmake", "--build", args.llama_build_dir, "--target",
              "test-hrx-buffer", "hrx-backend-test", "test-hrx-loom-jit", "test-hrx-ops"], env=env)
         print(f"HRX test configure/build overhead: {time.monotonic() - start:.3f} seconds", flush=True)

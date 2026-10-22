@@ -32,8 +32,9 @@ def main():
         entries.append(PackageEntry(PurePosixPath("bin") / name, binary))
         ctest.append(
             f'add_test({name} "${{CMAKE_CURRENT_LIST_DIR}}/bin/{name}" '
-            f'--{prefix}-test-jobs {workers} --{prefix}-test-output all)\n'
-            f'set_tests_properties({name} PROPERTIES TIMEOUT 900)\n'
+            f'--{prefix}-test-jobs {workers} --{prefix}-test-filter . --{prefix}-test-output all)\n'
+            f'set_tests_properties({name} PROPERTIES TIMEOUT 900 '
+            f'FAIL_REGULAR_EXPRESSION "test skipped: no device")\n'
         )
     (staging / "CTestTestfile.cmake").write_text("".join(ctest))
     revisions = {
