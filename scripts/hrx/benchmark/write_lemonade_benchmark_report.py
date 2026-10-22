@@ -1,10 +1,46 @@
 #!/usr/bin/env python3
 # Copyright Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
-"""Compare HRX and Vulkan for the same model, test mode, context and scenario.
+"""Turn Lemonade's HRX/Vulkan artifacts into a CI throughput summary.
 
-Recipe names differ intentionally: HRX uses llamacpp-hrx and Vulkan llamacpp.
-The worker gives expanded cases distinct names and records both outcomes.
+``run_lemonade_benchmark.py`` produces the input pair. A scenario is one
+prompt/generation setting within a model's recipe/context configuration.
+Collection owns scenario selection; the report discovers scenarios from the
+current-run pair without maintaining its own allowlist.
+
+The artifact shape, reduced to report fields and recipe context (``# key``
+marks comparison-key fields; comments are explanatory, not JSON syntax)::
+
+    {"models": [
+      {"model": "example-model [mtp:on]",               # key: model and test mode
+       "result": "fail", "outcome": "REPORT_ONLY",
+       "errors": ["another-scenario: inference failed"],
+       "results": [
+         {"recipe": "llamacpp", "backend_args": "",
+          "ctx_size": 4096,                            # key
+          "scenarios": [
+            {"name": "example-scenario",               # key
+             "failed_runs": 0, "tps": {"mean": 42.0}},
+            {"name": "another-scenario",               # key
+             "failed_runs": 3, "all_runs_failed": true}]}]}]}
+
+The worker gives expanded test modes distinct model labels. Comparison keys
+are model/case label, context size and scenario name. Backend and recipe are
+excluded because HRX uses llamacpp-hrx and Vulkan uses regular llamacpp.
+Backend arguments are also excluded; the worker owns mode configuration and
+validates the selected recipe/backend before writing these artifacts.
+
+Both artifacts must contain the same comparison keys. Recorded failures still
+have entries; missing entries indicate an incomplete or mismatched pair.
+Lemonade's statistics cover successful samples only; ``all_runs_failed``
+entries have no usable TPS. Natural end-of-text stopping can produce different
+output-token counts without preventing comparison of the supplied rates.
+Ratios are omitted when either model case failed or Vulkan has no nonzero rate.
+
+The worker adds model-level outcomes and errors. Report-only checks show their
+measured result even when it does not block CI. The runner name provides
+context for machine-dependent throughput differences. This script owns its
+two-input CLI; shared output and failure contracts live in ``benchmark_report``.
 """
 from __future__ import annotations
 import argparse
