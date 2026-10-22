@@ -99,7 +99,9 @@ package and its SHA-256. CI verifies the archive and records the pin in
 `metadata.json`; it does not build Lemonade. Each private daemon uses the
 CI-produced llama-server through `hrx.hrx_bin` and `llamacpp.vulkan_bin`, with
 model and executable fetching disabled. Model registrations for `llamacpp-hrx`
-and `llamacpp` share the same checksum-verified GGUF via snapshot-cache links.
+and `llamacpp` use `source: local_path` with the absolute filename of the same
+checksum-verified GGUF. No Hugging Face cache layout or environment override is
+needed.
 Manifest names also name their local model directories and remain independent
 of Lemonade's `user.*` registration namespace.
 

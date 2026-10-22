@@ -4,7 +4,7 @@
 """Benchmark identical pinned GGUFs through released Lemonade's HRX/Vulkan recipes.
 
 The manifest owns model identity, optional MTP cases and per-case expectations.
-Private user registrations share the verified files through a pinned HF snapshot;
+Private user registrations point directly to the same verified local GGUF;
 no model or executable downloads are allowed. Each case uses ordinary Lemonade
 bench, including natural EOS. MTP on uses Lemonade's automatic defaults;
 verification of actual drafting is deferred until counters are readily available.
@@ -33,15 +33,14 @@ def log(message: str) -> None:
     print(message, flush=True)
 
 
-def prepare_state(state_root: Path) -> tuple[Path, Path, Path]:
+def prepare_state(state_root: Path) -> tuple[Path, Path]:
     """Keep Lemonade runtime state under one private temporary root."""
     cache_dir = state_root / "lemonade"
-    hf_home = state_root / "huggingface"
     runtime_dir = state_root / "runtime"
-    for path in (cache_dir, hf_home, runtime_dir):
+    for path in (cache_dir, runtime_dir):
         path.mkdir(parents=True)
     runtime_dir.chmod(0o700)
-    return cache_dir, hf_home, runtime_dir
+    return cache_dir, runtime_dir
 
 
 def request(port: int, path: str, timeout: float = 10.0) -> tuple[int, bytes]:
@@ -155,22 +154,16 @@ def configure(executable, llama_server, env, port):
             raise RuntimeError(f"Lemonade did not retain {key}")
 
 
-def register_models(models, models_dir, cache_dir, hf_home):
+def register_models(models, models_dir, cache_dir):
     definitions = {}
     options = {}
     for model in models:
-        snapshot = hf_home / "hub" / ("models--" + model.repository.replace("/", "--"))
-        target = snapshot / "snapshots" / model.revision / model.filename
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.symlink_to((models_dir / model.name / model.filename).resolve(strict=True))
-        refs = snapshot / "refs"
-        refs.mkdir(exist_ok=True)
-        (refs / "main").write_text(model.revision, encoding="utf-8")
+        checkpoint = str((models_dir / model.name / model.filename).resolve(strict=True))
         for backend, recipe in (("hrx", "llamacpp-hrx"), ("vulkan", "llamacpp")):
             for mode in model.mtp:
                 name = registration_name(model, backend, mode)
                 definitions[name] = {"recipe": recipe, "labels": ["chat", "custom"],
-                    "checkpoint": f"{model.repository}:{model.filename}"}
+                    "source": "local_path", "checkpoint": checkpoint}
                 argument_key = "hrx_args" if backend == "hrx" else "llamacpp_args"
                 # Only disable explicitly. On must exercise Lemonade's auto-enablement.
                 arguments = "--spec-type none" if mode == "off" else ""
@@ -291,10 +284,9 @@ def run(args):
         server_log = getattr(args, backend + "_server_log")
         with tempfile.TemporaryDirectory(dir=models_dir.parent, prefix="lemonade-state-") as tmp:
             root = Path(tmp)
-            cache_dir, hf_home, runtime_dir = prepare_state(root)
-            register_models(models, models_dir, cache_dir, hf_home)
-            env = dict(os.environ, HF_HOME=str(hf_home), HF_HUB_CACHE=str(hf_home / "hub"),
-                       LEMONADE_CACHE_DIR=str(cache_dir), XDG_RUNTIME_DIR=str(runtime_dir))
+            cache_dir, runtime_dir = prepare_state(root)
+            register_models(models, models_dir, cache_dir)
+            env = dict(os.environ, LEMONADE_CACHE_DIR=str(cache_dir), XDG_RUNTIME_DIR=str(runtime_dir))
             log_path = root / "server.log"
             process = None
             data = {"models": []}
