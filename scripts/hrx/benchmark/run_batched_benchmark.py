@@ -13,10 +13,11 @@ Terms:
 - Benchmark worker: a command from the benchmark specification (for example
   run_perplexity_benchmark.py). It is invoked once per batch and is expected to
   merge its per-batch results itself.
-- HRX expected result: ``hrx.expected_results`` maps benchmark-spec IDs to
-  "pass", "fail", or "report-only" for each model. Omitted checks expect a pass.
-  Expected failures become strict worker XFAILs; report-only checks still collect
-  measurements but do not enforce the HRX result. Neither expectation relaxes Vulkan measurements.
+- Expected result: ``expected_results`` maps check, backend and mode to
+  "pass", "fail", or "report-only". Omitted cases expect a pass. Workers read
+  these expectations from the manifest; failures and XPASS are strict.
+- MTP modes: optional ``mtp: ["off", "on"]`` expands only Lemonade benchmarks.
+  Perplexity remains one comparison per model using the "default" mode.
 
 Why this exists: CI runners for the HRX release benchmarks have far less free
 disk than the full model set requires. Instead of pinning benchmarks to
@@ -35,8 +36,7 @@ Boundary contract:
   file fails the run before any download.
 - Worker invocation: each worker's argv is run verbatim with the batch-managed
   arguments appended: --batched --batch-number N --models-dir DIR
-  --hrx-xfail-models [NAME...] --hrx-report-only-models [NAME...] --models NAME...
-  The names select strict expected failures or report-only checks.
+  --models NAME...
   A spec that already carries any managed argument is rejected so a worker cannot be pointed at
   the wrong models or supplied conflicting failure policy.
 - Exit status: 0 only if every download, every worker, and every cleanup
@@ -105,7 +105,8 @@ class DownloadError(RuntimeError):
 class ModelSpec:
     id: str
     tier: str
-    hrx_expected_results: dict[str, str]
+    expected_results: dict[str, dict[str, dict[str, str]]]
+    mtp: tuple[str, ...]
     name: str
     directory: str
     repository: str
@@ -113,6 +114,9 @@ class ModelSpec:
     filename: str
     size_bytes: int
     sha256: str
+
+    def expectation(self, check: str, backend: str, mode: str = "default") -> str:
+        return self.expected_results.get(check, {}).get(backend, {}).get(mode, "pass")
 
     @property
     def download_url(self) -> str:
@@ -238,21 +242,34 @@ def load_manifest(
         filename = _require_string(entry, "filename", context)
         sha256 = _require_string(entry, "sha256", context)
         size_bytes = entry.get("size_bytes")
-        hrx = _require_object(entry.get("hrx", {}), f"{context}.hrx")
-        expected_results = _require_object(
-            hrx.get("expected_results", {}), f"{context}.hrx.expected_results"
-        )
-        for check, result in expected_results.items():
-            _require_string_value(check, f"{context}.hrx.expected_results key")
-            if result not in ("pass", "fail", "report-only"):
-                raise BatchBenchmarkError(
-                    f"{context}.hrx.expected_results[{check!r}] must be 'pass', 'fail', or 'report-only'"
-                )
+        mtp = entry.get("mtp", ["default"])
+        mtp_is_list = isinstance(mtp, list)
+        mtp_is_present = bool(mtp)
+        valid_mtp_list = mtp_is_list and mtp_is_present
+        if not valid_mtp_list:
+            raise BatchBenchmarkError(f"{context}.mtp must be a non-empty list")
+        allowed_modes = {"off", "on"} if "mtp" in entry else {"default"}
+        for mode in mtp:
+            if not isinstance(mode, str):
+                raise BatchBenchmarkError(f"{context}.mtp values must be strings")
+            if mode not in allowed_modes:
+                raise BatchBenchmarkError(f"{context}.mtp contains invalid mode {mode!r}")
+        if len(set(mtp)) != len(mtp):
+            raise BatchBenchmarkError(f"{context}.mtp contains duplicate modes")
+        expected_results = _require_object(entry.get("expected_results", {}), context)
+        for check, backends in expected_results.items():
             if known_checks is not None:
                 if check not in known_checks:
-                    raise BatchBenchmarkError(
-                        f"{context}.hrx.expected_results references unknown check {check!r}"
-                    )
+                    raise BatchBenchmarkError(f"{context}: unknown check {check!r}")
+            valid_modes = set(mtp) if check == "lemonade-benchmark" else {"default"}
+            for backend, modes in _require_object(backends, context).items():
+                if backend not in ("hrx", "vulkan"):
+                    raise BatchBenchmarkError(f"{context}: unknown backend {backend!r}")
+                for mode, result in _require_object(modes, context).items():
+                    if mode not in valid_modes:
+                        raise BatchBenchmarkError(f"{context}: unused mode {mode!r} for {check}")
+                    if result not in ("pass", "fail", "report-only"):
+                        raise BatchBenchmarkError(f"{context}: invalid expectation {result!r}")
 
         _validate_local_name(directory, "directory", context)
         _validate_local_name(filename, "filename", context)
@@ -285,7 +302,8 @@ def load_manifest(
             ModelSpec(
                 id=model_id,
                 tier=tier,
-                hrx_expected_results=expected_results,
+                expected_results=expected_results,
+                mtp=tuple(mtp),
                 name=name,
                 directory=directory,
                 repository=repository,
@@ -319,8 +337,6 @@ def load_benchmark_spec(path: Path) -> list[BenchmarkSpec]:
         "--batched",
         "--batch-number",
         "--models-dir",
-        "--hrx-xfail-models",
-        "--hrx-report-only-models",
         "--models",
     }
     for entry_index, raw_entry in enumerate(entries):
@@ -658,18 +674,6 @@ def build_benchmark_command(
         str(batch_number),
         "--models-dir",
         os.fspath(models_dir),
-        "--hrx-xfail-models",
-        *(
-            model.name
-            for model in resident
-            if model.hrx_expected_results.get(benchmark.id, "pass") == "fail"
-        ),
-        "--hrx-report-only-models",
-        *(
-            model.name
-            for model in resident
-            if model.hrx_expected_results.get(benchmark.id, "pass") == "report-only"
-        ),
         "--models",
         *(model.name for model in resident),
     ]

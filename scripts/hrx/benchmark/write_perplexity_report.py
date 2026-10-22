@@ -44,11 +44,13 @@ def format_comparison(pair: dict[str, Any]) -> str:
 
 
 def format_check(row: dict[str, Any]) -> str:
-    if row["reference_result"] == "fail":
-        return f"FAIL (Vulkan); HRX {row['outcome']}"
-    if row["outcome"] == "REPORT_ONLY":
-        return f"{row['result'].upper()} (report only)"
-    return row["outcome"]
+    hrx = row["outcome"]
+    vulkan = row["reference_outcome"]
+    if hrx == "REPORT_ONLY":
+        hrx = f"{row['result'].upper()} (report only)"
+    if vulkan == "REPORT_ONLY":
+        vulkan = f"{row['reference_result'].upper()} (report only)"
+    return f"HRX {hrx}; Vulkan {vulkan}"
 
 
 def format_report(document: dict[str, Any]) -> str:

@@ -13,8 +13,8 @@ failures remain distinct; only valid pairs receive a numerical verdict. Batch
 merging simply appends complete rows to models using the shared output helper.
 
 Each row's result and outcome aggregate HRX across both regimes before applying
-its one perplexity expectation. REPORT_ONLY still collects measurements and preserves
-the raw result. Vulkan failures are always fatal and recorded in reference_result.
+its backend-specific perplexity expectations. REPORT_ONLY still collects measurements and preserves
+the raw result. Vulkan outcomes are independently classified and recorded in reference_result and reference_outcome.
 The combined artifact and separate backend logs are written before returning a
 failing exit status. The report consumes this artifact as one comparison table.
 Lemonade benchmark expectations are separate.
@@ -270,8 +270,8 @@ def run_phase(
     return measurements
 
 
-def evaluate_models(document: dict, xfail: set[str], report_only: set[str]) -> bool:
-    """Apply the HRX expectation once; never waive a broken Vulkan reference."""
+def evaluate_models(document: dict) -> bool:
+    """Apply independent backend expectations after both numerical regimes."""
     unexpected = False
     maximum = document["settings"]["max_perplexity_ratio"]
     for row in document["models"]:
@@ -289,30 +289,33 @@ def evaluate_models(document: dict, xfail: set[str], report_only: set[str]) -> b
             )
             measurement_failed = measurement["status"] != "ok"
             numerically_failed = verdict == "fail"
-            hrx_failed = hrx_failed or measurement_failed or numerically_failed
+            comparison_unavailable = verdict == "unavailable"
+            hrx_failed = (hrx_failed or measurement_failed or numerically_failed
+                          or comparison_unavailable)
             if baseline["status"] != "ok":
                 log(f"FAIL: Vulkan perplexity for {name} [{regime_id}]: {baseline['error']}")
-                unexpected = True
                 vulkan_failed = True
             log(f"HRX perplexity for {name} [{regime_id}]: "
                 f"measurement={measurement['status']}, numerical={verdict}, "
                 f"ratio={pair['ratio']}")
         row["result"] = "fail" if hrx_failed else "pass"
         row["reference_result"] = "fail" if vulkan_failed else "pass"
-        if name in report_only:
-            outcome = "REPORT_ONLY"
-        elif name in xfail:
-            outcome = "XFAIL" if hrx_failed else "XPASS"
-        else:
-            outcome = "FAIL" if hrx_failed else "PASS"
-        row["outcome"] = outcome
-        log(f"{outcome}: HRX aggregate perplexity for {name}")
-        unexpected = unexpected or outcome in ("FAIL", "XPASS")
+        for backend, failed in (("hrx", hrx_failed), ("vulkan", vulkan_failed)):
+            expectation = row["expected_results"][backend]
+            if expectation == "report-only":
+                outcome = "REPORT_ONLY"
+            elif expectation == "fail":
+                outcome = "XFAIL" if failed else "XPASS"
+            else:
+                outcome = "FAIL" if failed else "PASS"
+            field = "outcome" if backend == "hrx" else "reference_outcome"
+            row[field] = outcome
+            log(f"{outcome}: {backend} aggregate perplexity for {name}")
+            unexpected = unexpected or outcome in ("FAIL", "XPASS")
     return unexpected
 
 
 def run(args: argparse.Namespace) -> int:
-    hrx_xfail_models = set(args.hrx_xfail_models)
     llama_perplexity = args.llama_perplexity.resolve()
     models_dir = args.models_dir.resolve()
     corpus_file = args.corpus_file.resolve()
@@ -368,6 +371,8 @@ def run(args: argparse.Namespace) -> int:
             {
                 "model": model.spec.name,
                 "file": model.spec.filename,
+                "expected_results": {backend: model.spec.expectation("perplexity", backend)
+                                     for backend in ("hrx", "vulkan")},
                 "batch": args.batch_number,
                 "regimes": {regime_id: {} for regime_id in REGIMES},
             }
@@ -424,10 +429,7 @@ def run(args: argparse.Namespace) -> int:
                     row["model"]
                 ]
 
-        has_unexpected_outcomes = evaluate_models(
-            batch_data, hrx_xfail_models,
-            set(args.hrx_report_only_models),
-        )
+        has_unexpected_outcomes = evaluate_models(batch_data)
         if args.batched:
             merged_count = merge_benchmark_output(args.output, batch_data)
             log(f"Merged {merged_count} model(s) from "
@@ -466,8 +468,6 @@ def main() -> int:
         default=[],
         help="Extra argument forwarded to llama-perplexity (repeatable).",
     )
-    parser.add_argument("--hrx-xfail-models", nargs="*", required=True)
-    parser.add_argument("--hrx-report-only-models", nargs="*", default=[])
     parser.add_argument("--models", nargs="+", required=True)
     args = parser.parse_args()
     ratio_is_finite = math.isfinite(args.max_perplexity_ratio)
