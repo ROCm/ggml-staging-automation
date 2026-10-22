@@ -4,8 +4,7 @@
 """Compare HRX and Vulkan for the same model, MTP mode, context and scenario.
 
 Recipe names differ intentionally: HRX uses llamacpp-hrx and Vulkan llamacpp.
-The worker gives expanded cases distinct names and records both outcomes. Draft
-counters include warmups and are diagnostics, not a numerical-correctness score.
+The worker gives expanded cases distinct names and records both outcomes.
 """
 from __future__ import annotations
 import argparse
@@ -54,7 +53,8 @@ def format_report(hrx, vulkan, *, runner_name=None):
         lines += [f"Runner: {format_table_cell(runner_name)}", ""]
     lines += ["Rates use backend timings and natural EOS termination. "
               "Each row compares identical weights and requested MTP settings. "
-              "Ratios are omitted when either case fails.", ""]
+              "Ratios are omitted when either case fails. MTP on requests Lemonade defaults; "
+              "actual drafting is not verified.", ""]
     for scenario in dict.fromkeys(key[2] for key in h):
         lines += [f"## {format_table_cell(scenario)}", "",
                   "| Model / MTP case | Context | Vulkan tok/s | HRX tok/s | HRX / Vulkan | Vulkan result | HRX result |",
@@ -77,17 +77,6 @@ def format_report(hrx, vulkan, *, runner_name=None):
                      outcome(vm), outcome(hm)]
             lines.append("| " + " | ".join(format_table_cell(c) for c in cells) + " |")
         lines.append("")
-    lines += ["## Draft counters (report only)", "",
-              "Includes warmup requests. Acceptance is not proof of numerical correctness.", "",
-              "| Model / MTP case | Backend | Drafted | Accepted | Acceptance |",
-              "| --- | --- | ---: | ---: | ---: |"]
-    for backend, document in (("HRX", hrx), ("Vulkan", vulkan)):
-        for model in document["models"]:
-            metric = model["speculative"]
-            rate = metric["acceptance_rate"]
-            percent = "—" if rate is None else f"{100 * rate:.1f}%"
-            lines.append(f"| {format_table_cell(model['model'])} | {backend} | "
-                         f"{metric['drafted']} | {metric['accepted']} | {percent} |")
     errors = [(backend, model["model"], error)
               for backend, doc in (("HRX", hrx), ("Vulkan", vulkan))
               for model in doc["models"] for error in model["errors"]]

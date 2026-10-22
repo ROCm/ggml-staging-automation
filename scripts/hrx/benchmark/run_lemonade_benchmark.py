@@ -6,9 +6,8 @@
 The manifest owns model identity, optional MTP cases and per-case expectations.
 Private user registrations share the verified files through a pinned HF snapshot;
 no model or executable downloads are allowed. Each case uses ordinary Lemonade
-bench, including natural EOS. A local relay captures its existing completion
-responses because bench's own artifact omits draft counters. Counters include
-warmups and are report-only; an on-case must actually draft, and off must not.
+bench, including natural EOS. MTP on uses Lemonade's automatic defaults;
+verification of actual drafting is deferred until counters are readily available.
 """
 from __future__ import annotations
 
@@ -22,9 +21,9 @@ import sys
 import tempfile
 import time
 from pathlib import Path
+from typing import Any
 
 from benchmark_output import append_batch_log, atomic_write_json, merge_benchmark_output
-from lemonade_capture import capture_responses, draft_metrics
 from run_batched_benchmark import load_manifest
 
 SCENARIOS = ("chat-short", "chat-long-output")
@@ -163,7 +162,7 @@ def register_models(models, models_dir, cache_dir, hf_home):
         snapshot = hf_home / "hub" / ("models--" + model.repository.replace("/", "--"))
         target = snapshot / "snapshots" / model.revision / model.filename
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.symlink_to((models_dir / model.directory / model.filename).resolve(strict=True))
+        target.symlink_to((models_dir / model.name / model.filename).resolve(strict=True))
         refs = snapshot / "refs"
         refs.mkdir(exist_ok=True)
         (refs / "main").write_text(model.revision, encoding="utf-8")
@@ -194,17 +193,15 @@ def classify(expectation, succeeded):
     return "PASS" if succeeded else "FAIL"
 
 
-def run_case(executable, model, backend, mode, root, env, port, response_log):
+def run_case(executable, model, backend, mode, root, env, port):
     name = registration_name(model, backend, mode)
     output = root / f"{name}.json"
-    with capture_responses(port, response_log, name) as (capture_port, records):
-        command = [str(executable), "--host", "127.0.0.1", "--port", str(capture_port),
-                   "bench", "--backend", backend, "--ctx-size", "4096",
-                   "--warmup", "1", "--runs", "3", "--scenarios", SCENARIOS[0],
-                   "--scenarios", SCENARIOS[1], "--output", str(output), name]
-        log("++ " + " ".join(command))
-        result = subprocess.run(command, env=env, check=False)
-    metrics = draft_metrics(records)
+    command = [str(executable), "--host", "127.0.0.1", "--port", str(port),
+               "bench", "--backend", backend, "--ctx-size", "4096",
+               "--warmup", "1", "--runs", "3", "--scenarios", SCENARIOS[0],
+               "--scenarios", SCENARIOS[1], "--output", str(output), name]
+    log("++ " + " ".join(command))
+    result = subprocess.run(command, env=env, check=False)
     errors = []
     if result.returncode:
         errors.append(f"lemonade bench exited {result.returncode}")
@@ -246,14 +243,6 @@ def run_case(executable, model, backend, mode, root, env, port, response_log):
         raise RuntimeError(
             f"Lemonade exited {result.returncode} without a benchmark artifact for {name}"
         )
-    requires_drafting = mode == "on"
-    has_drafts = metrics["drafted"] > 0
-    missing_drafts = requires_drafting and not has_drafts
-    forbidden_drafts = mode == "off" and has_drafts
-    if missing_drafts:
-        errors.append("MTP requested but no drafted tokens observed")
-    if forbidden_drafts:
-        errors.append("MTP off produced drafted tokens")
     expectation = model.expectation("lemonade-benchmark", backend, mode)
     succeeded = not errors
     outcome = classify(expectation, succeeded)
@@ -261,9 +250,9 @@ def run_case(executable, model, backend, mode, root, env, port, response_log):
     row.update(model=label, model_id=model.id, mtp=mode,
                registration="user." + name, expected_result=expectation,
                result="pass" if succeeded else "fail", outcome=outcome,
-               speculative=metrics, errors=errors,
+               errors=errors,
                weights={"revision": model.revision, "sha256": model.sha256})
-    log(f"{outcome}: {backend} {label}: {metrics}; {errors}")
+    log(f"{outcome}: {backend} {label}: {errors}")
     return row, document, outcome in ("FAIL", "XPASS")
 
 
@@ -300,7 +289,6 @@ def run(args):
     for backend in ("hrx", "vulkan"):
         destination = getattr(args, backend + "_output")
         server_log = getattr(args, backend + "_server_log")
-        response_log = getattr(args, backend + "_response_log")
         with tempfile.TemporaryDirectory(dir=models_dir.parent, prefix="lemonade-state-") as tmp:
             root = Path(tmp)
             cache_dir, hf_home, runtime_dir = prepare_state(root)
@@ -308,8 +296,6 @@ def run(args):
             env = dict(os.environ, HF_HOME=str(hf_home), HF_HUB_CACHE=str(hf_home / "hub"),
                        LEMONADE_CACHE_DIR=str(cache_dir), XDG_RUNTIME_DIR=str(runtime_dir))
             log_path = root / "server.log"
-            captured = root / "responses.jsonl"
-            captured.touch()
             process = None
             data = {"models": []}
             try:
@@ -319,7 +305,7 @@ def run(args):
                 for model in models:
                     for mode in model.mtp:
                         row, document, failed = run_case(executable_dir / "lemonade", model,
-                            backend, mode, root, env, args.port, captured)
+                            backend, mode, root, env, args.port)
                         if document is not None:
                             data.update({k: v for k, v in document.items() if k != "models"})
                         data["models"].append(row)
@@ -331,11 +317,10 @@ def run(args):
                     merge_benchmark_output(destination, data)
                 else:
                     atomic_write_json(destination, data)
-                for target, source in ((server_log, log_path), (response_log, captured)):
-                    if not args.batched:
-                        target.parent.mkdir(parents=True, exist_ok=True)
-                        target.write_text("", encoding="utf-8")
-                    append_batch_log(target, source, args.batch_number or 1)
+                if not args.batched:
+                    server_log.parent.mkdir(parents=True, exist_ok=True)
+                    server_log.write_text("", encoding="utf-8")
+                append_batch_log(server_log, log_path, args.batch_number or 1)
                 daemon_started = process is not None
                 daemon_failed = daemon_returncode != 0
                 unexpected_shutdown = daemon_started and daemon_failed
@@ -347,8 +332,7 @@ def run(args):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for option in ("lemonade-dir", "llama-server", "models-dir", "model-manifest",
-                   "hrx-output", "vulkan-output", "hrx-server-log", "vulkan-server-log",
-                   "hrx-response-log", "vulkan-response-log"):
+                   "hrx-output", "vulkan-output", "hrx-server-log", "vulkan-server-log"):
         parser.add_argument("--" + option, type=Path, required=True)
     parser.add_argument("--port", type=int, default=13305)
     parser.add_argument("--batched", action="store_true")

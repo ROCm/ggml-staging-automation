@@ -17,10 +17,6 @@
         "lemonade-benchmark-debug/lemond-hrx.log",
         "--vulkan-server-log",
         "lemonade-benchmark-debug/lemond-vulkan.log",
-        "--hrx-response-log",
-        "lemonade-benchmark-debug/responses-hrx.jsonl",
-        "--vulkan-response-log",
-        "lemonade-benchmark-debug/responses-vulkan.jsonl",
         "--model-manifest",
         "benchmarks/hrx/model_manifest.json"
       ]

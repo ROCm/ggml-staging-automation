@@ -116,7 +116,7 @@ def resolve_models(
     resolved: list[ResolvedModel] = []
     for name in names:
         spec = specs_by_name[name]
-        path = models_dir / spec.directory / spec.filename
+        path = models_dir / spec.name / spec.filename
         if not path.is_file():
             raise PerplexityBenchmarkError(f"Model {name} is not staged at {path}")
         resolved.append(ResolvedModel(spec=spec, path=path))

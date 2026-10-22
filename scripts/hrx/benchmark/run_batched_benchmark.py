@@ -108,7 +108,6 @@ class ModelSpec:
     expected_results: dict[str, dict[str, dict[str, str]]]
     mtp: tuple[str, ...]
     name: str
-    directory: str
     repository: str
     revision: str
     filename: str
@@ -228,7 +227,6 @@ def load_manifest(
     models: list[ModelSpec] = []
     ids: set[str] = set()
     names: set[str] = set()
-    directories: set[str] = set()
     for index, raw_entry in enumerate(entries):
         context = f"manifest.models[{index}]"
         entry = _require_object(raw_entry, context)
@@ -236,7 +234,6 @@ def load_manifest(
         model_id = _require_string(entry, "id", context)
         tier = _require_string(entry, "tier", context)
         name = _require_string(entry, "name", context)
-        directory = _require_string(entry, "directory", context)
         repository = _require_string(entry, "repository", context)
         revision = _require_string(entry, "revision", context)
         filename = _require_string(entry, "filename", context)
@@ -271,7 +268,7 @@ def load_manifest(
                     if result not in ("pass", "fail", "report-only"):
                         raise BatchBenchmarkError(f"{context}: invalid expectation {result!r}")
 
-        _validate_local_name(directory, "directory", context)
+        _validate_local_name(name, "name", context)
         _validate_local_name(filename, "filename", context)
         _validate_repository(repository, context)
         if tier not in tier_names:
@@ -290,14 +287,9 @@ def load_manifest(
             raise BatchBenchmarkError(
                 f"Duplicate runtime model name in manifest: {name}"
             )
-        if directory in directories:
-            raise BatchBenchmarkError(
-                f"Duplicate model directory in manifest: {directory}"
-            )
 
         ids.add(model_id)
         names.add(name)
-        directories.add(directory)
         models.append(
             ModelSpec(
                 id=model_id,
@@ -305,7 +297,6 @@ def load_manifest(
                 expected_results=expected_results,
                 mtp=tuple(mtp),
                 name=name,
-                directory=directory,
                 repository=repository,
                 revision=revision,
                 filename=filename,
@@ -566,7 +557,7 @@ def download_model(
 ) -> Path:
     """Download, verify, and atomically publish one model file."""
     opener = urlopen or urllib.request.urlopen
-    model_dir = models_dir / model.directory
+    model_dir = models_dir / model.name
     try:
         model_dir.mkdir(parents=True, exist_ok=True)
     except OSError as exc:
