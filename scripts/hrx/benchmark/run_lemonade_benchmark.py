@@ -34,7 +34,14 @@ def log(message: str) -> None:
 
 
 def prepare_state(state_root: Path) -> tuple[Path, Path]:
-    """Keep Lemonade runtime state under one private temporary root."""
+    """Create the private cache and runtime directories for one backend run.
+
+    The cache is passed both as lemond's positional state directory and as
+    LEMONADE_CACHE_DIR for its CLI clients. It holds our user_models.json,
+    recipe_options.json and daemon configuration, isolating the run from the
+    runner's normal Lemonade installation. XDG_RUNTIME_DIR supplies a private,
+    owner-only runtime directory. Model weights remain outside this state tree.
+    """
     cache_dir = state_root / "lemonade"
     runtime_dir = state_root / "runtime"
     for path in (cache_dir, runtime_dir):
@@ -65,7 +72,12 @@ def request_json(port: int, path: str) -> dict[str, Any]:
 
 
 def wait_for_live(process: subprocess.Popen[str], port: int) -> None:
-    """Avoid racing Lemonade CLI requests against daemon startup."""
+    """Wait for lemond's /live endpoint before sending configuration commands.
+
+    This checks the Lemonade control service, not a loaded llama-server model.
+    Model loading happens later through `lemonade bench`; readiness here only
+    means the daemon can accept the setup requests.
+    """
     deadline = time.monotonic() + 60.0
     last_error = "server did not answer"
     while time.monotonic() < deadline:
@@ -89,7 +101,13 @@ def wait_for_live(process: subprocess.Popen[str], port: int) -> None:
 
 
 def stop_server(process: subprocess.Popen[str] | None) -> int | None:
-    """Stop the daemon and flush its log before verification and state removal."""
+    """Let lemond shut down its backend before removing the private state.
+
+    SIGTERM gives Lemonade a chance to stop the llama-server process it owns
+    and flush its logs. If shutdown stalls, signal the process group created
+    by start_lemond so backend children cannot retain the GPU after this run.
+    Return the daemon's exit status so cleanup cannot hide an unexpected exit.
+    """
     if process is None:
         return None
     if process.poll() is not None:
@@ -114,7 +132,15 @@ def start_lemond(
     env: dict[str, str],
     port: int,
 ) -> subprocess.Popen[str]:
-    """Start the daemon that owns Lemonade configuration and backend processes."""
+    """Launch the released embeddable lemond with our prepared state directory.
+
+    lemond reads the user registrations and recipe options written before
+    startup, serves the CLI's HTTP requests, and owns backend installation and
+    process launches. Explicit host/port arguments direct our CLI calls to
+    this loopback service. A new process session permits group cleanup if the
+    daemon or its backend fails to stop normally; debug output is retained for
+    executable/device verification and CI diagnostics.
+    """
     log_path.parent.mkdir(parents=True, exist_ok=True)
     command = [
         os.fspath(lemonade_dir / "lemond"),
@@ -137,6 +163,19 @@ def start_lemond(
 
 
 def configure(executable, llama_server, env, port):
+    """Select the CI executable through Lemonade's backend configuration keys.
+
+    `lemonade config set` updates the running daemon: hrx.hrx_bin supplies the
+    executable for the llamacpp-hrx recipe, while llamacpp.vulkan_bin supplies
+    the Vulkan backend of the regular llamacpp recipe. Both point to the same
+    CI-built llama-server; recipe/device selection chooses which backend runs.
+
+    offline disables network-dependent operation and no_fetch_executables
+    prevents Lemonade from installing a managed backend in place of our build.
+    Read /internal/config back to verify the effective settings, and enable
+    debug logging so verify_executable can check the subsequent selection and
+    launch records as well as this configuration intent.
+    """
     settings = {
         "hrx.hrx_bin": str(llama_server),
         "llamacpp.vulkan_bin": str(llama_server),
@@ -155,6 +194,27 @@ def configure(executable, llama_server, env, port):
 
 
 def register_models(models, models_dir, cache_dir):
+    """Prepare Lemonade user registrations and per-model recipe overrides.
+
+    user_models.json stores bare registration names; Lemonade exposes these
+    in its user namespace. Each backend/mode gets its own registration so its
+    recipe options and benchmark results are independent. The llamacpp-hrx
+    and regular llamacpp registrations use source=local_path with the same
+    absolute GGUF checkpoint. Lemonade's model resolver reads that file
+    directly, bypassing Hugging Face lookup or download. The batch runner has
+    already verified the weights against the manifest's checksum.
+
+    recipe_options.json is keyed by canonical user.<name> IDs. hrx_args and
+    llamacpp_args extend the respective recipe's arguments with merge_args
+    enabled, preserving Lemonade's defaults. Off explicitly adds --spec-type
+    none; on/default add nothing and leave automatic MTP selection to Lemonade.
+    This configures intent only; actual drafting is not currently verified.
+
+    Vulkan uses the managed llamacpp_device option to select Vulkan0, since
+    device selection belongs to Lemonade rather than arbitrary backend args.
+    The HRX recipe selects HRX0 itself. Write both files before daemon startup
+    so its initial registry sees all cases without a live registration update.
+    """
     definitions = {}
     options = {}
     for model in models:
@@ -165,7 +225,6 @@ def register_models(models, models_dir, cache_dir):
                 definitions[name] = {"recipe": recipe, "labels": ["chat", "custom"],
                     "source": "local_path", "checkpoint": checkpoint}
                 argument_key = "hrx_args" if backend == "hrx" else "llamacpp_args"
-                # Only disable explicitly. On must exercise Lemonade's auto-enablement.
                 arguments = "--spec-type none" if mode == "off" else ""
                 options["user." + name] = {argument_key: arguments, "merge_args": True}
                 if backend == "vulkan":
@@ -175,10 +234,12 @@ def register_models(models, models_dir, cache_dir):
 
 
 def registration_name(model, backend, mode):
+    """Return a bare user-model ID that separates backend and MTP options."""
     return f"ci-{model.id}-{backend}-{mode}"
 
 
 def classify(expectation, succeeded):
+    """Apply the manifest's case expectation while keeping XPASS distinguishable."""
     if expectation == "report-only":
         return "REPORT_ONLY"
     if expectation == "fail":
@@ -187,6 +248,20 @@ def classify(expectation, succeeded):
 
 
 def run_case(executable, model, backend, mode, root, env, port):
+    """Run the ordinary Lemonade benchmark against one prepared registration.
+
+    The CLI talks directly to our daemon, which loads the registered recipe
+    and applies its per-model options. Explicit --backend selects HRX or Vulkan
+    within that recipe. Lemonade owns warmup, measured requests and natural
+    EOS behavior; this adapter consumes its JSON artifact rather than issuing
+    extra generation requests.
+
+    Check the artifact's model, recipe, backend and scenarios before assigning
+    a case outcome. Missing or malformed artifacts are setup/protocol failures
+    and cannot be hidden by a model's expected-failure policy. Valid results
+    receive the manifest identity and requested MTP mode for report pairing;
+    successful generation does not establish that speculative drafting ran.
+    """
     name = registration_name(model, backend, mode)
     output = root / f"{name}.json"
     command = [str(executable), "--host", "127.0.0.1", "--port", str(port),
@@ -250,9 +325,18 @@ def run_case(executable, model, backend, mode, root, env, port):
 
 
 def verify_executable(log_path, cache_dir, llama_server, backend):
+    """Check Lemonade's backend-selection and process-launch debug records.
+
+    The offline installer logs which externally configured executable it uses;
+    require that marker for the expected recipe/backend. Check every recorded
+    launch for the same CI binary and HRX0 or Vulkan0 device, then reject files
+    in Lemonade's managed bin cache. This complements config readback with
+    evidence of runtime selection. It relies on the pinned release's log
+    format and does not establish that MTP actually drafted tokens.
+
+    Failures here are infrastructure errors, outside model XFAIL handling.
+    """
     text = log_path.read_text(encoding="utf-8", errors="replace")
-    # Verify the external binary selected by offline backend installation and
-    # every logged launch. Preflight/config failures cannot be model XFAILs.
     recipe = "llamacpp-hrx" if backend == "hrx" else "llamacpp"
     marker = f"; using installed {recipe}:{backend} backend at {llama_server}"
     if marker not in text:
@@ -272,6 +356,17 @@ def verify_executable(log_path, cache_dir, llama_server, backend):
 
 
 def run(args):
+    """Run each backend in a fresh Lemonade daemon with private configuration.
+
+    Registrations are prepared before lemond starts; its CLI then sets binary
+    overrides before any model is loaded. Separate state and daemon lifetimes
+    prevent one backend's loaded model or persisted options from influencing
+    the other, while both consume the batch runner's same verified GGUFs.
+
+    Preserve result artifacts and daemon logs in finally before deleting the
+    temporary state, including partial evidence when setup or inference fails.
+    Batched invocations merge into the workflow's accumulated outputs.
+    """
     executable_dir = args.lemonade_dir.resolve()
     llama_server = args.llama_server.resolve()
     models_dir = args.models_dir.resolve()
