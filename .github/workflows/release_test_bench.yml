@@ -67,7 +67,12 @@ jobs:
           persist-credentials: false
 
       - name: Set up GPU device groups
-        run: python3 scripts/hrx/benchmark/setup_gpu_groups.py
+        # Temporary workaround for canary containers missing host GPU groups.
+        run: |
+          for gid in $(stat -c %g /dev/kfd /dev/dri/renderD* | sort -u); do
+            getent group "$gid" >/dev/null || sudo -n groupadd -g "$gid" "ci-gpu-$gid"
+            sudo -n usermod -aG "$gid" "$(id -un)"
+          done
 
       - name: Checkout Lemonade HRX integration
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
