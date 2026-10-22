@@ -44,11 +44,12 @@ permissions:
 jobs:
   build_llama_cpp_linux:
     name: ${{ inputs.name }}
-    runs-on: aws-linux-scale-rocm-prod
+    runs-on: ubuntu-24.04
     timeout-minutes: 90
     container:
       image: quay.io/pypa/manylinux_2_34_x86_64@sha256:d53167459147625634b49200f780617700ade2a8d64934a3b3a3b07ac840593d
     env:
+      CMAKE_BUILD_PARALLEL_LEVEL: 2
       PIP_CACHE_DIR: ${{ github.workspace }}/build/caches/pip
       CCACHE_DIR: ${{ github.workspace }}/build/caches/ccache
       CPLUS_INCLUDE_PATH: /opt/rh/gcc-toolset-14/root/usr/include/c++/14:/opt/rh/gcc-toolset-14/root/usr/include/c++/14/x86_64-redhat-linux:/opt/rh/gcc-toolset-14/root/usr/include/c++/14/backward
