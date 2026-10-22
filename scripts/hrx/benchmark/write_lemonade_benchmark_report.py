@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # Copyright Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
-"""Compare HRX and Vulkan for the same model, MTP mode, context and scenario.
+"""Compare HRX and Vulkan for the same model, test mode, context and scenario.
 
 Recipe names differ intentionally: HRX uses llamacpp-hrx and Vulkan llamacpp.
 The worker gives expanded cases distinct names and records both outcomes.
@@ -57,7 +57,7 @@ def format_report(hrx, vulkan, *, runner_name=None):
               "actual drafting is not verified.", ""]
     for scenario in dict.fromkeys(key[2] for key in h):
         lines += [f"## {format_table_cell(scenario)}", "",
-                  "| Model / MTP case | Context | Vulkan tok/s | HRX tok/s | HRX / Vulkan | Vulkan result | HRX result |",
+                  "| Model / test mode | Context | Vulkan tok/s | HRX tok/s | HRX / Vulkan | Vulkan result | HRX result |",
                   "| --- | ---: | ---: | ---: | ---: | --- | --- |"]
         for key, (hm, hr) in h.items():
             if key[2] != scenario:

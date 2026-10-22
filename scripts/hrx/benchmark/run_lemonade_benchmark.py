@@ -220,12 +220,12 @@ def register_models(models, models_dir, cache_dir):
     for model in models:
         checkpoint = str((models_dir / model.name / model.filename).resolve(strict=True))
         for backend, recipe in (("hrx", "llamacpp-hrx"), ("vulkan", "llamacpp")):
-            for mode in model.mtp:
+            for mode in model.modes("lemonade-benchmark"):
                 name = registration_name(model, backend, mode)
                 definitions[name] = {"recipe": recipe, "labels": ["chat", "custom"],
                     "source": "local_path", "checkpoint": checkpoint}
                 argument_key = "hrx_args" if backend == "hrx" else "llamacpp_args"
-                arguments = "--spec-type none" if mode == "off" else ""
+                arguments = "--spec-type none" if mode == "mtp:off" else ""
                 options["user." + name] = {argument_key: arguments, "merge_args": True}
                 if backend == "vulkan":
                     options["user." + name]["llamacpp_device"] = "Vulkan0"
@@ -235,7 +235,7 @@ def register_models(models, models_dir, cache_dir):
 
 def registration_name(model, backend, mode):
     """Return a bare user-model ID that separates backend and MTP options."""
-    return f"ci-{model.id}-{backend}-{mode}"
+    return f"ci-{model.id}-{backend}-{mode.replace(':', '-')}"
 
 
 def classify(expectation, succeeded):
@@ -314,8 +314,8 @@ def run_case(executable, model, backend, mode, root, env, port):
     expectation = model.expectation("lemonade-benchmark", backend, mode)
     succeeded = not errors
     outcome = classify(expectation, succeeded)
-    label = model.name if mode == "default" else f"{model.name} [MTP {mode}]"
-    row.update(model=label, model_id=model.id, mtp=mode,
+    label = model.name if mode == "default" else f"{model.name} [{mode}]"
+    row.update(model=label, model_id=model.id, test_mode=mode,
                registration="user." + name, expected_result=expectation,
                result="pass" if succeeded else "fail", outcome=outcome,
                errors=errors,
@@ -390,7 +390,7 @@ def run(args):
                 wait_for_live(process, args.port)
                 configure(executable_dir / "lemonade", llama_server, env, args.port)
                 for model in models:
-                    for mode in model.mtp:
+                    for mode in model.modes("lemonade-benchmark"):
                         row, document, failed = run_case(executable_dir / "lemonade", model,
                             backend, mode, root, env, args.port)
                         if document is not None:

@@ -17,8 +17,8 @@
       "expected_results": {
         "lemonade-benchmark": {
           "hrx": {
-            "off": "report-only",
-            "on": "report-only"
+            "mtp:off": "report-only",
+            "mtp:on": "report-only"
           }
         },
         "perplexity": {
@@ -27,10 +27,12 @@
           }
         }
       },
-      "mtp": [
-        "off",
-        "on"
-      ]
+      "test-modes": {
+        "lemonade-benchmark": [
+          "mtp:off",
+          "mtp:on"
+        ]
+      }
     },
     {
       "id": "qwen3-30b-a3b-instruct-2507",

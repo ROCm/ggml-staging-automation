@@ -74,15 +74,11 @@ Windows support is intentionally not implemented yet. The scripts and CMake
 layout keep runtime libraries adjacent so the later Windows flow can use the
 same basic packaging model with DLL copying instead of ELF RPATHs.
 
-## CI model coverage
+## Benchmarks
 
-PR CI defaults to `single` (Qwen3-0.6B). The cumulative `small` tier covers
-Lemonade's smaller-model suite; `all` covers every model. Automated submodule
-bumps use `all`.
-
-Apply `ci:single-model`, `ci:small-models`, or `ci:all-models` to start CI with
-that coverage; the highest selected tier wins. Manual CI runs also offer all
-three tiers.
+CI compares HRX and Vulkan through released Lemonade and runs perplexity checks.
+See the [benchmarking guide](scripts/hrx/benchmark/README.md) for model tiers,
+per-benchmark test modes, expectations and release configuration.
 
 ## Releases
 
@@ -91,56 +87,3 @@ also be dispatched manually. The published archive
 `llama-<version>-bin-manylinux-hrx-x64.tar.gz` contains llama.cpp release with
 HRX and Vulkan backends enabled. The required HRX/ROCm/Vulkan runtime libraries
 ship alongside the binaries, so no ROCm install is needed on the target machine.
-
-### Lemonade release and MTP comparisons
-
-`benchmarks/hrx/lemonade_release.json` pins the released Ubuntu embeddable
-package and its SHA-256. CI verifies the archive and records the pin in
-`metadata.json`; it does not build Lemonade. Each private daemon uses the
-CI-produced llama-server through `hrx.hrx_bin` and `llamacpp.vulkan_bin`, with
-model and executable fetching disabled. Model registrations for `llamacpp-hrx`
-and `llamacpp` use `source: local_path` with the absolute filename of the same
-checksum-verified GGUF. No Hugging Face cache layout or environment override is
-needed.
-Manifest names also name their local model directories and remain independent
-of Lemonade's `user.*` registration namespace.
-
-Without `mtp`, a model gets an ordinary Lemonade benchmark on each backend.
-Adding `"mtp": ["off", "on"]` produces two comparisons: HRX/off versus Vulkan/off,
-and HRX/on versus Vulkan/on. Off supplies `--spec-type none`; on supplies no MTP
-flag and uses Lemonade's automatic defaults. Both use normal EOS termination,
-4096-token contexts, the existing short/long-output scenarios, one warmup and
-three measured runs. Perplexity remains one comparison per model, with both
-existing prefill-like and decode-like regimes; it does not exercise MTP.
-
-Speculative counters and verification of actual drafting are deferred. A passing
-on-case establishes successful generation with Lemonade defaults, not that MTP
-was enabled. Reports label these as requested settings.
-
-Exceptions are independent for each model, check, backend and mode. For example:
-
-```json
-{
-  "mtp": ["off", "on"],
-  "expected_results": {
-    "lemonade-benchmark": {
-      "hrx": {"on": "report-only", "off": "report-only"}
-    },
-    "perplexity": {
-      "hrx": {"default": "fail"}
-    }
-  }
-}
-```
-
-Omitted expectations mean `pass`. Use `default` for ordinary models and
-perplexity, and explicit `off`/`on` keys for expanded Lemonade cases. `fail`
-requires failure (a success is a CI-failing XPASS); `report-only` retains the
-measured outcome without gating. No exception is inherited by the other mode
-or backend. Infrastructure and malformed-artifact errors remain fatal.
-
-The pinned Lemonade release predates automatic HRX MTP enablement. Updating the
-release pin to one supporting HRX MTP needs no special version-dependent
-enablement code. Qwen3.5 generation remains report-only on HRX in both modes,
-independently of its perplexity exception. Backend correctness fixes must also
-be present in the CI-produced llama-server.

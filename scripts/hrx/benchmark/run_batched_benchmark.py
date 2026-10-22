@@ -16,7 +16,7 @@ Terms:
 - Expected result: ``expected_results`` maps check, backend and mode to
   "pass", "fail", or "report-only". Omitted cases expect a pass. Workers read
   these expectations from the manifest; failures and XPASS are strict.
-- MTP modes: optional ``mtp: ["off", "on"]`` expands only Lemonade benchmarks.
+- Test modes: optional ``test-modes`` selects cases independently per benchmark.
   Perplexity remains one comparison per model using the "default" mode.
 
 Why this exists: CI runners for the HRX release benchmarks have far less free
@@ -106,13 +106,17 @@ class ModelSpec:
     id: str
     tier: str
     expected_results: dict[str, dict[str, dict[str, str]]]
-    mtp: tuple[str, ...]
+    test_modes: dict[str, tuple[str, ...]]
     name: str
     repository: str
     revision: str
     filename: str
     size_bytes: int
     sha256: str
+
+    def modes(self, check: str) -> tuple[str, ...]:
+        """Use the ordinary case when this benchmark has no explicit modes."""
+        return self.test_modes.get(check, ("default",))
 
     def expectation(self, check: str, backend: str, mode: str = "default") -> str:
         return self.expected_results.get(check, {}).get(backend, {}).get(mode, "pass")
@@ -239,26 +243,39 @@ def load_manifest(
         filename = _require_string(entry, "filename", context)
         sha256 = _require_string(entry, "sha256", context)
         size_bytes = entry.get("size_bytes")
-        mtp = entry.get("mtp", ["default"])
-        mtp_is_list = isinstance(mtp, list)
-        mtp_is_present = bool(mtp)
-        valid_mtp_list = mtp_is_list and mtp_is_present
-        if not valid_mtp_list:
-            raise BatchBenchmarkError(f"{context}.mtp must be a non-empty list")
-        allowed_modes = {"off", "on"} if "mtp" in entry else {"default"}
-        for mode in mtp:
-            if not isinstance(mode, str):
-                raise BatchBenchmarkError(f"{context}.mtp values must be strings")
-            if mode not in allowed_modes:
-                raise BatchBenchmarkError(f"{context}.mtp contains invalid mode {mode!r}")
-        if len(set(mtp)) != len(mtp):
-            raise BatchBenchmarkError(f"{context}.mtp contains duplicate modes")
+        raw_modes = _require_object(entry.get("test-modes", {}), f"{context}.test-modes")
+        test_modes = {}
+        supported_modes = {
+            "lemonade-benchmark": {"default", "mtp:on", "mtp:off"},
+            "perplexity": {"default"},
+        }
+        for check, modes in raw_modes.items():
+            if check not in supported_modes:
+                raise BatchBenchmarkError(f"{context}: unknown benchmark {check!r}")
+            if known_checks is not None:
+                if check not in known_checks:
+                    raise BatchBenchmarkError(f"{context}: unknown check {check!r}")
+            modes_are_list = isinstance(modes, list)
+            modes_are_present = bool(modes)
+            valid_mode_list = modes_are_list and modes_are_present
+            if not valid_mode_list:
+                raise BatchBenchmarkError(f"{context}.test-modes.{check} must be a non-empty list")
+            for mode in modes:
+                if not isinstance(mode, str):
+                    raise BatchBenchmarkError(f"{context}: modes for {check} must be strings")
+                if mode not in supported_modes[check]:
+                    raise BatchBenchmarkError(f"{context}: unsupported mode {mode!r} for {check}")
+            if len(set(modes)) != len(modes):
+                raise BatchBenchmarkError(f"{context}: duplicate modes for {check}")
+            test_modes[check] = tuple(modes)
         expected_results = _require_object(entry.get("expected_results", {}), context)
         for check, backends in expected_results.items():
             if known_checks is not None:
                 if check not in known_checks:
                     raise BatchBenchmarkError(f"{context}: unknown check {check!r}")
-            valid_modes = set(mtp) if check == "lemonade-benchmark" else {"default"}
+            if check not in supported_modes:
+                raise BatchBenchmarkError(f"{context}: unknown benchmark {check!r}")
+            valid_modes = test_modes.get(check, ("default",))
             for backend, modes in _require_object(backends, context).items():
                 if backend not in ("hrx", "vulkan"):
                     raise BatchBenchmarkError(f"{context}: unknown backend {backend!r}")
@@ -295,7 +312,7 @@ def load_manifest(
                 id=model_id,
                 tier=tier,
                 expected_results=expected_results,
-                mtp=tuple(mtp),
+                test_modes=test_modes,
                 name=name,
                 repository=repository,
                 revision=revision,
