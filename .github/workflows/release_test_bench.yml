@@ -66,6 +66,9 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Set up GPU device groups
+        run: python3 scripts/hrx/benchmark/setup_gpu_groups.py
+
       - name: Checkout Lemonade HRX integration
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -134,7 +137,8 @@ jobs:
           BENCHMARK_MODEL_TIER: ${{ inputs.model_tier }}
         run: |
           set -euo pipefail
-          python3 scripts/hrx/benchmark/run_batched_benchmark.py \
+          # Refresh supplementary groups while retaining the runner UID and environment.
+          sudo -n -E -u "$(id -un)" -- python3 scripts/hrx/benchmark/run_batched_benchmark.py \
             --benchmark-spec "$PWD/benchmarks/hrx/benchmark_spec.json" \
             --model-manifest "$PWD/benchmarks/hrx/model_manifest.json" \
             --skip-benchmarks "$SKIP_BENCHMARKS" \
