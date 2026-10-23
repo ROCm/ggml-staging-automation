@@ -30,6 +30,7 @@ RELEVANT_FILES = {
     ".github/workflows/ci.yml",
     ".github/workflows/build_llama_cpp_linux.yml",
     ".github/workflows/release_test_bench.yml",
+    ".github/workflows/test_hrx_linux.yml",
 }
 RELEVANT_DIRECTORIES = (
     "scripts/hrx/build/",

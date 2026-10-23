@@ -91,3 +91,10 @@ also be dispatched manually. The published archive
 `llama-<version>-bin-manylinux-hrx-x64.tar.gz` contains llama.cpp release with
 HRX and Vulkan backends enabled. The required HRX/ROCm/Vulkan runtime libraries
 ship alongside the binaries, so no ROCm install is needed on the target machine.
+
+### Packaged HRX tests
+
+CI runs the four HRX suites from a separate package on gfx1151 and uploads
+logs and JUnit results as `hrx-test-results-gfx1151`. See the
+[HRX test workflow guide](scripts/hrx/ci/README.md) for qualification runs,
+concurrency, and evidence.
