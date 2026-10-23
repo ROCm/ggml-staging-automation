@@ -8,19 +8,23 @@
     {
       "id": "qwen3.5-35b-a3b-mtp",
       "tier": "all",
-      "name": "extra.Qwen3.5-35B-A3B-MTP-GGUF",
-      "directory": "Qwen3.5-35B-A3B-MTP-GGUF",
+      "name": "Qwen3.5-35B-A3B-MTP-GGUF",
       "repository": "unsloth/Qwen3.5-35B-A3B-MTP-GGUF",
       "revision": "63af8373893a7a73c6dfcb84cb63d815981da5e0",
       "filename": "Qwen3.5-35B-A3B-UD-Q4_K_XL.gguf",
       "size_bytes": 22853662880,
-      "sha256": "26445264c88d8bd4bf465763962b222cc8f816f9abe3717421f916ec4661fa9e"
+      "sha256": "26445264c88d8bd4bf465763962b222cc8f816f9abe3717421f916ec4661fa9e",
+      "test-modes": {
+        "lemonade-benchmark": [
+          "mtp:off",
+          "mtp:on"
+        ]
+      }
     },
     {
       "id": "qwen3-30b-a3b-instruct-2507",
       "tier": "all",
-      "name": "extra.Qwen3-30B-A3B-Instruct-2507-GGUF",
-      "directory": "Qwen3-30B-A3B-Instruct-2507-GGUF",
+      "name": "Qwen3-30B-A3B-Instruct-2507-GGUF",
       "repository": "unsloth/Qwen3-30B-A3B-Instruct-2507-GGUF",
       "revision": "eea7b2be5805a5f151f8847ede8e5f9a9284bf77",
       "filename": "Qwen3-30B-A3B-Instruct-2507-Q4_K_M.gguf",
@@ -30,42 +34,51 @@
     {
       "id": "qwen3.8-27b",
       "tier": "all",
-      "hrx": {
-        "expected_results": {
-          "lemonade-benchmark": "report-only",
-          "perplexity": "report-only"
-        }
-      },
-      "name": "extra.Qwen3.8-27B-GGUF",
-      "directory": "Qwen3.8-27B-GGUF",
+      "name": "Qwen3.8-27B-GGUF",
       "repository": "bartowski/Qwen3.8-27B-GGUF",
       "revision": "f0eec4a4bb4975114a030d048952d83c0a53c034",
       "filename": "Qwen3.8-27B-Q4_K_M.gguf",
       "size_bytes": 17772537440,
-      "sha256": "e103abf9d914d1d7b2f2592f055f2759a71195c350a01c135f71aaae86bca52b"
+      "sha256": "e103abf9d914d1d7b2f2592f055f2759a71195c350a01c135f71aaae86bca52b",
+      "expected_results": {
+        "lemonade-benchmark": {
+          "hrx": {
+            "default": "report-only"
+          }
+        },
+        "perplexity": {
+          "hrx": {
+            "default": "report-only"
+          }
+        }
+      }
     },
     {
       "id": "mistral-small-3.2-24b",
       "tier": "all",
-      "hrx": {
-        "expected_results": {
-          "lemonade-benchmark": "report-only",
-          "perplexity": "report-only"
-        }
-      },
-      "name": "extra.Mistral-Small-3.2-24B-Instruct-2506-GGUF",
-      "directory": "Mistral-Small-3.2-24B-Instruct-2506-GGUF",
+      "name": "Mistral-Small-3.2-24B-Instruct-2506-GGUF",
       "repository": "bartowski/mistralai_Mistral-Small-3.2-24B-Instruct-2506-GGUF",
       "revision": "b3592d09be469bedab6be51f577824b3b6b76ba1",
       "filename": "mistralai_Mistral-Small-3.2-24B-Instruct-2506-Q4_K_M.gguf",
       "size_bytes": 14333915264,
-      "sha256": "80f5bda68f156f12650ca03a0a2dbfae06a215ac41caa773b8631a479f82415e"
+      "sha256": "80f5bda68f156f12650ca03a0a2dbfae06a215ac41caa773b8631a479f82415e",
+      "expected_results": {
+        "lemonade-benchmark": {
+          "hrx": {
+            "default": "report-only"
+          }
+        },
+        "perplexity": {
+          "hrx": {
+            "default": "report-only"
+          }
+        }
+      }
     },
     {
       "id": "gemma-4-12b",
       "tier": "all",
-      "name": "extra.Gemma-4-12B-it-GGUF",
-      "directory": "Gemma-4-12B-it-GGUF",
+      "name": "Gemma-4-12B-it-GGUF",
       "repository": "bartowski/gemma-4-12B-it-GGUF",
       "revision": "2ae7d41be21ca62de00a2d320ee9cec50daa3aa6",
       "filename": "gemma-4-12B-it-Q4_K_M.gguf",
@@ -75,8 +88,7 @@
     {
       "id": "llama-3.1-8b",
       "tier": "small",
-      "name": "extra.Meta-Llama-3.1-8B-Instruct-GGUF",
-      "directory": "Meta-Llama-3.1-8B-Instruct-GGUF",
+      "name": "Meta-Llama-3.1-8B-Instruct-GGUF",
       "repository": "bartowski/Meta-Llama-3.1-8B-Instruct-GGUF",
       "revision": "bf5b95e96dac0462e2a09145ec66cae9a3f12067",
       "filename": "Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf",
@@ -86,8 +98,7 @@
     {
       "id": "minicpm5-1b",
       "tier": "small",
-      "name": "extra.MiniCPM5-1B-GGUF",
-      "directory": "MiniCPM5-1B-GGUF",
+      "name": "MiniCPM5-1B-GGUF",
       "repository": "OpenBMB/MiniCPM5-1B-GGUF",
       "revision": "3d55fac80935ae6456986ad2384b5cbcc4d6c948",
       "filename": "MiniCPM5-1B-Q4_K_M.gguf",
@@ -97,8 +108,7 @@
     {
       "id": "minicpm3-4b",
       "tier": "small",
-      "name": "extra.MiniCPM3-4B-GGUF",
-      "directory": "MiniCPM3-4B-GGUF",
+      "name": "MiniCPM3-4B-GGUF",
       "repository": "OpenBMB/MiniCPM3-4B-GGUF",
       "revision": "816dc79b35f92827e0d2d87aacea3567e49661a8",
       "filename": "minicpm3-4b-q4_k_m.gguf",
@@ -108,8 +118,7 @@
     {
       "id": "minicpm-v-4.6",
       "tier": "small",
-      "name": "extra.MiniCPM-V-4.6-gguf",
-      "directory": "MiniCPM-V-4.6-gguf",
+      "name": "MiniCPM-V-4.6-gguf",
       "repository": "OpenBMB/MiniCPM-V-4.6-gguf",
       "revision": "afe9accb78d2995d214cd912920c9c92f4015faa",
       "filename": "MiniCPM-V-4_6-Q4_K_M.gguf",
@@ -119,8 +128,7 @@
     {
       "id": "minicpm-v-4.6-thinking",
       "tier": "small",
-      "name": "extra.MiniCPM-V-4.6-Thinking-gguf",
-      "directory": "MiniCPM-V-4.6-Thinking-gguf",
+      "name": "MiniCPM-V-4.6-Thinking-gguf",
       "repository": "OpenBMB/MiniCPM-V-4.6-Thinking-gguf",
       "revision": "2e49fbd34ad9df11f0e93c93c2c5a80ba7cdc5e5",
       "filename": "MiniCPM-V-4_6-Thinking-Q4_K_M.gguf",
@@ -130,8 +138,7 @@
     {
       "id": "qwen3-0.6b",
       "tier": "single",
-      "name": "extra.Qwen3-0.6B-GGUF",
-      "directory": "Qwen3-0.6B-GGUF",
+      "name": "Qwen3-0.6B-GGUF",
       "repository": "unsloth/Qwen3-0.6B-GGUF",
       "revision": "50968a4468ef4233ed78cd7c3de230dd1d61a56b",
       "filename": "Qwen3-0.6B-Q4_0.gguf",
@@ -141,8 +148,7 @@
     {
       "id": "gemma-3-270m-it",
       "tier": "small",
-      "name": "extra.gemma-3-270m-it-GGUF",
-      "directory": "gemma-3-270m-it-GGUF",
+      "name": "gemma-3-270m-it-GGUF",
       "repository": "unsloth/gemma-3-270m-it-GGUF",
       "revision": "c90975dbd40c0c7b275fefaae758c3415c906238",
       "filename": "gemma-3-270m-it-UD-IQ2_M.gguf",
@@ -152,8 +158,7 @@
     {
       "id": "qwen3-1.7b",
       "tier": "small",
-      "name": "extra.Qwen3-1.7B-GGUF",
-      "directory": "Qwen3-1.7B-GGUF",
+      "name": "Qwen3-1.7B-GGUF",
       "repository": "unsloth/Qwen3-1.7B-GGUF",
       "revision": "d7f544eead698dbd1f15126ef60b45a1e1933222",
       "filename": "Qwen3-1.7B-Q4_0.gguf",
@@ -163,8 +168,7 @@
     {
       "id": "qwen3-4b",
       "tier": "small",
-      "name": "extra.Qwen3-4B-GGUF",
-      "directory": "Qwen3-4B-GGUF",
+      "name": "Qwen3-4B-GGUF",
       "repository": "unsloth/Qwen3-4B-GGUF",
       "revision": "22c9fc8a8c7700b76a1789366280a6a5a1ad1120",
       "filename": "Qwen3-4B-Q4_0.gguf",
@@ -174,8 +178,7 @@
     {
       "id": "qwen3-4b-instruct-2507",
       "tier": "small",
-      "name": "extra.Qwen3-4B-Instruct-2507-GGUF",
-      "directory": "Qwen3-4B-Instruct-2507-GGUF",
+      "name": "Qwen3-4B-Instruct-2507-GGUF",
       "repository": "unsloth/Qwen3-4B-Instruct-2507-GGUF",
       "revision": "a06e946bb6b655725eafa393f4a9745d460374c9",
       "filename": "Qwen3-4B-Instruct-2507-Q4_K_M.gguf",
@@ -185,8 +188,7 @@
     {
       "id": "bonsai-8b",
       "tier": "small",
-      "name": "extra.Bonsai-8B-gguf",
-      "directory": "Bonsai-8B-gguf",
+      "name": "Bonsai-8B-gguf",
       "repository": "prism-ml/Bonsai-8B-gguf",
       "revision": "48516770dd04643643e9f9019a2a349cf26c5dbd",
       "filename": "Bonsai-8B-Q1_0.gguf",
@@ -196,8 +198,7 @@
     {
       "id": "bonsai-4b",
       "tier": "small",
-      "name": "extra.Bonsai-4B-gguf",
-      "directory": "Bonsai-4B-gguf",
+      "name": "Bonsai-4B-gguf",
       "repository": "prism-ml/Bonsai-4B-gguf",
       "revision": "78f2c2bacd0904ffaba24b4873ed975e5818354a",
       "filename": "Bonsai-4B-Q1_0.gguf",
@@ -207,8 +208,7 @@
     {
       "id": "bonsai-1.7b",
       "tier": "small",
-      "name": "extra.Bonsai-1.7B-gguf",
-      "directory": "Bonsai-1.7B-gguf",
+      "name": "Bonsai-1.7B-gguf",
       "repository": "prism-ml/Bonsai-1.7B-gguf",
       "revision": "210a9e99f79cb184909d49595906526eb2b3dd9a",
       "filename": "Bonsai-1.7B-Q1_0.gguf",
@@ -218,8 +218,7 @@
     {
       "id": "phi-4-mini-instruct",
       "tier": "small",
-      "name": "extra.Phi-4-mini-instruct-GGUF",
-      "directory": "Phi-4-mini-instruct-GGUF",
+      "name": "Phi-4-mini-instruct-GGUF",
       "repository": "unsloth/Phi-4-mini-instruct-GGUF",
       "revision": "78eb92a46fc37e6b524df991ed9aca9bc6aa7b80",
       "filename": "Phi-4-mini-instruct-Q4_K_M.gguf",
@@ -229,8 +228,7 @@
     {
       "id": "lfm2-1.2b",
       "tier": "small",
-      "name": "extra.LFM2-1.2B-GGUF",
-      "directory": "LFM2-1.2B-GGUF",
+      "name": "LFM2-1.2B-GGUF",
       "repository": "LiquidAI/LFM2-1.2B-GGUF",
       "revision": "5399e76c648f4eb8c053feb1ab747277dea5bf8b",
       "filename": "LFM2-1.2B-Q4_K_M.gguf",
@@ -240,8 +238,7 @@
     {
       "id": "lfm2.5-1.2b-instruct",
       "tier": "small",
-      "name": "extra.LFM2.5-1.2B-Instruct-GGUF",
-      "directory": "LFM2.5-1.2B-Instruct-GGUF",
+      "name": "LFM2.5-1.2B-Instruct-GGUF",
       "repository": "LiquidAI/LFM2.5-1.2B-Instruct-GGUF",
       "revision": "6767265158422fb8a19c62ceb45f16f05363615b",
       "filename": "LFM2.5-1.2B-Instruct-Q4_K_M.gguf",
@@ -251,8 +248,7 @@
     {
       "id": "promptbridge-0.6b-alpha",
       "tier": "small",
-      "name": "extra.PromptBridge-0.6b-Alpha-GGUF",
-      "directory": "PromptBridge-0.6b-Alpha-GGUF",
+      "name": "PromptBridge-0.6b-Alpha-GGUF",
       "repository": "mradermacher/PromptBridge-0.6b-Alpha-GGUF",
       "revision": "76bde20ec8a89895e94dfc528b49b1bf494d3241",
       "filename": "PromptBridge-0.6b-Alpha.Q4_K_M.gguf",
@@ -262,8 +258,7 @@
     {
       "id": "jan-nano-128k",
       "tier": "small",
-      "name": "extra.Jan-nano-128k-gguf",
-      "directory": "Jan-nano-128k-gguf",
+      "name": "Jan-nano-128k-gguf",
       "repository": "Menlo/Jan-nano-128k-gguf",
       "revision": "128a8feab200a0426abb8bd64da1a861683815fe",
       "filename": "jan-nano-128k-Q4_K_M.gguf",
@@ -273,8 +268,7 @@
     {
       "id": "jan-v1-4b",
       "tier": "small",
-      "name": "extra.Jan-v1-4B-GGUF",
-      "directory": "Jan-v1-4B-GGUF",
+      "name": "Jan-v1-4B-GGUF",
       "repository": "janhq/Jan-v1-4B-GGUF",
       "revision": "a567ac3bab9d26fc0ddce96c2c21439b1ea7d115",
       "filename": "Jan-v1-4B-Q4_K_M.gguf",
@@ -284,8 +278,7 @@
     {
       "id": "llama-3.2-1b-instruct",
       "tier": "small",
-      "name": "extra.Llama-3.2-1B-Instruct-GGUF",
-      "directory": "Llama-3.2-1B-Instruct-GGUF",
+      "name": "Llama-3.2-1B-Instruct-GGUF",
       "repository": "unsloth/Llama-3.2-1B-Instruct-GGUF",
       "revision": "b69aef112e9f895e6f98d7ae0949f72ff09aa401",
       "filename": "Llama-3.2-1B-Instruct-UD-Q4_K_XL.gguf",
@@ -295,8 +288,7 @@
     {
       "id": "llama-3.2-3b-instruct",
       "tier": "small",
-      "name": "extra.Llama-3.2-3B-Instruct-GGUF",
-      "directory": "Llama-3.2-3B-Instruct-GGUF",
+      "name": "Llama-3.2-3B-Instruct-GGUF",
       "repository": "unsloth/Llama-3.2-3B-Instruct-GGUF",
       "revision": "e7d0997e49c9cb00d88b4c1a6a16aa894b0bbc31",
       "filename": "Llama-3.2-3B-Instruct-UD-Q4_K_XL.gguf",
@@ -306,8 +298,7 @@
     {
       "id": "smollm3-3b-128k",
       "tier": "small",
-      "name": "extra.SmolLM3-3B-128K-GGUF",
-      "directory": "SmolLM3-3B-128K-GGUF",
+      "name": "SmolLM3-3B-128K-GGUF",
       "repository": "unsloth/SmolLM3-3B-128K-GGUF",
       "revision": "3d9d3591996644952b74d2efb7b433450fd3da82",
       "filename": "SmolLM3-3B-128K-UD-Q4_K_XL.gguf",
@@ -317,8 +308,7 @@
     {
       "id": "ministral-3-3b-instruct-2512",
       "tier": "small",
-      "name": "extra.Ministral-3-3B-Instruct-2512-GGUF",
-      "directory": "Ministral-3-3B-Instruct-2512-GGUF",
+      "name": "Ministral-3-3B-Instruct-2512-GGUF",
       "repository": "mistralai/Ministral-3-3B-Instruct-2512-GGUF",
       "revision": "eb599d408350ea2bb60452cb86be7c7b2fc28227",
       "filename": "Ministral-3-3B-Instruct-2512-Q4_K_M.gguf",
@@ -328,8 +318,7 @@
     {
       "id": "qwen3.5-0.8b",
       "tier": "small",
-      "name": "extra.Qwen3.5-0.8B-GGUF",
-      "directory": "Qwen3.5-0.8B-GGUF",
+      "name": "Qwen3.5-0.8B-GGUF",
       "repository": "unsloth/Qwen3.5-0.8B-GGUF",
       "revision": "6ab461498e2023f6e3c1baea90a8f0fe38ab64d0",
       "filename": "Qwen3.5-0.8B-UD-Q4_K_XL.gguf",
@@ -339,8 +328,7 @@
     {
       "id": "qwen3.5-2b",
       "tier": "small",
-      "name": "extra.Qwen3.5-2B-GGUF",
-      "directory": "Qwen3.5-2B-GGUF",
+      "name": "Qwen3.5-2B-GGUF",
       "repository": "unsloth/Qwen3.5-2B-GGUF",
       "revision": "f6d5376be1edb4d416d56da11e5397a961aca8ae",
       "filename": "Qwen3.5-2B-UD-Q4_K_XL.gguf",

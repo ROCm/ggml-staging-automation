@@ -74,15 +74,11 @@ Windows support is intentionally not implemented yet. The scripts and CMake
 layout keep runtime libraries adjacent so the later Windows flow can use the
 same basic packaging model with DLL copying instead of ELF RPATHs.
 
-## CI model coverage
+## Benchmarks
 
-PR CI defaults to `single` (Qwen3-0.6B). The cumulative `small` tier covers
-Lemonade's smaller-model suite; `all` covers every model. Automated submodule
-bumps use `all`.
-
-Apply `ci:single-model`, `ci:small-models`, or `ci:all-models` to start CI with
-that coverage; the highest selected tier wins. Manual CI runs also offer all
-three tiers.
+CI compares HRX and Vulkan through released Lemonade and runs perplexity checks.
+See the [benchmarking guide](scripts/hrx/benchmark/README.md) for model tiers,
+per-benchmark test modes, expectations and release configuration.
 
 ## Releases
 
