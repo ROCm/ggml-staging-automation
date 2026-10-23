@@ -64,6 +64,6 @@ Infrastructure and malformed-artifact errors remain fatal.
 
 The pinned Lemonade release predates automatic HRX MTP enablement. Updating the
 release pin to one supporting HRX MTP needs no special version-dependent
-enablement code. Qwen3.5 generation remains report-only on HRX in both modes,
-independently of its perplexity exception. Backend correctness fixes must also
-be present in the CI-produced llama-server.
+enablement code. Qwen3.5 generation and perplexity use the default pass
+expectation. Backend correctness fixes must also be present in the CI-produced
+llama-server.

@@ -14,19 +14,6 @@
       "filename": "Qwen3.5-35B-A3B-UD-Q4_K_XL.gguf",
       "size_bytes": 22853662880,
       "sha256": "26445264c88d8bd4bf465763962b222cc8f816f9abe3717421f916ec4661fa9e",
-      "expected_results": {
-        "lemonade-benchmark": {
-          "hrx": {
-            "mtp:off": "report-only",
-            "mtp:on": "report-only"
-          }
-        },
-        "perplexity": {
-          "hrx": {
-            "default": "fail"
-          }
-        }
-      },
       "test-modes": {
         "lemonade-benchmark": [
           "mtp:off",
