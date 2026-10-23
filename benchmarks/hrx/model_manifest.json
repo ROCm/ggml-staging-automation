@@ -8,12 +8,6 @@
     {
       "id": "qwen3.5-35b-a3b-mtp",
       "tier": "all",
-      "hrx": {
-        "expected_results": {
-          "lemonade-benchmark": "report-only",
-          "perplexity": "fail"
-        }
-      },
       "name": "extra.Qwen3.5-35B-A3B-MTP-GGUF",
       "directory": "Qwen3.5-35B-A3B-MTP-GGUF",
       "repository": "unsloth/Qwen3.5-35B-A3B-MTP-GGUF",
