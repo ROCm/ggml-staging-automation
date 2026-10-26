@@ -5,8 +5,8 @@
       "argv": [
         "python3",
         "scripts/hrx/benchmark/run_lemonade_benchmark.py",
-        "--lemonade-build-dir",
-        "lemonade-source/build",
+        "--lemonade-dir",
+        "release/lemonade",
         "--llama-server",
         "release/benchmark-package/bin/llama-server",
         "--hrx-output",
@@ -17,10 +17,8 @@
         "lemonade-benchmark-debug/lemond-hrx.log",
         "--vulkan-server-log",
         "lemonade-benchmark-debug/lemond-vulkan.log",
-        "--hrx-response-log",
-        "lemonade-benchmark-debug/responses-hrx.jsonl",
-        "--vulkan-response-log",
-        "lemonade-benchmark-debug/responses-vulkan.jsonl"
+        "--model-manifest",
+        "benchmarks/hrx/model_manifest.json"
       ]
     },
     {

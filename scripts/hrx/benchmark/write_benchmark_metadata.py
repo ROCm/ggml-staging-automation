@@ -15,14 +15,14 @@ def main() -> int:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--llama-cpp-commit", required=True)
     parser.add_argument("--hrx-system-commit", required=True)
-    parser.add_argument("--lemonade-commit", required=True)
+    parser.add_argument("--lemonade-release", type=Path, required=True)
     args = parser.parse_args()
 
     metadata = {
-        "schema_version": 1,
+        "schema_version": 2,
         "llama_cpp": args.llama_cpp_commit,
         "hrx_system": args.hrx_system_commit,
-        "lemonade": args.lemonade_commit,
+        "lemonade": json.loads(args.lemonade_release.read_text(encoding="utf-8")),
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(

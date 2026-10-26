@@ -74,15 +74,16 @@ Windows support is intentionally not implemented yet. The scripts and CMake
 layout keep runtime libraries adjacent so the later Windows flow can use the
 same basic packaging model with DLL copying instead of ELF RPATHs.
 
-## CI model coverage
+## CI validation
 
-PR CI defaults to `single` (Qwen3-0.6B). The cumulative `small` tier covers
-Lemonade's smaller-model suite; `all` covers every model. Automated submodule
-bumps use `all`.
+CI runs the packaged HRX test suites before model benchmarks in the same GPU
+job. Failed tests stop benchmark execution. See the
+[HRX test workflow guide](scripts/hrx/ci/README.md) for the three validation
+modes, package contents, and test results.
 
-Apply `ci:single-model`, `ci:small-models`, or `ci:all-models` to start CI with
-that coverage; the highest selected tier wins. Manual CI runs also offer all
-three tiers.
+CI compares HRX and Vulkan through released Lemonade and runs perplexity checks.
+See the [benchmarking guide](scripts/hrx/benchmark/README.md) for model tiers,
+per-benchmark test modes, expectations and release configuration.
 
 ## Releases
 
@@ -92,9 +93,5 @@ also be dispatched manually. The published archive
 HRX and Vulkan backends enabled. The required HRX/ROCm/Vulkan runtime libraries
 ship alongside the binaries, so no ROCm install is needed on the target machine.
 
-### Packaged HRX tests
-
-CI runs the four HRX suites from a separate package on gfx1151 and uploads
-logs and JUnit results as `hrx-test-results-gfx1151`. See the
-[HRX test workflow guide](scripts/hrx/ci/README.md) for qualification runs,
-concurrency, and evidence.
+The build also produces a separate `hrx-tests` workflow artifact. Test executables
+and CTest files are excluded from the published release archive.

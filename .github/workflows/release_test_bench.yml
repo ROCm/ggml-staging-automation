@@ -109,15 +109,6 @@ jobs:
           sudo -n apt-get update
           sudo -n apt-get install -y --no-install-recommends mesa-vulkan-drivers
 
-      - name: Checkout Lemonade HRX integration
-        if: inputs.validation_mode != 'tests-only'
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: AaronStGeorge/lemonade
-          ref: hrx-integration
-          path: lemonade-source
-          persist-credentials: false
-
       - name: Record source commits
         if: inputs.validation_mode != 'tests-only'
         id: sources
@@ -125,10 +116,8 @@ jobs:
           set -euo pipefail
           llama_cpp=$(git rev-parse HEAD:llama.cpp)
           hrx_system=$(git rev-parse HEAD:hrx-system)
-          lemonade=$(git -C lemonade-source rev-parse HEAD)
           echo "llama_cpp=$llama_cpp" >> "$GITHUB_OUTPUT"
           echo "hrx_system=$hrx_system" >> "$GITHUB_OUTPUT"
-          echo "lemonade=$lemonade" >> "$GITHUB_OUTPUT"
 
       - name: Download llama.cpp release package
         if: inputs.validation_mode != 'tests-only'
@@ -148,25 +137,24 @@ jobs:
             --package-root-name "$PACKAGE_ROOT_NAME" \
             --output-dir release/benchmark-package
 
-      - name: Build Lemonade
+      - name: Install pinned Lemonade release
         if: ${{ inputs.validation_mode != 'tests-only' && !contains(fromJSON(inputs.skip_benchmarks), 'lemonade-benchmark') }}
         run: |
-          python3 scripts/hrx/build/build_lemonade.py \
-            --source-dir "$PWD/lemonade-source" \
-            --build-dir "$PWD/lemonade-source/build"
+          python3 scripts/hrx/package/fetch_lemonade.py \
+            --pin benchmarks/hrx/lemonade_release.json \
+            --output-dir release/lemonade
 
       - name: Write benchmark metadata
         if: inputs.validation_mode != 'tests-only'
         env:
           HRX_SYSTEM_COMMIT: ${{ steps.sources.outputs.hrx_system }}
-          LEMONADE_COMMIT: ${{ steps.sources.outputs.lemonade }}
           LLAMA_CPP_COMMIT: ${{ steps.sources.outputs.llama_cpp }}
         run: |
           python3 scripts/hrx/benchmark/write_benchmark_metadata.py \
             --output "$PWD/lemonade-benchmark/metadata.json" \
             --llama-cpp-commit "$LLAMA_CPP_COMMIT" \
             --hrx-system-commit "$HRX_SYSTEM_COMMIT" \
-            --lemonade-commit "$LEMONADE_COMMIT"
+            --lemonade-release benchmarks/hrx/lemonade_release.json
 
       - name: Fetch perplexity corpus
         if: ${{ inputs.validation_mode != 'tests-only' && !contains(fromJSON(inputs.skip_benchmarks), 'perplexity') }}

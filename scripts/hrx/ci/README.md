@@ -9,8 +9,10 @@ the published release archive does not contain tests.
 CI runs tests first in the existing benchmark GPU job. A failing suite stops
 benchmark setup and execution. The manual `validation_mode` input selects
 `tests-and-benchmarks` (the default), `tests-only`, or `benchmarks-only`.
-Tests-only skips Lemonade setup, model/corpus downloads, and benchmark reports.
-The existing model tier and benchmark selection apply when benchmarks run.
+Tests-only skips the pinned Lemonade release download, model/corpus downloads,
+and benchmark reports. The [benchmarking guide](../benchmark/README.md)
+explains the model tiers, benchmark selection, and per-model test modes that
+apply when benchmarks run.
 All modes use the checked-in submodule revisions.
 
 The Python runner only invokes CTest and returns its status. GPU visibility is

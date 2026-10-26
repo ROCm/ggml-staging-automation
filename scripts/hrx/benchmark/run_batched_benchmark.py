@@ -13,10 +13,11 @@ Terms:
 - Benchmark worker: a command from the benchmark specification (for example
   run_perplexity_benchmark.py). It is invoked once per batch and is expected to
   merge its per-batch results itself.
-- HRX expected result: ``hrx.expected_results`` maps benchmark-spec IDs to
-  "pass", "fail", or "report-only" for each model. Omitted checks expect a pass.
-  Expected failures become strict worker XFAILs; report-only checks still collect
-  measurements but do not enforce the HRX result. Neither expectation relaxes Vulkan measurements.
+- Expected result: ``expected_results`` maps check, backend and mode to
+  "pass", "fail", or "report-only". Omitted cases expect a pass. Workers read
+  these expectations from the manifest; failures and XPASS are strict.
+- Test modes: optional ``test-modes`` selects cases independently per benchmark.
+  Perplexity remains one comparison per model using the "default" mode.
 
 Why this exists: CI runners for the HRX release benchmarks have far less free
 disk than the full model set requires. Instead of pinning benchmarks to
@@ -35,8 +36,7 @@ Boundary contract:
   file fails the run before any download.
 - Worker invocation: each worker's argv is run verbatim with the batch-managed
   arguments appended: --batched --batch-number N --models-dir DIR
-  --hrx-xfail-models [NAME...] --hrx-report-only-models [NAME...] --models NAME...
-  The names select strict expected failures or report-only checks.
+  --models NAME...
   A spec that already carries any managed argument is rejected so a worker cannot be pointed at
   the wrong models or supplied conflicting failure policy.
 - Exit status: 0 only if every download, every worker, and every cleanup
@@ -105,14 +105,21 @@ class DownloadError(RuntimeError):
 class ModelSpec:
     id: str
     tier: str
-    hrx_expected_results: dict[str, str]
+    expected_results: dict[str, dict[str, dict[str, str]]]
+    test_modes: dict[str, tuple[str, ...]]
     name: str
-    directory: str
     repository: str
     revision: str
     filename: str
     size_bytes: int
     sha256: str
+
+    def modes(self, check: str) -> tuple[str, ...]:
+        """Use the ordinary case when this benchmark has no explicit modes."""
+        return self.test_modes.get(check, ("default",))
+
+    def expectation(self, check: str, backend: str, mode: str = "default") -> str:
+        return self.expected_results.get(check, {}).get(backend, {}).get(mode, "pass")
 
     @property
     def download_url(self) -> str:
@@ -224,7 +231,6 @@ def load_manifest(
     models: list[ModelSpec] = []
     ids: set[str] = set()
     names: set[str] = set()
-    directories: set[str] = set()
     for index, raw_entry in enumerate(entries):
         context = f"manifest.models[{index}]"
         entry = _require_object(raw_entry, context)
@@ -232,29 +238,54 @@ def load_manifest(
         model_id = _require_string(entry, "id", context)
         tier = _require_string(entry, "tier", context)
         name = _require_string(entry, "name", context)
-        directory = _require_string(entry, "directory", context)
         repository = _require_string(entry, "repository", context)
         revision = _require_string(entry, "revision", context)
         filename = _require_string(entry, "filename", context)
         sha256 = _require_string(entry, "sha256", context)
         size_bytes = entry.get("size_bytes")
-        hrx = _require_object(entry.get("hrx", {}), f"{context}.hrx")
-        expected_results = _require_object(
-            hrx.get("expected_results", {}), f"{context}.hrx.expected_results"
-        )
-        for check, result in expected_results.items():
-            _require_string_value(check, f"{context}.hrx.expected_results key")
-            if result not in ("pass", "fail", "report-only"):
-                raise BatchBenchmarkError(
-                    f"{context}.hrx.expected_results[{check!r}] must be 'pass', 'fail', or 'report-only'"
-                )
+        raw_modes = _require_object(entry.get("test-modes", {}), f"{context}.test-modes")
+        test_modes = {}
+        supported_modes = {
+            "lemonade-benchmark": {"default", "mtp:on", "mtp:off"},
+            "perplexity": {"default"},
+        }
+        for check, modes in raw_modes.items():
+            if check not in supported_modes:
+                raise BatchBenchmarkError(f"{context}: unknown benchmark {check!r}")
             if known_checks is not None:
                 if check not in known_checks:
-                    raise BatchBenchmarkError(
-                        f"{context}.hrx.expected_results references unknown check {check!r}"
-                    )
+                    raise BatchBenchmarkError(f"{context}: unknown check {check!r}")
+            modes_are_list = isinstance(modes, list)
+            modes_are_present = bool(modes)
+            valid_mode_list = modes_are_list and modes_are_present
+            if not valid_mode_list:
+                raise BatchBenchmarkError(f"{context}.test-modes.{check} must be a non-empty list")
+            for mode in modes:
+                if not isinstance(mode, str):
+                    raise BatchBenchmarkError(f"{context}: modes for {check} must be strings")
+                if mode not in supported_modes[check]:
+                    raise BatchBenchmarkError(f"{context}: unsupported mode {mode!r} for {check}")
+            if len(set(modes)) != len(modes):
+                raise BatchBenchmarkError(f"{context}: duplicate modes for {check}")
+            test_modes[check] = tuple(modes)
+        expected_results = _require_object(entry.get("expected_results", {}), context)
+        for check, backends in expected_results.items():
+            if known_checks is not None:
+                if check not in known_checks:
+                    raise BatchBenchmarkError(f"{context}: unknown check {check!r}")
+            if check not in supported_modes:
+                raise BatchBenchmarkError(f"{context}: unknown benchmark {check!r}")
+            valid_modes = test_modes.get(check, ("default",))
+            for backend, modes in _require_object(backends, context).items():
+                if backend not in ("hrx", "vulkan"):
+                    raise BatchBenchmarkError(f"{context}: unknown backend {backend!r}")
+                for mode, result in _require_object(modes, context).items():
+                    if mode not in valid_modes:
+                        raise BatchBenchmarkError(f"{context}: unused mode {mode!r} for {check}")
+                    if result not in ("pass", "fail", "report-only"):
+                        raise BatchBenchmarkError(f"{context}: invalid expectation {result!r}")
 
-        _validate_local_name(directory, "directory", context)
+        _validate_local_name(name, "name", context)
         _validate_local_name(filename, "filename", context)
         _validate_repository(repository, context)
         if tier not in tier_names:
@@ -273,21 +304,16 @@ def load_manifest(
             raise BatchBenchmarkError(
                 f"Duplicate runtime model name in manifest: {name}"
             )
-        if directory in directories:
-            raise BatchBenchmarkError(
-                f"Duplicate model directory in manifest: {directory}"
-            )
 
         ids.add(model_id)
         names.add(name)
-        directories.add(directory)
         models.append(
             ModelSpec(
                 id=model_id,
                 tier=tier,
-                hrx_expected_results=expected_results,
+                expected_results=expected_results,
+                test_modes=test_modes,
                 name=name,
-                directory=directory,
                 repository=repository,
                 revision=revision,
                 filename=filename,
@@ -319,8 +345,6 @@ def load_benchmark_spec(path: Path) -> list[BenchmarkSpec]:
         "--batched",
         "--batch-number",
         "--models-dir",
-        "--hrx-xfail-models",
-        "--hrx-report-only-models",
         "--models",
     }
     for entry_index, raw_entry in enumerate(entries):
@@ -550,7 +574,7 @@ def download_model(
 ) -> Path:
     """Download, verify, and atomically publish one model file."""
     opener = urlopen or urllib.request.urlopen
-    model_dir = models_dir / model.directory
+    model_dir = models_dir / model.name
     try:
         model_dir.mkdir(parents=True, exist_ok=True)
     except OSError as exc:
@@ -658,18 +682,6 @@ def build_benchmark_command(
         str(batch_number),
         "--models-dir",
         os.fspath(models_dir),
-        "--hrx-xfail-models",
-        *(
-            model.name
-            for model in resident
-            if model.hrx_expected_results.get(benchmark.id, "pass") == "fail"
-        ),
-        "--hrx-report-only-models",
-        *(
-            model.name
-            for model in resident
-            if model.hrx_expected_results.get(benchmark.id, "pass") == "report-only"
-        ),
         "--models",
         *(model.name for model in resident),
     ]
