@@ -93,5 +93,6 @@ also be dispatched manually. The published archive
 HRX and Vulkan backends enabled. The required HRX/ROCm/Vulkan runtime libraries
 ship alongside the binaries, so no ROCm install is needed on the target machine.
 
-The build also produces a separate `hrx-tests` workflow artifact. Test executables
-and CTest files are excluded from the published release archive.
+The build also produces a separate `hrx-tests` workflow artifact whose tests use
+the standard release libraries. Test executables and CTest files are excluded
+from the published release archive.

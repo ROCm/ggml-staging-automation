@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # Copyright Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
-"""Execute a standalone HRX CTest package using the runner's environment."""
+"""Execute an HRX CTest package using the runner's environment."""
 
 import argparse
 from pathlib import Path

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # Copyright Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
-"""Create release and standalone HRX CTest archives from the same build."""
+"""Create release and HRX CTest archives from the same build."""
 
 from __future__ import annotations
 
@@ -133,10 +133,10 @@ def print_created(package_file: Path, entries: Iterable[str]) -> None:
         print(f"  {entry}", flush=True)
 
 
-def test_entries(install_dir: Path, build_dir: Path) -> list[PackageEntry]:
+def test_entries(build_dir: Path) -> list[PackageEntry]:
     staging = build_dir / "hrx-test-metadata"
     staging.mkdir(parents=True, exist_ok=True)
-    entries = glob_install_tree(install_dir, "lib/**/*.so*")
+    entries: list[PackageEntry] = []
     ctest = []
     for name, (prefix, workers) in SUITES.items():
         binary = build_dir / "bin" / name
@@ -147,8 +147,7 @@ def test_entries(install_dir: Path, build_dir: Path) -> list[PackageEntry]:
             f'add_test({name} "./bin/{name}" '
             f'--{prefix}-test-jobs {workers} --{prefix}-test-filter . --{prefix}-test-output all)\n'
             f'set_tests_properties({name} PROPERTIES TIMEOUT 900 '
-            f'FAIL_REGULAR_EXPRESSION "test skipped: no device" '
-            f'ENVIRONMENT "LD_LIBRARY_PATH=./lib")\n'
+            f'FAIL_REGULAR_EXPRESSION "test skipped: no device")\n'
         )
     (staging / "CTestTestfile.cmake").write_text("".join(ctest))
     revisions = {
@@ -196,7 +195,7 @@ def main() -> int:
     test_archived = create_package(
         package_file=test_package_file,
         package_root=PurePosixPath("hrx-tests"),
-        entries=test_entries(install_dir, args.llama_build_dir.resolve()),
+        entries=test_entries(args.llama_build_dir.resolve()),
     )
     print_created(test_package_file, test_archived)
     return 0
