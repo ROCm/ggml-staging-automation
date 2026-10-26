@@ -1,25 +1,14 @@
 #!/usr/bin/env python3
 # Copyright Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
-"""Run HRX and Vulkan release benchmarks through sequential Lemonade daemons.
+"""Benchmark identical pinned GGUFs through released Lemonade's HRX/Vulkan recipes.
 
-Each backend gets a fresh daemon configured to use the packaged llama-server
-and the requested device. The worker validates Lemonade's JSON before merging
-the batch into the stable artifacts. The batch driver supplies the selected
-runtime model names and the subset whose HRX throughput is expected to fail.
-Vulkan results are always mandatory; a successful flagged HRX model is an
-XPASS so stale expectations cannot hide fixes. Separately named report-only checks
-still collect measurements but log REPORT_ONLY without enforcing the HRX result.
-Artifacts retain each model's expectation, measured result, and check outcome.
-
-Only ``chat-short`` and ``chat-long-output`` are collected: they capture
-short-response and sustained generation throughput for the CI report.
-
-Process, daemon, configuration, benchmark-document, and result-artifact errors
-are always fatal. Only outcomes represented by an otherwise valid Lemonade
-document participate in XFAIL classification.
+The manifest owns model identity, optional MTP cases and per-case expectations.
+Private user registrations point directly to the same verified local GGUF;
+no model or executable downloads are allowed. Each case uses ordinary Lemonade
+bench, including natural EOS. MTP on uses Lemonade's automatic defaults;
+verification of actual drafting is deferred until counters are readily available.
 """
-
 from __future__ import annotations
 
 import argparse
@@ -31,39 +20,34 @@ import subprocess
 import sys
 import tempfile
 import time
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from benchmark_output import append_batch_log, atomic_write_json, merge_benchmark_output
+from run_batched_benchmark import load_manifest
 
-
-BENCHMARK_BACKEND_ARGS = "--ignore-eos"
-
-
-@dataclass
-class BenchmarkPhase:
-    name: str
-    backend: str
-    device: str
-    output: Path
-    server_log: Path
-    response_log: Path
+SCENARIOS = ("chat-short", "chat-long-output")
 
 
 def log(message: str) -> None:
     print(message, flush=True)
 
 
-def prepare_state(state_root: Path) -> tuple[Path, Path, Path]:
-    """Keep Lemonade runtime state under one private temporary root."""
+def prepare_state(state_root: Path) -> tuple[Path, Path]:
+    """Create the private cache and runtime directories for one backend run.
+
+    The cache is passed both as lemond's positional state directory and as
+    LEMONADE_CACHE_DIR for its CLI clients. It holds our user_models.json,
+    recipe_options.json and daemon configuration, isolating the run from the
+    runner's normal Lemonade installation. XDG_RUNTIME_DIR supplies a private,
+    owner-only runtime directory. Model weights remain outside this state tree.
+    """
     cache_dir = state_root / "lemonade"
-    hf_home = state_root / "huggingface"
     runtime_dir = state_root / "runtime"
-    for path in (cache_dir, hf_home, runtime_dir):
+    for path in (cache_dir, runtime_dir):
         path.mkdir(parents=True)
     runtime_dir.chmod(0o700)
-    return cache_dir, hf_home, runtime_dir
+    return cache_dir, runtime_dir
 
 
 def request(port: int, path: str, timeout: float = 10.0) -> tuple[int, bytes]:
@@ -88,7 +72,12 @@ def request_json(port: int, path: str) -> dict[str, Any]:
 
 
 def wait_for_live(process: subprocess.Popen[str], port: int) -> None:
-    """Avoid racing Lemonade CLI requests against daemon startup."""
+    """Wait for lemond's /live endpoint before sending configuration commands.
+
+    This checks the Lemonade control service, not a loaded llama-server model.
+    Model loading happens later through `lemonade bench`; readiness here only
+    means the daemon can accept the setup requests.
+    """
     deadline = time.monotonic() + 60.0
     last_error = "server did not answer"
     while time.monotonic() < deadline:
@@ -112,7 +101,13 @@ def wait_for_live(process: subprocess.Popen[str], port: int) -> None:
 
 
 def stop_server(process: subprocess.Popen[str] | None) -> int | None:
-    """Stop the daemon and flush its log before verification and state removal."""
+    """Let lemond shut down its backend before removing the private state.
+
+    SIGTERM gives Lemonade a chance to stop the llama-server process it owns
+    and flush its logs. If shutdown stalls, signal the process group created
+    by start_lemond so backend children cannot retain the GPU after this run.
+    Return the daemon's exit status so cleanup cannot hide an unexpected exit.
+    """
     if process is None:
         return None
     if process.poll() is not None:
@@ -131,16 +126,24 @@ def stop_server(process: subprocess.Popen[str] | None) -> int | None:
 
 
 def start_lemond(
-    lemonade_build_dir: Path,
+    lemonade_dir: Path,
     cache_dir: Path,
     log_path: Path,
     env: dict[str, str],
     port: int,
 ) -> subprocess.Popen[str]:
-    """Start the daemon that owns Lemonade configuration and backend processes."""
+    """Launch the released embeddable lemond with our prepared state directory.
+
+    lemond reads the user registrations and recipe options written before
+    startup, serves the CLI's HTTP requests, and owns backend installation and
+    process launches. Explicit host/port arguments direct our CLI calls to
+    this loopback service. A new process session permits group cleanup if the
+    daemon or its backend fails to stop normally; debug output is retained for
+    executable/device verification and CI diagnostics.
+    """
     log_path.parent.mkdir(parents=True, exist_ok=True)
     command = [
-        os.fspath(lemonade_build_dir / "lemond"),
+        os.fspath(lemonade_dir / "lemond"),
         os.fspath(cache_dir),
         "--host",
         "127.0.0.1",
@@ -159,492 +162,273 @@ def start_lemond(
         )
 
 
-def summarize_benchmark(
-    data: Any,
-    expected_backend: str,
-    expected_models: list[str],
-    hrx_xfail_models: set[str],
-    hrx_report_only_models: set[str] | frozenset[str] = frozenset(),
-) -> tuple[int, int, bool]:
-    """Validate one complete document and classify binary model outcomes."""
-    scenario_count = 0
-    failed_scenario_count = 0
-    model_failed: dict[str, bool] = {}
-    if not isinstance(data, dict):
-        raise RuntimeError("Lemonade benchmark document must be an object")
-    try:
-        timestamp = data["timestamp"]
-        timestamp_is_string = isinstance(timestamp, str)
-        timestamp_is_present = bool(timestamp)
-        timestamp_is_valid = timestamp_is_string and timestamp_is_present
-        if not timestamp_is_valid:
-            raise RuntimeError(
-                "Lemonade benchmark timestamp must be a non-empty string"
-            )
-        if "hardware" not in data:
-            raise RuntimeError(
-                "Lemonade benchmark document is missing hardware metadata"
-            )
-        raw_models = data["models"]
-        if not isinstance(raw_models, list):
-            raise RuntimeError("Lemonade benchmark models must be an array")
-        for model in raw_models:
-            model_name = model["model"]
-            if model_name in model_failed:
-                raise RuntimeError(
-                    f"Lemonade benchmark has duplicate model {model_name!r}"
-                )
-            model_failed[model_name] = False
-            model_scenario_count = 0
-            for result in model["results"]:
-                backend = result["backend"]
-                if backend != expected_backend:
-                    raise RuntimeError(
-                        f"Lemonade reported backend {backend!r}; expected "
-                        f"{expected_backend!r}"
-                    )
-                for scenario in result["scenarios"]:
-                    failed_runs = scenario["failed_runs"]
-                    if type(failed_runs) is not int or failed_runs < 0:
-                        raise RuntimeError(
-                            "Lemonade scenario failed_runs must be a "
-                            "non-negative integer"
-                        )
-                    all_runs_failed = scenario.get("all_runs_failed", False)
-                    if type(all_runs_failed) is not bool:
-                        raise RuntimeError(
-                            "Lemonade scenario all_runs_failed must be a "
-                            "Boolean when present"
-                        )
-                    scenario_has_failed_runs = failed_runs > 0
-                    scenario_has_failures = (
-                        scenario_has_failed_runs or all_runs_failed
-                    )
-                    if scenario_has_failures:
-                        model_failed[model_name] = True
-                        failed_scenario_count += 1
-                    model_scenario_count += 1
-                    scenario_count += 1
-            if not model_scenario_count:
-                raise RuntimeError(
-                    f"Lemonade model {model_name!r} has no scenarios"
-                )
-        expected_model_names = set(expected_models)
-        unexpected_models = sorted(model_failed.keys() - expected_model_names)
-        if unexpected_models:
-            raise RuntimeError(
-                "Lemonade benchmark contains unexpected models: "
-                f"{unexpected_models!r}"
-            )
-    except (KeyError, TypeError) as exc:
-        raise RuntimeError("Lemonade benchmark report is malformed") from exc
+def configure(executable, llama_server, env, port):
+    """Select the CI executable through Lemonade's backend configuration keys.
 
-    has_unexpected_outcomes = False
-    backend_label = expected_backend.upper()
-    backend_is_hrx = expected_backend == "hrx"
-    model_rows = {row["model"]: row for row in raw_models}
-    for model in expected_models:
-        model_is_present = model in model_failed
-        model_has_failed = model_failed.get(model, True)
-        model_succeeded = model_is_present and not model_has_failed
-        model_is_flagged = model in hrx_xfail_models
-        xfail_applies = backend_is_hrx and model_is_flagged
+    `lemonade config set` updates the running daemon: hrx.hrx_bin supplies the
+    executable for the llamacpp-hrx recipe, while llamacpp.vulkan_bin supplies
+    the Vulkan backend of the regular llamacpp recipe. Both point to the same
+    CI-built llama-server; recipe/device selection chooses which backend runs.
 
-        # Report-only checks still require a model measurement.
-        model_is_report_only = model in hrx_report_only_models
-        report_only_applies = backend_is_hrx and model_is_report_only and model_is_present
-        if report_only_applies:
-            outcome = "REPORT_ONLY"
-            expectation = "report-only"
-        elif xfail_applies:
-            outcome = "XPASS" if model_succeeded else "XFAIL"
-            expectation = "fail"
-        else:
-            outcome = "PASS" if model_succeeded else "FAIL"
-            expectation = "pass"
-        if model_is_present:
-            model_rows[model]["expected_result"] = expectation
-            model_rows[model]["result"] = "pass" if model_succeeded else "fail"
-            model_rows[model]["outcome"] = outcome
-        if report_only_applies:
-            measured = "PASS" if model_succeeded else "FAIL"
-            detail = f"(measured {measured}; report only)"
-        elif model_succeeded:
-            detail = "completed successfully"
-        elif model_is_present:
-            detail = "reported failed runs"
-        else:
-            detail = "is absent from a valid benchmark document"
-        log(f"{outcome}: {backend_label} throughput for {model} {detail}")
-        has_unexpected_outcomes = has_unexpected_outcomes or outcome in ("FAIL", "XPASS")
-
-    return scenario_count, failed_scenario_count, has_unexpected_outcomes
-
-
-def run_benchmark(
-    executable: Path,
-    backend: str,
-    output: Path,
-    response_log: Path,
-    models: list[str],
-    hrx_xfail_models: set[str],
-    *,
-    env: dict[str, str],
-    hrx_report_only_models: set[str] | frozenset[str] = frozenset(),
-) -> tuple[dict[str, Any], bool]:
-    """Run and summarize one backend's short and sustained generation scenarios."""
-    output.parent.mkdir(parents=True, exist_ok=True)
-    output.unlink(missing_ok=True)
-    command = [
-        os.fspath(executable),
-        "bench",
-        "--backend",
-        backend,
-        "--warmup",
-        "1",
-        "--runs",
-        "3",
-        "--scenarios",
-        "chat-short",
-        "--scenarios",
-        "chat-long-output",
-        f"--llamacpp-args={BENCHMARK_BACKEND_ARGS}",
-        "--response-log",
-        os.fspath(response_log),
-        "--output",
-        os.fspath(output),
-    ]
-    command.extend(models)
-    log("++ " + " ".join(command))
-    subprocess.run(command, env=env, check=True)
-
-    if not output.is_file():
-        raise RuntimeError(f"Lemonade benchmark did not write {output}")
-    data = json.loads(output.read_text(encoding="utf-8"))
-    scenario_count, failed_scenario_count, has_unexpected_outcomes = (
-        summarize_benchmark(
-            data,
-            expected_backend=backend,
-            expected_models=models,
-            hrx_xfail_models=hrx_xfail_models,
-            hrx_report_only_models=hrx_report_only_models,
-        )
-    )
-    log(
-        f"Summarized {scenario_count} {backend} scenario(s); "
-        f"{failed_scenario_count} reported failures in {output}"
-    )
-    return data, has_unexpected_outcomes
-
-
-def set_lemonade_config_values(
-    executable: Path,
-    llama_server: Path,
-    device: str,
-    *,
-    models_dir: Path,
-    env: dict[str, str],
-    port: int,
-) -> None:
-    """Pin both backends and select the device for the current phase."""
-    command = [
-        os.fspath(executable),
-        "--host",
-        "127.0.0.1",
-        "--port",
-        str(port),
-        "config",
-        "set",
-        f"llamacpp.hrx_bin={llama_server}",
-        f"llamacpp.vulkan_bin={llama_server}",
-        f"llamacpp.device={device}",
-        "no_fetch_executables=true",
-        "log_level=debug",
-        f"extra_models_dir={models_dir}",
-    ]
-    log("++ " + " ".join(command))
+    offline disables network-dependent operation and no_fetch_executables
+    prevents Lemonade from installing a managed backend in place of our build.
+    Read /internal/config back to verify the effective settings, and enable
+    debug logging so verify_executable can check the subsequent selection and
+    launch records as well as this configuration intent.
+    """
+    settings = {
+        "hrx.hrx_bin": str(llama_server),
+        "llamacpp.vulkan_bin": str(llama_server),
+        "no_fetch_executables": "true", "offline": "true", "log_level": "debug",
+    }
+    command = [str(executable), "--host", "127.0.0.1", "--port", str(port),
+               "config", "set", *(f"{key}={value}" for key, value in settings.items())]
     subprocess.run(command, env=env, check=True)
     config = request_json(port, "/internal/config")
-    configured_models_dir = config.get("extra_models_dir")
-    models_dir_was_retained = False
-    configured_models_dir_is_string = isinstance(configured_models_dir, str)
-    if configured_models_dir_is_string:
-        models_dir_was_retained = (
-            Path(configured_models_dir).resolve() == models_dir
-        )
-    if (
-        Path(config["llamacpp"]["hrx_bin"]).resolve() != llama_server
-        or Path(config["llamacpp"]["vulkan_bin"]).resolve() != llama_server
-        or config["llamacpp"]["device"] != device
-        or config["no_fetch_executables"] is not True
-        or config["log_level"] != "debug"
-        or not models_dir_was_retained
-    ):
-        raise RuntimeError("Lemonade did not retain the requested configuration")
-    log(
-        "Verified Lemonade configuration: "
-        f"llamacpp.hrx_bin={llama_server}, "
-        f"llamacpp.vulkan_bin={llama_server}, "
-        f"llamacpp.device={device}, no_fetch_executables=true, log_level=debug, "
-        f"extra_models_dir={models_dir}"
-    )
+    for section, key in (("hrx", "hrx_bin"), ("llamacpp", "vulkan_bin")):
+        if Path(config[section][key]).resolve() != llama_server:
+            raise RuntimeError(f"Lemonade did not retain {section}.{key}")
+    for key in ("no_fetch_executables", "offline"):
+        if config[key] is not True:
+            raise RuntimeError(f"Lemonade did not retain {key}")
 
 
-def verify_configured_executable(
-    *,
-    phase: BenchmarkPhase,
-    phases: tuple[BenchmarkPhase, ...],
-    cache_dir: Path,
-    llama_server: Path,
-) -> None:
-    """Verify log and cache evidence for the pinned binary and selected device."""
-    log_text = phase.server_log.read_text(encoding="utf-8", errors="replace")
-    positive_text = (
-        "Fetching executable artifacts is disabled; using installed "
-        f"llamacpp:{phase.backend} backend at {llama_server}"
-    )
-    managed_backend_dir = cache_dir / "bin" / "llamacpp" / phase.backend
-    used_configured_executable = positive_text in log_text
-    used_selected_device = f"--device {phase.device}" in log_text
-    used_other_device = any(
-        f"--device {other_phase.device}" in log_text
-        for other_phase in phases
-        if other_phase.device != phase.device
-    )
-    created_managed_backend = managed_backend_dir.exists()
-    installed_llama_server = "Installing llama-server" in log_text
-    if (
-        not used_configured_executable
-        or not used_selected_device
-        or used_other_device
-        or created_managed_backend
-        or installed_llama_server
-    ):
+def register_models(models, models_dir, cache_dir):
+    """Prepare Lemonade user registrations and per-model recipe overrides.
+
+    user_models.json stores bare registration names; Lemonade exposes these
+    in its user namespace. Each backend/mode gets its own registration so its
+    recipe options and benchmark results are independent. The llamacpp-hrx
+    and regular llamacpp registrations use source=local_path with the same
+    absolute GGUF checkpoint. Lemonade's model resolver reads that file
+    directly, bypassing Hugging Face lookup or download. The batch runner has
+    already verified the weights against the manifest's checksum.
+
+    recipe_options.json is keyed by canonical user.<name> IDs. hrx_args and
+    llamacpp_args extend the respective recipe's arguments with merge_args
+    enabled, preserving Lemonade's defaults. Off explicitly adds --spec-type
+    none; on/default add nothing and leave automatic MTP selection to Lemonade.
+    This configures intent only; actual drafting is not currently verified.
+
+    Vulkan uses the managed llamacpp_device option to select Vulkan0, since
+    device selection belongs to Lemonade rather than arbitrary backend args.
+    The HRX recipe selects HRX0 itself. Write both files before daemon startup
+    so its initial registry sees all cases without a live registration update.
+    """
+    definitions = {}
+    options = {}
+    for model in models:
+        checkpoint = str((models_dir / model.name / model.filename).resolve(strict=True))
+        for backend, recipe in (("hrx", "llamacpp-hrx"), ("vulkan", "llamacpp")):
+            for mode in model.modes("lemonade-benchmark"):
+                name = registration_name(model, backend, mode)
+                definitions[name] = {"recipe": recipe, "labels": ["chat", "custom"],
+                    "source": "local_path", "checkpoint": checkpoint}
+                argument_key = "hrx_args" if backend == "hrx" else "llamacpp_args"
+                arguments = "--spec-type none" if mode == "mtp:off" else ""
+                options["user." + name] = {argument_key: arguments, "merge_args": True}
+                if backend == "vulkan":
+                    options["user." + name]["llamacpp_device"] = "Vulkan0"
+    atomic_write_json(cache_dir / "user_models.json", definitions)
+    atomic_write_json(cache_dir / "recipe_options.json", options)
+
+
+def registration_name(model, backend, mode):
+    """Return a bare user-model ID that separates backend and MTP options."""
+    return f"ci-{model.id}-{backend}-{mode.replace(':', '-')}"
+
+
+def classify(expectation, succeeded):
+    """Apply the manifest's case expectation while keeping XPASS distinguishable."""
+    if expectation == "report-only":
+        return "REPORT_ONLY"
+    if expectation == "fail":
+        return "XPASS" if succeeded else "XFAIL"
+    return "PASS" if succeeded else "FAIL"
+
+
+def run_case(executable, model, backend, mode, root, env, port):
+    """Run the ordinary Lemonade benchmark against one prepared registration.
+
+    The CLI talks directly to our daemon, which loads the registered recipe
+    and applies its per-model options. Explicit --backend selects HRX or Vulkan
+    within that recipe. Lemonade owns warmup, measured requests and natural
+    EOS behavior; this adapter consumes its JSON artifact rather than issuing
+    extra generation requests.
+
+    Check the artifact's model, recipe, backend and scenarios before assigning
+    a case outcome. Missing or malformed artifacts are setup/protocol failures
+    and cannot be hidden by a model's expected-failure policy. Valid results
+    receive the manifest identity and requested MTP mode for report pairing;
+    successful generation does not establish that speculative drafting ran.
+    """
+    name = registration_name(model, backend, mode)
+    output = root / f"{name}.json"
+    command = [str(executable), "--host", "127.0.0.1", "--port", str(port),
+               "bench", "--backend", backend, "--ctx-size", "4096",
+               "--warmup", "1", "--runs", "3", "--scenarios", SCENARIOS[0],
+               "--scenarios", SCENARIOS[1], "--output", str(output), name]
+    log("++ " + " ".join(command))
+    result = subprocess.run(command, env=env, check=False)
+    errors = []
+    if result.returncode:
+        errors.append(f"lemonade bench exited {result.returncode}")
+    document = None
+    recipe = "llamacpp-hrx" if backend == "hrx" else "llamacpp"
+    if output.exists():
+        document = json.loads(output.read_text(encoding="utf-8"))
+        rows = document["models"]
+        if len(rows) != 1:
+            raise RuntimeError("Expected one model from single-case benchmark")
+        row = rows[0]
+        if row["model"] not in (name, "user." + name):
+            raise RuntimeError("Lemonade returned the wrong registered model")
+        results = row["results"]
+        if len(results) != 1:
+            raise RuntimeError("Expected one configuration from single-case benchmark")
+        measured = results[0]
+        matching_backend = measured["backend"] == backend
+        matching_recipe = measured["recipe"] == recipe
+        correct_route = matching_backend and matching_recipe
+        if not correct_route:
+            raise RuntimeError("Lemonade benchmark used the wrong backend/recipe")
+        scenarios = measured["scenarios"]
+        if [s["name"] for s in scenarios] != list(SCENARIOS):
+            raise RuntimeError("Lemonade returned unexpected scenarios")
+        for scenario in scenarios:
+            failed = scenario["failed_runs"]
+            integer_count = type(failed) is int
+            if not integer_count:
+                raise RuntimeError("Non-integer failed-run count from Lemonade")
+            if failed < 0:
+                raise RuntimeError("Invalid failed-run count from Lemonade")
+            has_failed_runs = failed > 0
+            all_runs_failed = scenario.get("all_runs_failed", False)
+            scenario_failed = has_failed_runs or all_runs_failed
+            if scenario_failed:
+                errors.append(f"{scenario['name']}: inference failed")
+    else:
         raise RuntimeError(
-            f"Could not prove that Lemonade used only the configured {phase.backend} "
-            f"executable on {phase.device} without installing another backend"
+            f"Lemonade exited {result.returncode} without a benchmark artifact for {name}"
         )
-    log(
-        f"Verified {phase.backend} used {llama_server} on {phase.device} without "
-        "downloading another backend executable."
-    )
+    expectation = model.expectation("lemonade-benchmark", backend, mode)
+    succeeded = not errors
+    outcome = classify(expectation, succeeded)
+    label = model.name if mode == "default" else f"{model.name} [{mode}]"
+    row.update(model=label, model_id=model.id, test_mode=mode,
+               registration="user." + name, expected_result=expectation,
+               result="pass" if succeeded else "fail", outcome=outcome,
+               errors=errors,
+               weights={"revision": model.revision, "sha256": model.sha256})
+    log(f"{outcome}: {backend} {label}: {errors}")
+    return row, document, outcome in ("FAIL", "XPASS")
 
 
-def log_llama_server_devices(llama_server: Path, env: dict[str, str]) -> None:
-    """Record the devices llama-server enumerates before benchmarking."""
-    result = subprocess.run(
-        [os.fspath(llama_server), "--list-devices"],
-        env=env,
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-    )
-    log(f"llama-server --list-devices (exit {result.returncode}):")
-    log(result.stdout.rstrip())
+def verify_executable(log_path, cache_dir, llama_server, backend):
+    """Check Lemonade's backend-selection and process-launch debug records.
+
+    The offline installer logs which externally configured executable it uses;
+    require that marker for the expected recipe/backend. Check every recorded
+    launch for the same CI binary and HRX0 or Vulkan0 device, then reject files
+    in Lemonade's managed bin cache. This complements config readback with
+    evidence of runtime selection. It relies on the pinned release's log
+    format and does not establish that MTP actually drafted tokens.
+
+    Failures here are infrastructure errors, outside model XFAIL handling.
+    """
+    text = log_path.read_text(encoding="utf-8", errors="replace")
+    recipe = "llamacpp-hrx" if backend == "hrx" else "llamacpp"
+    marker = f"; using installed {recipe}:{backend} backend at {llama_server}"
+    if marker not in text:
+        raise RuntimeError(f"No evidence of configured {backend} executable")
+    device = "HRX0" if backend == "hrx" else "Vulkan0"
+    for line in text.splitlines():
+        if "Starting process with filtered output: " in line:
+            command = line.split("Starting process with filtered output: ", 1)[1]
+            if not command.startswith(str(llama_server) + " "):
+                raise RuntimeError(f"Unexpected backend executable: {command}")
+            if f"--device {device}" not in command:
+                raise RuntimeError(f"Wrong {backend} device: {command}")
+    # Lemonade creates the empty bin root even when fetching is disabled.
+    cached_files = [path for path in (cache_dir / "bin").rglob("*") if path.is_file()]
+    if cached_files:
+        raise RuntimeError(f"Unexpected managed executable files: {cached_files}")
 
 
-def run(args: argparse.Namespace) -> int:
-    port = 13305
-    lemonade_build = args.lemonade_build_dir.resolve()
-    lemonade = lemonade_build / "lemonade"
+def run(args):
+    """Run each backend in a fresh Lemonade daemon with private configuration.
+
+    Registrations are prepared before lemond starts; its CLI then sets binary
+    overrides before any model is loaded. Separate state and daemon lifetimes
+    prevent one backend's loaded model or persisted options from influencing
+    the other, while both consume the batch runner's same verified GGUFs.
+
+    Preserve result artifacts and daemon logs in finally before deleting the
+    temporary state, including partial evidence when setup or inference fails.
+    Batched invocations merge into the workflow's accumulated outputs.
+    """
+    executable_dir = args.lemonade_dir.resolve()
     llama_server = args.llama_server.resolve()
     models_dir = args.models_dir.resolve()
-    hrx_xfail_models = set(args.hrx_xfail_models)
-    phases = (
-        BenchmarkPhase(
-            name="HRX",
-            backend="hrx",
-            device="HRX0",
-            output=args.hrx_output,
-            server_log=args.hrx_server_log,
-            response_log=args.hrx_response_log,
-        ),
-        BenchmarkPhase(
-            name="Vulkan",
-            backend="vulkan",
-            device="Vulkan0",
-            output=args.vulkan_output,
-            server_log=args.vulkan_server_log,
-            response_log=args.vulkan_response_log,
-        ),
-    )
-    has_unexpected_outcomes = False
-
-    with tempfile.TemporaryDirectory(
-        dir=models_dir.parent,
-        prefix="lemonade-state-",
-    ) as state_root_name:
-        state_root = Path(state_root_name)
-        # Precreate debug files so early failures still leave uploadable artifacts.
-        for log_path in (
-            args.hrx_server_log,
-            args.vulkan_server_log,
-            args.hrx_response_log,
-            args.vulkan_response_log,
-        ):
-            log_path.parent.mkdir(parents=True, exist_ok=True)
-            if args.batched:
-                log_path.touch(exist_ok=True)
-            else:
-                log_path.write_text("", encoding="utf-8")
-
-        cache_dir, hf_home, runtime_dir = prepare_state(state_root)
-        env = dict(os.environ)
-        env.update(
-            {
-                "HF_HOME": os.fspath(hf_home),
-                "HF_HUB_CACHE": os.fspath(hf_home / "hub"),
-                "LEMONADE_CACHE_DIR": os.fspath(cache_dir),
-                "LEMONADE_HOST": "127.0.0.1",
-                "LEMONADE_PORT": str(port),
-                "XDG_RUNTIME_DIR": os.fspath(runtime_dir),
-            }
-        )
-
-        log_llama_server_devices(llama_server, env)
-
-        # Run benchmarks
-        for phase in phases:
-            log(
-                f"Starting {phase.name} benchmark phase on {phase.device}"
-            )
-            active_phase = phase
-            if args.batched:
-                assert args.batch_number is not None
-                batch_root = state_root / phase.backend
-                active_phase = BenchmarkPhase(
-                    name=phase.name,
-                    backend=phase.backend,
-                    device=phase.device,
-                    output=batch_root / "benchmark.json",
-                    server_log=batch_root / "server.log",
-                    response_log=batch_root / "responses.jsonl",
-                )
-
-            server_process: subprocess.Popen[str] | None = None
+    manifest = load_manifest(args.model_manifest)
+    by_name = {model.name: model for model in manifest.models}
+    models = [by_name[name] for name in args.models]
+    unexpected = False
+    for backend in ("hrx", "vulkan"):
+        destination = getattr(args, backend + "_output")
+        server_log = getattr(args, backend + "_server_log")
+        with tempfile.TemporaryDirectory(dir=models_dir.parent, prefix="lemonade-state-") as tmp:
+            root = Path(tmp)
+            cache_dir, runtime_dir = prepare_state(root)
+            register_models(models, models_dir, cache_dir)
+            env = dict(os.environ, LEMONADE_CACHE_DIR=str(cache_dir), XDG_RUNTIME_DIR=str(runtime_dir))
+            log_path = root / "server.log"
+            process = None
+            data = {"models": []}
             try:
-                server_process = start_lemond(
-                    lemonade_build,
-                    cache_dir,
-                    active_phase.server_log,
-                    env=env,
-                    port=port,
-                )
-                wait_for_live(server_process, port)
-                set_lemonade_config_values(
-                    lemonade,
-                    llama_server,
-                    phase.device,
-                    models_dir=models_dir,
-                    env=env,
-                    port=port,
-                )
-                batch_data, phase_has_unexpected_outcomes = run_benchmark(
-                    lemonade,
-                    phase.backend,
-                    active_phase.output,
-                    active_phase.response_log,
-                    args.models,
-                    hrx_xfail_models,
-                    env=env,
-                    hrx_report_only_models=set(args.hrx_report_only_models),
-                )
+                process = start_lemond(executable_dir, cache_dir, log_path, env, args.port)
+                wait_for_live(process, args.port)
+                configure(executable_dir / "lemonade", llama_server, env, args.port)
+                for model in models:
+                    for mode in model.modes("lemonade-benchmark"):
+                        row, document, failed = run_case(executable_dir / "lemonade", model,
+                            backend, mode, root, env, args.port)
+                        if document is not None:
+                            data.update({k: v for k, v in document.items() if k != "models"})
+                        data["models"].append(row)
+                        unexpected = unexpected or failed
+                verify_executable(log_path, cache_dir, llama_server, backend)
             finally:
-                try:
-                    server_return_code = stop_server(server_process)
-                    log(
-                        f"{phase.name} lemond stopped with status "
-                        f"{server_return_code}"
-                    )
-                    if (
-                        server_process is not None
-                        and server_return_code != 0
-                    ):
-                        raise RuntimeError(
-                            f"{phase.name} lemond stopped unexpectedly with "
-                            f"status {server_return_code}"
-                        )
-                finally:
-                    if args.batched:
-                        assert args.batch_number is not None
-                        for destination, source in (
-                            (phase.server_log, active_phase.server_log),
-                            (phase.response_log, active_phase.response_log),
-                        ):
-                            try:
-                                append_batch_log(
-                                    destination,
-                                    source,
-                                    args.batch_number,
-                                )
-                            except OSError as exc:
-                                log(
-                                    "Warning: could not append "
-                                    f"{phase.backend} batch {args.batch_number} "
-                                    f"log to {destination}: {exc}"
-                                )
-
-            verify_configured_executable(
-                phase=active_phase,
-                phases=phases,
-                cache_dir=cache_dir,
-                llama_server=llama_server,
-            )
-            if args.batched:
-                merged_count = merge_benchmark_output(
-                    phase.output,
-                    batch_data,
-                )
-                log(
-                    f"Merged {merged_count} {phase.backend} model(s) from "
-                    f"batch {args.batch_number} into {phase.output}"
-                )
-            else:
-                atomic_write_json(phase.output, batch_data)
-            has_unexpected_outcomes = (
-                has_unexpected_outcomes or phase_has_unexpected_outcomes
-            )
-
-    if has_unexpected_outcomes:
-        log(
-            "Lemonade benchmark completed with unexpected FAIL or XPASS "
-            "outcomes"
-        )
-        return 1
-    return 0
+                daemon_returncode = stop_server(process)
+                if args.batched:
+                    merge_benchmark_output(destination, data)
+                else:
+                    atomic_write_json(destination, data)
+                if not args.batched:
+                    server_log.parent.mkdir(parents=True, exist_ok=True)
+                    server_log.write_text("", encoding="utf-8")
+                append_batch_log(server_log, log_path, args.batch_number or 1)
+                daemon_started = process is not None
+                daemon_failed = daemon_returncode != 0
+                unexpected_shutdown = daemon_started and daemon_failed
+                if unexpected_shutdown:
+                    raise RuntimeError(f"{backend} daemon exited {daemon_returncode}")
+    return int(unexpected)
 
 
-def main() -> int:
+def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--lemonade-build-dir", type=Path, required=True)
-    parser.add_argument("--llama-server", type=Path, required=True)
-    parser.add_argument("--models-dir", type=Path, required=True)
+    for option in ("lemonade-dir", "llama-server", "models-dir", "model-manifest",
+                   "hrx-output", "vulkan-output", "hrx-server-log", "vulkan-server-log"):
+        parser.add_argument("--" + option, type=Path, required=True)
+    parser.add_argument("--port", type=int, default=13305)
     parser.add_argument("--batched", action="store_true")
     parser.add_argument("--batch-number", type=int)
-    parser.add_argument("--hrx-output", type=Path, required=True)
-    parser.add_argument("--vulkan-output", type=Path, required=True)
-    parser.add_argument("--hrx-server-log", type=Path, required=True)
-    parser.add_argument("--vulkan-server-log", type=Path, required=True)
-    parser.add_argument("--hrx-response-log", type=Path, required=True)
-    parser.add_argument("--vulkan-response-log", type=Path, required=True)
-    parser.add_argument("--hrx-xfail-models", nargs="*", required=True)
-    parser.add_argument("--hrx-report-only-models", nargs="*", default=[])
     parser.add_argument("--models", nargs="+", required=True)
     args = parser.parse_args()
-    if args.batched and args.batch_number is None:
-        parser.error("--batch-number is required with --batched")
-    if args.batch_number is not None and not args.batched:
-        parser.error("--batch-number requires --batched")
-    if args.batch_number is not None and args.batch_number < 1:
-        parser.error("--batch-number must be a positive integer")
     try:
         return run(args)
-    except (
-        OSError,
-        RuntimeError,
-        json.JSONDecodeError,
-        subprocess.SubprocessError,
-    ) as exc:
+    except (OSError, RuntimeError, ValueError, KeyError, subprocess.SubprocessError) as exc:
         print(f"Lemonade benchmark failed: {exc}", file=sys.stderr)
         return 1
 
