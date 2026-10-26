@@ -9,10 +9,14 @@ name: CI
 on:
   workflow_dispatch:
     inputs:
-      test_backend_ref:
-        description: 'Test-only backend SHA (empty uses normal pin); labels this run as qualification.'
-        type: string
-        default: ''
+      validation_mode:
+        description: Validation steps to run.
+        type: choice
+        default: tests-and-benchmarks
+        options:
+          - tests-and-benchmarks
+          - tests-only
+          - benchmarks-only
       skip_benchmarks:
         description: 'JSON list of benchmark IDs to skip, e.g. ["lemonade-benchmark"] or ["perplexity"].'
         type: string
@@ -37,7 +41,7 @@ concurrency:
   # Coverage labels supersede active CI just like a new commit. Other labels
   # get separate groups so their skipped runs cannot cancel active benchmarks.
   group: >-
-    ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ !contains(fromJSON('["ci:single-model","ci:small-models","ci:all-models"]'), github.event.label.name) && github.event.label.name || '' }}
+    ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ inputs.validation_mode || 'tests-and-benchmarks' }}-${{ !contains(fromJSON('["ci:single-model","ci:small-models","ci:all-models"]'), github.event.label.name) && github.event.label.name || '' }}
   cancel-in-progress: true
 
 jobs:
@@ -75,27 +79,18 @@ jobs:
       hrx_build_type: Release
       package_root_name: llama.cpp-install
       upload_artifact: true
-      build_hrx_tests: true
-      test_backend_ref: ${{ inputs.test_backend_ref || '' }}
 
   llama_cpp_release_bench:
-    name: Linux / HRX release benchmark
-    if: ${{ !inputs.test_backend_ref }}
+    name: Linux / HRX validation
     needs: [select_models, llama_cpp_linux]
     uses: ./.github/workflows/release_test_bench.yml
     permissions:
       contents: read
       actions: read
     with:
-      name: Release benchmark
+      name: Release validation
       release_artifact_name: llama-cpp-linux-x86_64
       package_root_name: llama.cpp-install
       model_tier: ${{ needs.select_models.outputs.model_tier }}
       skip_benchmarks: ${{ inputs.skip_benchmarks || '[]' }}
-
-  hrx_tests:
-    name: HRX tests ${{ inputs.test_backend_ref && '(qualification backend)' || '(normal pin)' }}
-    needs: llama_cpp_linux
-    uses: ./.github/workflows/test_hrx_linux.yml
-    permissions:
-      contents: read
+      validation_mode: ${{ inputs.validation_mode || 'tests-and-benchmarks' }}

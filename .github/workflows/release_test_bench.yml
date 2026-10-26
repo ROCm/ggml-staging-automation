@@ -4,11 +4,15 @@
 # See https://llvm.org/LICENSE.txt for license information.
 # SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 
-name: Benchmark llama.cpp Release Linux
+name: Validate llama.cpp Release Linux
 
 on:
   workflow_call:
     inputs:
+      validation_mode:
+        description: tests-and-benchmarks, tests-only, or benchmarks-only.
+        type: string
+        default: tests-and-benchmarks
       skip_benchmarks:
         description: 'JSON list of benchmark IDs to skip, e.g. ["lemonade-benchmark"] or ["perplexity"].'
         type: string
@@ -54,19 +58,59 @@ jobs:
       BENCHMARK_ARTIFACT_NAME: lemonade-bench-${{ matrix.gpu_target }}
       BENCHMARK_STATE_NAME: lemonade-bench-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.gpu_target }}
     steps:
+      - name: Checkout automation repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install CTest
+        if: inputs.validation_mode != 'benchmarks-only'
+        run: |
+          sudo -n apt-get update
+          sudo -n apt-get install -y --no-install-recommends cmake
+
+      - name: Download HRX test package
+        if: inputs.validation_mode != 'benchmarks-only'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: hrx-tests
+          path: artifacts
+
+      - name: Extract HRX test package
+        if: inputs.validation_mode != 'benchmarks-only'
+        run: |
+          python3 scripts/hrx/package/extract_release_package.py \
+            --archive artifacts/hrx-tests.tar.gz \
+            --package-root-name hrx-tests \
+            --output-dir release/hrx-tests
+
+      - name: Run packaged HRX suites
+        id: hrx_tests
+        if: inputs.validation_mode != 'benchmarks-only'
+        run: python3 scripts/hrx/ci/run_hrx_tests.py release/hrx-tests
+
+      - name: Upload HRX test results
+        if: ${{ always() && (steps.hrx_tests.outcome == 'success' || steps.hrx_tests.outcome == 'failure') }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: hrx-test-results-${{ matrix.gpu_target }}
+          path: |
+            release/hrx-tests/metadata.json
+            release/hrx-tests/junit.xml
+            release/hrx-tests/Testing/
+          if-no-files-found: error
+          retention-days: 45
+
       - name: Install Vulkan driver
+        if: inputs.validation_mode != 'tests-only'
         # llama.cpp bundles the Vulkan loader but discovers the GPU through
         # the host ICD, so the runner must provide one.
         run: |
           sudo -n apt-get update
           sudo -n apt-get install -y --no-install-recommends mesa-vulkan-drivers
 
-      - name: Checkout automation repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
       - name: Checkout Lemonade HRX integration
+        if: inputs.validation_mode != 'tests-only'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: AaronStGeorge/lemonade
@@ -75,6 +119,7 @@ jobs:
           persist-credentials: false
 
       - name: Record source commits
+        if: inputs.validation_mode != 'tests-only'
         id: sources
         run: |
           set -euo pipefail
@@ -86,12 +131,14 @@ jobs:
           echo "lemonade=$lemonade" >> "$GITHUB_OUTPUT"
 
       - name: Download llama.cpp release package
+        if: inputs.validation_mode != 'tests-only'
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: ${{ inputs.release_artifact_name }}
           path: artifacts
 
       - name: Extract release package
+        if: inputs.validation_mode != 'tests-only'
         env:
           PACKAGE_ROOT_NAME: ${{ inputs.package_root_name }}
           RELEASE_ARTIFACT_NAME: ${{ inputs.release_artifact_name }}
@@ -102,13 +149,14 @@ jobs:
             --output-dir release/benchmark-package
 
       - name: Build Lemonade
-        if: ${{ !contains(fromJSON(inputs.skip_benchmarks), 'lemonade-benchmark') }}
+        if: ${{ inputs.validation_mode != 'tests-only' && !contains(fromJSON(inputs.skip_benchmarks), 'lemonade-benchmark') }}
         run: |
           python3 scripts/hrx/build/build_lemonade.py \
             --source-dir "$PWD/lemonade-source" \
             --build-dir "$PWD/lemonade-source/build"
 
       - name: Write benchmark metadata
+        if: inputs.validation_mode != 'tests-only'
         env:
           HRX_SYSTEM_COMMIT: ${{ steps.sources.outputs.hrx_system }}
           LEMONADE_COMMIT: ${{ steps.sources.outputs.lemonade }}
@@ -121,12 +169,13 @@ jobs:
             --lemonade-commit "$LEMONADE_COMMIT"
 
       - name: Fetch perplexity corpus
-        if: ${{ !contains(fromJSON(inputs.skip_benchmarks), 'perplexity') }}
+        if: ${{ inputs.validation_mode != 'tests-only' && !contains(fromJSON(inputs.skip_benchmarks), 'perplexity') }}
         run: |
           python3 scripts/hrx/benchmark/fetch_wikitext2.py \
             --output-dir "$PWD/perplexity-corpus"
 
       - name: Run batched HRX and Vulkan benchmarks
+        if: inputs.validation_mode != 'tests-only'
         id: benchmark
         continue-on-error: true
         env:
@@ -144,12 +193,12 @@ jobs:
 
       - name: Remove perplexity corpus
         # The runners are self-hosted, so benchmark inputs are removed explicitly.
-        if: ${{ always() }}
+        if: ${{ always() && inputs.validation_mode != 'tests-only' }}
         run: |
           rm -rf "$PWD/perplexity-corpus"
 
       - name: Write Lemonade benchmark report
-        if: ${{ !contains(fromJSON(inputs.skip_benchmarks), 'lemonade-benchmark') }}
+        if: ${{ inputs.validation_mode != 'tests-only' && !contains(fromJSON(inputs.skip_benchmarks), 'lemonade-benchmark') }}
         run: |
           python3 scripts/hrx/benchmark/write_lemonade_benchmark_report.py \
             "$PWD/lemonade-benchmark/benchmark-hrx.json" \
@@ -157,14 +206,14 @@ jobs:
             >> "$GITHUB_STEP_SUMMARY"
 
       - name: Write perplexity report
-        if: ${{ !contains(fromJSON(inputs.skip_benchmarks), 'perplexity') }}
+        if: ${{ inputs.validation_mode != 'tests-only' && !contains(fromJSON(inputs.skip_benchmarks), 'perplexity') }}
         run: |
           python3 scripts/hrx/benchmark/write_perplexity_report.py \
             "$PWD/lemonade-benchmark/perplexity.json" \
             >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload benchmark results
-        if: ${{ always() }}
+        if: ${{ always() && (steps.benchmark.outcome == 'success' || steps.benchmark.outcome == 'failure') }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ${{ env.BENCHMARK_ARTIFACT_NAME }}
@@ -178,7 +227,7 @@ jobs:
 
       - name: Upload benchmark debug logs
         # Preserve diagnostics when the benchmark or report step fails.
-        if: ${{ always() }}
+        if: ${{ always() && (steps.benchmark.outcome == 'success' || steps.benchmark.outcome == 'failure') }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: lemonade-bench-debug-log-${{ matrix.gpu_target }}

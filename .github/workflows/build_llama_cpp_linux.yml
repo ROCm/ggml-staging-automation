@@ -9,13 +9,6 @@ name: Build llama.cpp Linux
 on:
   workflow_call:
     inputs:
-      build_hrx_tests:
-        type: boolean
-        default: false
-      test_backend_ref:
-        description: Explicit test-only backend revision for qualification.
-        type: string
-        default: ""
       name:
         type: string
         default: Build
@@ -65,14 +58,6 @@ jobs:
       - name: Initialize submodules
         run: git submodule update --init hrx-system llama.cpp
 
-      - name: Select qualification backend
-        if: inputs.test_backend_ref != ''
-        env:
-          TEST_BACKEND_REF: ${{ inputs.test_backend_ref }}
-        run: |
-          git -C llama.cpp fetch origin "$TEST_BACKEND_REF"
-          git -C llama.cpp checkout --detach FETCH_HEAD
-
       - name: Select Python 3.12
         run: echo "/opt/python/cp312-cp312/bin" >> "$GITHUB_PATH"
 
@@ -90,8 +75,7 @@ jobs:
           python3 scripts/hrx/build/build_all.py \
             --build-type "$BUILD_TYPE" \
             --hrx-build-type "$HRX_BUILD_TYPE" \
-            --vulkan-sdk-dir "$PWD/build/vulkan-sdk" \
-            ${{ inputs.build_hrx_tests && '--build-hrx-tests' || '' }}
+            --vulkan-sdk-dir "$PWD/build/vulkan-sdk"
 
       - name: Package llama.cpp artifacts
         if: ${{ inputs.upload_artifact }}
@@ -118,12 +102,8 @@ jobs:
           path: build/artifacts/${{ inputs.package_file_name || format('{0}.tar.gz', inputs.artifact_name) }}
           if-no-files-found: error
 
-      - name: Package HRX tests and matching runtime
-        if: inputs.build_hrx_tests
-        run: python3 scripts/hrx/package/package_hrx_tests.py
-
       - name: Upload HRX test package
-        if: inputs.build_hrx_tests
+        if: ${{ inputs.upload_artifact }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: hrx-tests
