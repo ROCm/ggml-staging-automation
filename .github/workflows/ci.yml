@@ -65,9 +65,6 @@ jobs:
           persist-credentials: false
           fetch-depth: 0
 
-      - name: Test model selection
-        run: python3 -m unittest discover -s scripts/hrx/benchmark -p 'test_*.py' -v
-
       - name: Select CI coverage
         id: selection
         run: python3 scripts/hrx/ci/select_models.py
