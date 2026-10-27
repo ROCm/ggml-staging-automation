@@ -133,6 +133,13 @@ def cmake_argument(value: str) -> str:
 
 
 def test_entries(build_dir: Path) -> list[PackageEntry]:
+    """Collect HRX executables and generate a relocatable CTest manifest and metadata.
+
+    Discover suites by their CTest label so new registrations are included
+    automatically, preserving their arguments and properties except build-local
+    working directories. Runtime libraries come from the standard release archive
+    and are intentionally excluded from this test package.
+    """
     discovery = json.loads(subprocess.check_output(
         ["ctest", "--test-dir", str(build_dir), "-L", "^hrx$", "--show-only=json-v1"],
         text=True,
