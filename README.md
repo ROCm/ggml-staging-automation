@@ -74,7 +74,12 @@ Windows support is intentionally not implemented yet. The scripts and CMake
 layout keep runtime libraries adjacent so the later Windows flow can use the
 same basic packaging model with DLL copying instead of ELF RPATHs.
 
-## Benchmarks
+## CI validation
+
+CI runs the packaged HRX test suites before model benchmarks in the same GPU
+job. Failed tests stop benchmark execution. See the
+[HRX test workflow guide](scripts/hrx/ci/README.md) for the three validation
+modes, package contents, and test results.
 
 CI compares HRX and Vulkan through released Lemonade and runs perplexity checks.
 See the [benchmarking guide](scripts/hrx/benchmark/README.md) for model tiers,
@@ -87,3 +92,7 @@ also be dispatched manually. The published archive
 `llama-<version>-bin-manylinux-hrx-x64.tar.gz` contains llama.cpp release with
 HRX and Vulkan backends enabled. The required HRX/ROCm/Vulkan runtime libraries
 ship alongside the binaries, so no ROCm install is needed on the target machine.
+
+The build also produces a separate `hrx-tests` workflow artifact whose tests use
+the standard release libraries. Test executables and CTest files are excluded
+from the published release archive.

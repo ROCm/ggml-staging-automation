@@ -9,6 +9,14 @@ name: CI
 on:
   workflow_dispatch:
     inputs:
+      validation_mode:
+        description: Validation steps to run.
+        type: choice
+        default: tests-and-benchmarks
+        options:
+          - tests-and-benchmarks
+          - tests-only
+          - benchmarks-only
       skip_benchmarks:
         description: 'JSON list of benchmark IDs to skip, e.g. ["lemonade-benchmark"] or ["perplexity"].'
         type: string
@@ -33,7 +41,7 @@ concurrency:
   # Coverage labels supersede active CI just like a new commit. Other labels
   # get separate groups so their skipped runs cannot cancel active benchmarks.
   group: >-
-    ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ !contains(fromJSON('["ci:single-model","ci:small-models","ci:all-models"]'), github.event.label.name) && github.event.label.name || '' }}
+    ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ inputs.validation_mode || 'tests-and-benchmarks' }}-${{ !contains(fromJSON('["ci:single-model","ci:small-models","ci:all-models"]'), github.event.label.name) && github.event.label.name || '' }}
   cancel-in-progress: true
 
 jobs:
@@ -73,15 +81,16 @@ jobs:
       upload_artifact: true
 
   llama_cpp_release_bench:
-    name: Linux / HRX release benchmark
+    name: Linux / HRX validation
     needs: [select_models, llama_cpp_linux]
     uses: ./.github/workflows/release_test_bench.yml
     permissions:
       contents: read
       actions: read
     with:
-      name: Release benchmark
+      name: Release validation
       release_artifact_name: llama-cpp-linux-x86_64
       package_root_name: llama.cpp-install
       model_tier: ${{ needs.select_models.outputs.model_tier }}
       skip_benchmarks: ${{ inputs.skip_benchmarks || '[]' }}
+      validation_mode: ${{ inputs.validation_mode || 'tests-and-benchmarks' }}

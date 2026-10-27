@@ -101,3 +101,11 @@ jobs:
           name: ${{ inputs.artifact_name }}
           path: build/artifacts/${{ inputs.package_file_name || format('{0}.tar.gz', inputs.artifact_name) }}
           if-no-files-found: error
+
+      - name: Upload HRX test package
+        if: ${{ inputs.upload_artifact }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: hrx-tests
+          path: build/artifacts/hrx-tests.tar.gz
+          if-no-files-found: error

@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 # Copyright Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
-"""Create a release archive from a llama.cpp install tree."""
+"""Create release and HRX CTest archives from the same build."""
 
 from __future__ import annotations
 
 import argparse
+import json
+import subprocess
 import tarfile
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -13,6 +15,7 @@ from typing import Iterable
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
+DEFAULT_LLAMA_BUILD_DIR = REPO_ROOT / "build" / "llama.cpp-build"
 DEFAULT_LLAMA_INSTALL_DIR = REPO_ROOT / "build" / "llama.cpp-install"
 RELEASE_INSTALL_GLOBS = (
     "bin/llama-*",
@@ -122,6 +125,65 @@ def print_created(package_file: Path, entries: Iterable[str]) -> None:
         print(f"  {entry}", flush=True)
 
 
+def cmake_argument(value: str) -> str:
+    delimiter = "="
+    while f"]{delimiter}]" in value:
+        delimiter += "="
+    return f"[{delimiter}[{value}]{delimiter}]"
+
+
+def test_entries(build_dir: Path) -> list[PackageEntry]:
+    """Collect HRX executables and generate a relocatable CTest manifest and metadata.
+
+    Discover suites by their CTest label so new registrations are included
+    automatically, preserving their arguments and properties except build-local
+    working directories. Runtime libraries come from the standard release archive
+    and are intentionally excluded from this test package.
+    """
+    discovery = json.loads(subprocess.check_output(
+        ["ctest", "--test-dir", str(build_dir), "-L", "^hrx$", "--show-only=json-v1"],
+        text=True,
+    ))
+    suites = discovery["tests"]
+    if not suites:
+        raise SystemExit("No HRX suites registered in CTest")
+    staging = build_dir / "hrx-test-metadata"
+    staging.mkdir(parents=True, exist_ok=True)
+    entries: list[PackageEntry] = []
+    ctest = []
+    for suite in suites:
+        name = suite["name"]
+        binary = Path(suite["command"][0])
+        entries.append(PackageEntry(PurePosixPath("bin") / binary.name, binary))
+        command = [f"./bin/{binary.name}", *suite["command"][1:]]
+        arguments = " ".join(cmake_argument(arg) for arg in [name, *command])
+        ctest.append(f"add_test({arguments})\n")
+        for prop in suite["properties"]:
+            # CTest's build-directory default must not escape the extracted package.
+            if prop["name"] == "WORKING_DIRECTORY":
+                continue
+            value = prop["value"]
+            if isinstance(value, list):
+                value = ";".join(str(item) for item in value)
+            ctest.append(
+                f"set_tests_properties({cmake_argument(name)} PROPERTIES "
+                f"{prop['name']} {cmake_argument(str(value))})\n"
+            )
+    (staging / "CTestTestfile.cmake").write_text("".join(ctest))
+    revisions = {
+        name: subprocess.check_output(["git", "-C", str(REPO_ROOT / directory),
+                                       "rev-parse", "HEAD"], text=True).strip()
+        for name, directory in (("automation", "."), ("llama_cpp", "llama.cpp"),
+                                ("hrx_system", "hrx-system"))
+    }
+    (staging / "metadata.json").write_text(json.dumps({
+        "revisions": revisions, "suites": [suite["name"] for suite in suites],
+    }, indent=2) + "\n")
+    for name in ("CTestTestfile.cmake", "metadata.json"):
+        entries.append(PackageEntry(PurePosixPath(name), staging / name))
+    return entries
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -129,7 +191,10 @@ def main() -> int:
         type=Path,
         default=DEFAULT_LLAMA_INSTALL_DIR,
     )
+    parser.add_argument("--llama-build-dir", type=Path, default=DEFAULT_LLAMA_BUILD_DIR)
     parser.add_argument("--release-package-file", type=Path, required=True)
+    parser.add_argument("--test-package-file", type=Path,
+                        help="Defaults to hrx-tests.tar.gz beside the release archive.")
     parser.add_argument("--package-root-name", default="llama.cpp-install")
     args = parser.parse_args()
 
@@ -146,6 +211,13 @@ def main() -> int:
         entries=release,
     )
     print_created(args.release_package_file, release_archived)
+    test_package_file = args.test_package_file or args.release_package_file.with_name("hrx-tests.tar.gz")
+    test_archived = create_package(
+        package_file=test_package_file,
+        package_root=PurePosixPath("hrx-tests"),
+        entries=test_entries(args.llama_build_dir.resolve()),
+    )
+    print_created(test_package_file, test_archived)
     return 0
 
 

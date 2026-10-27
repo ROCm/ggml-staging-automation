@@ -1,0 +1,36 @@
+# Packaged HRX tests
+
+The regular build discovers HRX suites through CTest's `hrx` label and builds
+the corresponding `hrx-*-test` targets. Packaging uses the discovered commands
+and properties, so new registered suites need no automation-side name or argument
+mapping. The artifact packager produces
+both the release archive and a separate `hrx-tests.tar.gz` containing those
+executables, source revisions, and a relocatable CTest manifest. The test archive
+contains no runtime libraries: tests use the standard release archive's `lib/`
+directory through `LD_LIBRARY_PATH`. Both archives must come from the same build. Scheduled release builds also produce the test artifact;
+the published release archive does not contain tests.
+
+CI runs tests first in the existing benchmark GPU job. A failing suite stops
+benchmark setup and execution. The manual `validation_mode` input selects
+`tests-and-benchmarks` (the default), `tests-only`, or `benchmarks-only`.
+Tests-only downloads both the test and standard release archives, but skips the
+pinned Lemonade release download, model/corpus downloads, and benchmark reports. The [benchmarking guide](../benchmark/README.md)
+explains the model tiers, benchmark selection, and per-model test modes that
+apply when benchmarks run.
+All modes use the checked-in submodule revisions.
+
+The workflow invokes CTest directly and preserves its exit status. GPU visibility is
+inherited from the remote runner. The workflow selects the release library path;
+the package supplies internal worker counts (buffer 1, backend 4, JIT 2, ops 4), a 900-second per-suite
+timeout, and a rule that fails missing-device skips. CTest runs two suites at a
+time and streams verbose output. The workflow uploads source metadata, JUnit,
+and CTest logs even when tests fail.
+
+To run locally, extract both archives from the same build and select a supported
+GPU as appropriate for the machine, then run:
+
+```sh
+LD_LIBRARY_PATH=/path/to/llama.cpp-install/lib \
+  ctest --test-dir /path/to/hrx-tests --parallel 2 --verbose \
+    --output-junit /path/to/hrx-tests/junit.xml
+```

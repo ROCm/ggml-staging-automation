@@ -1,6 +1,12 @@
 # Benchmarking
 
-PR CI defaults to the `single` tier defined in the model manifest. The cumulative `small` tier covers
+By default, CI runs the packaged HRX suites before benchmarks in the same GPU
+job and stops if a suite fails. The [CI validation guide](../ci/README.md)
+describes tests-only and benchmarks-only execution. These workflow modes are
+separate from the per-model `test-modes` described below.
+
+When benchmarks run, PR CI defaults to the `single` tier defined in the model
+manifest. The cumulative `small` tier covers
 Lemonade's smaller-model suite; `all` covers every model. Automated submodule
 bumps use `all`.
 

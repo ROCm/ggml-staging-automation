@@ -6,6 +6,8 @@
 from __future__ import annotations
 
 import argparse
+import json
+import subprocess
 import os
 import shutil
 from pathlib import Path
@@ -202,6 +204,18 @@ def main() -> int:
         backend_dl=args.backend_dl,
         extra_cmake_args=extra_cmake_args,
     )
+    # Keep the release install tree separate from the discovered HRX suites.
+    env = rocm_env(args.rocm_root.resolve())
+    run(["cmake", "-S", REPO_ROOT / "llama.cpp", "-B", args.llama_build_dir,
+         "-DLLAMA_BUILD_TESTS=ON", "-DCMAKE_FIND_PACKAGE_TARGETS_GLOBAL=ON"], env=env)
+    discovery = json.loads(subprocess.check_output(
+        ["ctest", "--test-dir", str(args.llama_build_dir), "-L", "^hrx$", "--show-only=json-v1"],
+        env=env, text=True,
+    ))
+    targets = [test["name"] for test in discovery["tests"]]
+    if not targets:
+        raise SystemExit("No HRX suites registered in CTest")
+    run(["cmake", "--build", args.llama_build_dir, "--target", *targets], env=env)
     return 0
 
 
