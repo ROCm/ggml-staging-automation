@@ -7,12 +7,22 @@ separate from the per-model `test-modes` described below.
 
 When benchmarks run, PR CI defaults to the `single` tier defined in the model
 manifest. The cumulative `small` tier covers
-Lemonade's smaller-model suite; `all` covers every model. Automated submodule
+Lemonade's smaller-model suite; `all` covers every ordinary model. Automated submodule
 bumps use `all`.
 
 Apply `ci:single-model`, `ci:small-models`, or `ci:all-models` to start CI with
 that coverage; the highest selected tier wins. Manual CI runs also offer all
-three tiers.
+three tiers. Models in `select-only` are excluded from every cumulative tier,
+including `all`, and cannot be enabled by a coverage label. To run them, supply
+a JSON array of exact manifest IDs in the manual CI `model_ids` input (or the
+runner's `--model-ids` option). A non-empty list replaces tier coverage; an empty
+list keeps the selected tier. Unknown or duplicate IDs fail before downloads.
+For example, `--model-ids '["flint-q3-k-m","flint-iq2-xxs"]'` selects only those
+two models. The `select-only` tier itself cannot be requested as bulk coverage.
+
+The runner and workflow use a 60 GiB disk budget (64,424,509,440 bytes), with a
+2 GiB reserve and a further cap at available disk space. This is a binary GiB
+budget, not decimal GB; the `--max-disk-gib` option retains the existing units.
 
 ## Lemonade release and test modes
 
