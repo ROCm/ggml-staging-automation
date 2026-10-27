@@ -1,6 +1,9 @@
 # Packaged HRX tests
 
-The regular build compiles the four HRX suites. The artifact packager produces
+The regular build discovers HRX suites through CTest's `hrx` label and builds
+the corresponding `hrx-*-test` targets. Packaging uses the discovered commands
+and properties, so new registered suites need no automation-side name or argument
+mapping. The artifact packager produces
 both the release archive and a separate `hrx-tests.tar.gz` containing those
 executables, source revisions, and a relocatable CTest manifest. The test archive
 contains no runtime libraries: tests use the standard release archive's `lib/`

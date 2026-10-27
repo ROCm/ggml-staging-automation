@@ -33,14 +33,6 @@ RELEASE_LIBRARY_GLOBS = (
     "lib/**/*.so*",
 )
 
-SUITES = {
-    "test-hrx-buffer": ("hrx-buffer", 1),
-    "hrx-backend-test": ("hrx-backend", 4),
-    "test-hrx-loom-jit": ("hrx-loom-jit", 2),
-    "test-hrx-ops": ("hrx", 4),
-}
-
-
 @dataclass(frozen=True)
 class PackageEntry:
     relative: PurePosixPath
@@ -133,22 +125,43 @@ def print_created(package_file: Path, entries: Iterable[str]) -> None:
         print(f"  {entry}", flush=True)
 
 
+def cmake_argument(value: str) -> str:
+    delimiter = "="
+    while f"]{delimiter}]" in value:
+        delimiter += "="
+    return f"[{delimiter}[{value}]{delimiter}]"
+
+
 def test_entries(build_dir: Path) -> list[PackageEntry]:
+    discovery = json.loads(subprocess.check_output(
+        ["ctest", "--test-dir", str(build_dir), "-L", "^hrx$", "--show-only=json-v1"],
+        text=True,
+    ))
+    suites = discovery["tests"]
+    if not suites:
+        raise SystemExit("No HRX suites registered in CTest")
     staging = build_dir / "hrx-test-metadata"
     staging.mkdir(parents=True, exist_ok=True)
     entries: list[PackageEntry] = []
     ctest = []
-    for name, (prefix, workers) in SUITES.items():
-        binary = build_dir / "bin" / name
-        if not binary.is_file():
-            raise SystemExit(f"Missing HRX test executable: {binary}")
-        entries.append(PackageEntry(PurePosixPath("bin") / name, binary))
-        ctest.append(
-            f'add_test({name} "./bin/{name}" '
-            f'--{prefix}-test-jobs {workers} --{prefix}-test-filter . --{prefix}-test-output all)\n'
-            f'set_tests_properties({name} PROPERTIES TIMEOUT 900 '
-            f'FAIL_REGULAR_EXPRESSION "test skipped: no device")\n'
-        )
+    for suite in suites:
+        name = suite["name"]
+        binary = Path(suite["command"][0])
+        entries.append(PackageEntry(PurePosixPath("bin") / binary.name, binary))
+        command = [f"./bin/{binary.name}", *suite["command"][1:]]
+        arguments = " ".join(cmake_argument(arg) for arg in [name, *command])
+        ctest.append(f"add_test({arguments})\n")
+        for prop in suite["properties"]:
+            # CTest's build-directory default must not escape the extracted package.
+            if prop["name"] == "WORKING_DIRECTORY":
+                continue
+            value = prop["value"]
+            if isinstance(value, list):
+                value = ";".join(str(item) for item in value)
+            ctest.append(
+                f"set_tests_properties({cmake_argument(name)} PROPERTIES "
+                f"{prop['name']} {cmake_argument(str(value))})\n"
+            )
     (staging / "CTestTestfile.cmake").write_text("".join(ctest))
     revisions = {
         name: subprocess.check_output(["git", "-C", str(REPO_ROOT / directory),
@@ -157,7 +170,7 @@ def test_entries(build_dir: Path) -> list[PackageEntry]:
                                 ("hrx_system", "hrx-system"))
     }
     (staging / "metadata.json").write_text(json.dumps({
-        "revisions": revisions, "internal_workers": {k: v[1] for k, v in SUITES.items()},
+        "revisions": revisions, "suites": [suite["name"] for suite in suites],
     }, indent=2) + "\n")
     for name in ("CTestTestfile.cmake", "metadata.json"):
         entries.append(PackageEntry(PurePosixPath(name), staging / name))
