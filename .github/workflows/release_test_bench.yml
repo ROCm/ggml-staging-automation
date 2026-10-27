@@ -105,7 +105,9 @@ jobs:
         if: inputs.validation_mode != 'benchmarks-only'
         env:
           LD_LIBRARY_PATH: ${{ github.workspace }}/release/benchmark-package/lib
-        run: python3 scripts/hrx/ci/run_hrx_tests.py release/hrx-tests
+        run: |
+          ctest --test-dir release/hrx-tests --parallel 2 --verbose \
+            --output-junit "$PWD/release/hrx-tests/junit.xml"
 
       - name: Upload HRX test results
         if: ${{ always() && (steps.hrx_tests.outcome == 'success' || steps.hrx_tests.outcome == 'failure') }}

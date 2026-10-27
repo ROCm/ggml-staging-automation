@@ -19,7 +19,7 @@ explains the model tiers, benchmark selection, and per-model test modes that
 apply when benchmarks run.
 All modes use the checked-in submodule revisions.
 
-The Python runner only invokes CTest and returns its status. GPU visibility is
+The workflow invokes CTest directly and preserves its exit status. GPU visibility is
 inherited from the remote runner. The workflow selects the release library path;
 the package supplies internal worker counts (buffer 1, backend 4, JIT 2, ops 4), a 900-second per-suite
 timeout, and a rule that fails missing-device skips. CTest runs two suites at a
@@ -31,5 +31,6 @@ GPU as appropriate for the machine, then run:
 
 ```sh
 LD_LIBRARY_PATH=/path/to/llama.cpp-install/lib \
-  python3 scripts/hrx/ci/run_hrx_tests.py /path/to/hrx-tests
+  ctest --test-dir /path/to/hrx-tests --parallel 2 --verbose \
+    --output-junit /path/to/hrx-tests/junit.xml
 ```
