@@ -1,7 +1,7 @@
 [submodule "hrx-system"]
 	path = hrx-system
-	url = https://github.com/ROCm/hrx-system.git
-	branch = main
+	url = https://github.com/AaronStGeorge/hrx-system.git
+	branch = users/astgeorg/fix-hrx-rebase-throughput
 [submodule "llama.cpp"]
 	path = llama.cpp
 	url = https://github.com/AMD-Ecosystem/llama.cpp.git
