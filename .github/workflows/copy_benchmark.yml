@@ -1,0 +1,96 @@
+# Copyright 2026 The HRX Authors
+#
+# Licensed under the Apache License v2.0 with LLVM Exceptions.
+# See https://llvm.org/LICENSE.txt for license information.
+# SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+
+name: Qwen metadata copy comparison
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  build:
+    name: Build ${{ matrix.variant }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: baseline
+            llama_cpp_ref: 73f49408113923d48bcb7df7602cf43075dc2900
+          - variant: candidate
+            llama_cpp_ref: b9ad4ac4b154d012b01b05a38af64acc73a435f5
+    uses: ./.github/workflows/build_llama_cpp_linux.yml
+    permissions:
+      contents: read
+    with:
+      name: Qwen copy ${{ matrix.variant }}
+      artifact_name: llama-copy-${{ matrix.variant }}
+      llama_cpp_ref: ${{ matrix.llama_cpp_ref }}
+
+  compare:
+    name: Compare on gfx1151
+    needs: build
+    runs-on: linux-gfx1151-gpu-rocm
+    timeout-minutes: 120
+    env:
+      ROCR_VISIBLE_DEVICES: "0"
+    steps:
+      - name: Checkout automation repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Download baseline package
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: llama-copy-baseline
+          path: artifacts/baseline
+
+      - name: Download candidate package
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: llama-copy-candidate
+          path: artifacts/candidate
+
+      - name: Extract comparison packages
+        run: |
+          python3 scripts/hrx/package/extract_release_package.py \
+            --archive artifacts/baseline/llama-copy-baseline.tar.gz \
+            --package-root-name llama.cpp-install \
+            --output-dir release/baseline
+          python3 scripts/hrx/package/extract_release_package.py \
+            --archive artifacts/candidate/llama-copy-candidate.tar.gz \
+            --package-root-name llama.cpp-install \
+            --output-dir release/candidate
+
+      - name: Run paired Qwen benchmark
+        id: benchmark
+        run: |
+          python3 scripts/hrx/benchmark/run_qwen_copy_comparison.py \
+            --baseline-bin release/baseline/bin/llama-bench \
+            --candidate-bin release/candidate/bin/llama-bench \
+            --model-manifest benchmarks/hrx/model_manifest.json \
+            --model-dir "$RUNNER_TEMP/qwen-copy-model" \
+            --output-dir copy-benchmark
+
+      - name: Show comparison
+        if: steps.benchmark.outcome == 'success'
+        run: cat copy-benchmark/summary.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload comparison results
+        if: ${{ always() && (steps.benchmark.outcome == 'success' || steps.benchmark.outcome == 'failure') }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: qwen-copy-gfx1151
+          path: copy-benchmark/
+          if-no-files-found: warn
+          retention-days: 45
+
+      - name: Remove model from self-hosted runner
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/qwen-copy-model"

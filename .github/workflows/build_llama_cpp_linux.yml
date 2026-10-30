@@ -30,6 +30,10 @@ on:
       package_root_name:
         type: string
         default: llama.cpp-install
+      llama_cpp_ref:
+        description: Optional pinned llama.cpp commit for controlled comparisons.
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -57,6 +61,14 @@ jobs:
 
       - name: Initialize submodules
         run: git submodule update --init hrx-system llama.cpp
+
+      - name: Select comparison source
+        if: inputs.llama_cpp_ref != ''
+        env:
+          LLAMA_CPP_REF: ${{ inputs.llama_cpp_ref }}
+        run: |
+          git -C llama.cpp fetch origin "$LLAMA_CPP_REF"
+          git -C llama.cpp checkout --detach "$LLAMA_CPP_REF"
 
       - name: Select Python 3.12
         run: echo "/opt/python/cp312-cp312/bin" >> "$GITHUB_PATH"

@@ -17,6 +17,7 @@ on:
           - tests-and-benchmarks
           - tests-only
           - benchmarks-only
+          - copy-benchmark
       skip_benchmarks:
         description: 'JSON list of benchmark IDs to skip, e.g. ["lemonade-benchmark"] or ["perplexity"].'
         type: string
@@ -47,6 +48,7 @@ concurrency:
 jobs:
   select_models:
     name: Select model tier
+    if: inputs.validation_mode != 'copy-benchmark'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
@@ -68,7 +70,7 @@ jobs:
   llama_cpp_linux:
     name: Linux / HRX
     needs: select_models
-    if: needs.select_models.outputs.should_run == 'true'
+    if: needs.select_models.outputs.should_run == 'true' && inputs.validation_mode != 'copy-benchmark'
     uses: ./.github/workflows/build_llama_cpp_linux.yml
     permissions:
       contents: read
@@ -94,3 +96,11 @@ jobs:
       model_tier: ${{ needs.select_models.outputs.model_tier }}
       skip_benchmarks: ${{ inputs.skip_benchmarks || '[]' }}
       validation_mode: ${{ inputs.validation_mode || 'tests-and-benchmarks' }}
+
+  copy_benchmark:
+    name: Qwen metadata copy comparison
+    if: inputs.validation_mode == 'copy-benchmark'
+    uses: ./.github/workflows/copy_benchmark.yml
+    permissions:
+      contents: read
+      actions: read
