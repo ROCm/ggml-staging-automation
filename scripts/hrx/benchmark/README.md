@@ -30,11 +30,14 @@ recipe options, executable overrides and runtime verification.
 `test-modes` maps benchmark IDs to independent cases. A benchmark omitted from
 that mapping uses `["default"]` on both backends. Setting
 `"lemonade-benchmark": ["mtp:off", "mtp:on"]` produces two comparisons:
-HRX/off versus Vulkan/off and HRX/on versus Vulkan/on. Off supplies `--spec-type none`; on supplies no MTP
-flag and uses Lemonade's automatic defaults. Both use normal EOS termination,
-4096-token contexts, the existing short/long-output scenarios, one warmup and
-three measured runs. Perplexity remains one comparison per model, with both
-existing prefill-like and decode-like regimes; it does not exercise MTP.
+HRX/off versus Vulkan/off and HRX/on versus Vulkan/on. Off supplies
+`--spec-type none`; on uses Lemonade's automatic MTP defaults. Both use normal
+EOS termination, 4096-token contexts, the existing short/long-output scenarios,
+one warmup and three measured runs. The model stays loaded within each scenario
+so measured runs reuse kernels compiled during warmup; server prompt caching is
+disabled so each run processes the full prompt. The next scenario loads a fresh
+model. Perplexity remains one comparison per model, with both existing
+prefill-like and decode-like regimes; it does not exercise MTP.
 
 Speculative counters and verification of actual drafting are deferred. A passing
 on-case establishes successful generation with Lemonade defaults, not that MTP

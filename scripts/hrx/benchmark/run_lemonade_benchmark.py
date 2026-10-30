@@ -206,9 +206,11 @@ def register_models(models, models_dir, cache_dir):
 
     recipe_options.json is keyed by canonical user.<name> IDs. hrx_args and
     llamacpp_args extend the respective recipe's arguments with merge_args
-    enabled, preserving Lemonade's defaults. Off explicitly adds --spec-type
-    none; on/default add nothing and leave automatic MTP selection to Lemonade.
-    This configures intent only; actual drafting is not currently verified.
+    enabled, preserving Lemonade's defaults. Both disable server prompt reuse
+    so measured runs process the full prompt while sharing warmup's compiled
+    kernels. Off explicitly adds --spec-type none; on/default leave automatic
+    MTP selection to Lemonade. This configures intent only; actual drafting is
+    not currently verified.
 
     Vulkan uses the managed llamacpp_device option to select Vulkan0, since
     device selection belongs to Lemonade rather than arbitrary backend args.
@@ -225,7 +227,9 @@ def register_models(models, models_dir, cache_dir):
                 definitions[name] = {"recipe": recipe, "labels": ["chat", "custom"],
                     "source": "local_path", "checkpoint": checkpoint}
                 argument_key = "hrx_args" if backend == "hrx" else "llamacpp_args"
-                arguments = "--spec-type none" if mode == "mtp:off" else ""
+                arguments = "--no-cache-prompt"
+                if mode == "mtp:off":
+                    arguments = "--spec-type none " + arguments
                 options["user." + name] = {argument_key: arguments, "merge_args": True}
                 if backend == "vulkan":
                     options["user." + name]["llamacpp_device"] = "Vulkan0"
@@ -266,7 +270,7 @@ def run_case(executable, model, backend, mode, root, env, port):
     output = root / f"{name}.json"
     command = [str(executable), "--host", "127.0.0.1", "--port", str(port),
                "bench", "--backend", backend, "--ctx-size", "4096",
-               "--warmup", "1", "--runs", "3", "--scenarios", SCENARIOS[0],
+               "--no-reload", "--warmup", "1", "--runs", "3", "--scenarios", SCENARIOS[0],
                "--scenarios", SCENARIOS[1], "--output", str(output), name]
     log("++ " + " ".join(command))
     result = subprocess.run(command, env=env, check=False)
