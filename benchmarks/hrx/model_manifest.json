@@ -335,56 +335,6 @@
       "filename": "Qwen3.5-2B-UD-Q4_K_XL.gguf",
       "size_bytes": 1339752704,
       "sha256": "0af96165ea615bea39a04118d63f0b6d35908aea850ee4a51aa6151d851b8b35"
-    },
-    {
-      "id": "flint-q3-k-m",
-      "tier": "select-only",
-      "name": "RecursiveSI-flint-Q3_K_M-GGUF",
-      "repository": "bartowski/RecursiveSI_flint-GGUF",
-      "revision": "a04b26fbb0f68a0ab21ff6dc062f9119700267c7",
-      "filename": "RecursiveSI_flint-Q3_K_M.gguf",
-      "size_bytes": 19529151712,
-      "sha256": "1d6d5800dbed15e60c6ca8b3af9f131a5570bae3f1b85a552632930dc033a7ea"
-    },
-    {
-      "id": "flint-iq2-xxs",
-      "tier": "select-only",
-      "name": "RecursiveSI-flint-IQ2_XXS-GGUF",
-      "repository": "bartowski/RecursiveSI_flint-GGUF",
-      "revision": "a04b26fbb0f68a0ab21ff6dc062f9119700267c7",
-      "filename": "RecursiveSI_flint-IQ2_XXS.gguf",
-      "size_bytes": 12029007072,
-      "sha256": "a013a40f43b462554c31b113aef9d8f6cf768639fd164492c55c5a651783ad47"
-    },
-    {
-      "id": "flint-iq2-xs",
-      "tier": "select-only",
-      "name": "RecursiveSI-flint-IQ2_XS-GGUF",
-      "repository": "bartowski/RecursiveSI_flint-GGUF",
-      "revision": "a04b26fbb0f68a0ab21ff6dc062f9119700267c7",
-      "filename": "RecursiveSI_flint-IQ2_XS.gguf",
-      "size_bytes": 12742325472,
-      "sha256": "2783d75881c251b74891ca118985a429a1b57003bbff50af5bfccd6dc272a616"
-    },
-    {
-      "id": "flint-iq2-m",
-      "tier": "select-only",
-      "name": "RecursiveSI-flint-IQ2_M-GGUF",
-      "repository": "bartowski/RecursiveSI_flint-GGUF",
-      "revision": "a04b26fbb0f68a0ab21ff6dc062f9119700267c7",
-      "filename": "RecursiveSI_flint-IQ2_M.gguf",
-      "size_bytes": 14883566816,
-      "sha256": "b20cb8ffea1db8adc2d12bf0f55cf944e5ef560983e3e06ba37bf08c4262ab7b"
-    },
-    {
-      "id": "flint-q2-k",
-      "tier": "select-only",
-      "name": "RecursiveSI-flint-Q2_K-GGUF",
-      "repository": "bartowski/RecursiveSI_flint-GGUF",
-      "revision": "a04b26fbb0f68a0ab21ff6dc062f9119700267c7",
-      "filename": "RecursiveSI_flint-Q2_K.gguf",
-      "size_bytes": 15480337632,
-      "sha256": "44c699015fd53a077e1c924032ca94ce60ea574bb57b91cc495373ab2c934e06"
     }
   ]
 }
