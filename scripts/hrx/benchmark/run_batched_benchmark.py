@@ -7,7 +7,8 @@ Terms:
 
 - Model tier: an ordered label in the model manifest ("tiers"). Requesting a
   tier selects that tier plus every earlier one, so tiers are cumulative and
-  the manifest order defines the size of the run.
+  the manifest order defines the size of the run. The reserved select-only
+  tier is excluded; its models require explicit --model-ids.
 - Batch: a subset of the selected models that fits on disk at once. Models in a
   batch are downloaded together, benchmarked together, and deleted together.
 - Benchmark worker: a command from the benchmark specification (for example
@@ -29,7 +30,7 @@ that respect --max-disk-gib, and guarantees no batch leaks onto the next.
 Boundary contract:
 
 - Inputs: --benchmark-spec (ordered "benchmarks" with "id" and "argv"),
-  --model-manifest (ordered "tiers" and "models"), --model-tier, --work-root,
+  --model-manifest (ordered "tiers" and "models"), --model-tier, --model-ids, --work-root,
   and --max-disk-gib. Optional --skip-benchmarks is a JSON array of IDs
   to omit; the remaining workers run in specification order.
   Both JSON files are fully validated up front; a malformed
@@ -431,8 +432,28 @@ def select_benchmarks(
 def select_models(
     manifest: ModelManifest,
     requested_tier: str,
+    model_ids_json: str = "[]",
 ) -> list[ModelSpec]:
-    """Select one tier and every lower tier in manifest model order."""
+    """Explicit IDs override cumulative coverage, including select-only models."""
+    try:
+        requested_ids = json.loads(model_ids_json)
+    except json.JSONDecodeError as exc:
+        raise BatchBenchmarkError("--model-ids must be a JSON array of model IDs") from exc
+    if not isinstance(requested_ids, list):
+        raise BatchBenchmarkError("--model-ids must be a JSON array of model IDs")
+    for model_id in requested_ids:
+        if not isinstance(model_id, str):
+            raise BatchBenchmarkError("--model-ids entries must be strings")
+    if len(set(requested_ids)) != len(requested_ids):
+        raise BatchBenchmarkError("--model-ids contains duplicate IDs")
+    if requested_ids:
+        known_ids = {model.id for model in manifest.models}
+        unknown_ids = set(requested_ids) - known_ids
+        if unknown_ids:
+            raise BatchBenchmarkError(f"Unknown model IDs: {', '.join(sorted(unknown_ids))}")
+        return [model for model in manifest.models if model.id in requested_ids]
+    if requested_tier == "select-only":
+        raise BatchBenchmarkError("select-only models require explicit --model-ids")
     try:
         requested_tier_index = manifest.tiers.index(requested_tier)
     except ValueError:
@@ -442,7 +463,7 @@ def select_models(
             f"available tiers: {available_tiers}"
         ) from None
 
-    included_tiers = set(manifest.tiers[: requested_tier_index + 1])
+    included_tiers = set(manifest.tiers[: requested_tier_index + 1]) - {"select-only"}
     selected = [
         model for model in manifest.models if model.tier in included_tiers
     ]
@@ -715,7 +736,7 @@ def run(args: argparse.Namespace) -> int:
         # Model expectations may refer to workers omitted from this run.
         benchmarks = select_benchmarks(benchmarks, args.skip_benchmarks)
         log(f"Selected benchmarks: {', '.join(benchmark.id for benchmark in benchmarks)}")
-        selected = select_models(manifest, args.model_tier)
+        selected = select_models(manifest, args.model_tier, args.model_ids)
         work_root = prepare_work_root(args.work_root)
 
         free_bytes = shutil.disk_usage(work_root).free
@@ -845,9 +866,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help='JSON array of benchmark IDs to skip, e.g. ["perplexity"]; default: []',
     )
     parser.add_argument("--model-manifest", type=Path, required=True)
-    parser.add_argument("--model-tier", required=True, metavar="TIER")
+    parser.add_argument("--model-tier", default="single", metavar="TIER")
+    parser.add_argument(
+        "--model-ids", default="[]",
+        help="JSON array of exact model IDs; a non-empty list overrides --model-tier",
+    )
     parser.add_argument("--work-root", type=Path, required=True)
-    parser.add_argument("--max-disk-gib", type=float, default=40.0)
+    parser.add_argument("--max-disk-gib", type=float, default=60.0)
     return parser.parse_args(argv)
 
 

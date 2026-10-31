@@ -2,7 +2,8 @@
   "tiers": [
     "single",
     "small",
-    "all"
+    "all",
+    "select-only"
   ],
   "models": [
     {

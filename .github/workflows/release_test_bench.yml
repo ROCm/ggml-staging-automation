@@ -26,7 +26,11 @@ on:
       package_root_name:
         type: string
         default: llama.cpp-install
-      # WARNING: All models selected by this tier are pulled from Hugging Face.
+      # Selected models are pulled from Hugging Face.
+      model_ids:
+        description: JSON array of exact model IDs; overrides model_tier when non-empty.
+        type: string
+        default: '[]'
       model_tier:
         description: Cumulative model manifest tier to benchmark.
         type: string
@@ -170,6 +174,7 @@ jobs:
         continue-on-error: true
         env:
           SKIP_BENCHMARKS: ${{ inputs.skip_benchmarks }}
+          BENCHMARK_MODEL_IDS: ${{ inputs.model_ids }}
           BENCHMARK_MODEL_TIER: ${{ inputs.model_tier }}
         run: |
           set -euo pipefail
@@ -178,8 +183,9 @@ jobs:
             --model-manifest "$PWD/benchmarks/hrx/model_manifest.json" \
             --skip-benchmarks "$SKIP_BENCHMARKS" \
             --model-tier "$BENCHMARK_MODEL_TIER" \
+            --model-ids "$BENCHMARK_MODEL_IDS" \
             --work-root "$RUNNER_TEMP/$BENCHMARK_STATE_NAME" \
-            --max-disk-gib 40
+            --max-disk-gib 60
 
       - name: Remove perplexity corpus
         # The runners are self-hosted, so benchmark inputs are removed explicitly.
