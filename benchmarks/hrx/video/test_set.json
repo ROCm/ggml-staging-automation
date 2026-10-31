@@ -1,0 +1,25 @@
+{
+  "cases": [
+    {
+      "id": "red-then-blue",
+      "type": "video",
+      "file": "red-then-blue.mp4",
+      "question": "Watch the video. Which color appears first? Answer with exactly one letter. A: red. B: blue.",
+      "answer": "A"
+    },
+    {
+      "id": "green-square-right",
+      "type": "video",
+      "file": "green-square-right.mp4",
+      "question": "Watch the video. Which way does the green square move? Answer with exactly one letter. A: toward the left. B: toward the right.",
+      "answer": "B"
+    },
+    {
+      "id": "dog",
+      "type": "image",
+      "file": "dog.jpg",
+      "question": "Look at the photo. Is the animal a dog? Answer with exactly one letter. A: no. B: yes.",
+      "answer": "B"
+    }
+  ]
+}

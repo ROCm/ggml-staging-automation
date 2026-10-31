@@ -114,6 +114,8 @@ class ModelSpec:
     filename: str
     size_bytes: int
     sha256: str
+    capabilities: frozenset[str]
+    projector: ProjectorSpec | None
 
     def modes(self, check: str) -> tuple[str, ...]:
         """Use the ordinary case when this benchmark has no explicit modes."""
@@ -128,6 +130,18 @@ class ModelSpec:
         filename = urllib.parse.quote(self.filename, safe="")
         return f"{HF_BASE_URL}/{repository}/resolve/{self.revision}/{filename}"
 
+    @property
+    def resident_size_bytes(self) -> int:
+        projector_size = self.projector.size_bytes if self.projector else 0
+        return self.size_bytes + projector_size
+
+
+@dataclass(frozen=True)
+class ProjectorSpec:
+    filename: str
+    size_bytes: int
+    sha256: str
+
 
 @dataclass(frozen=True)
 class ModelManifest:
@@ -139,6 +153,7 @@ class ModelManifest:
 class BenchmarkSpec:
     id: str
     argv: tuple[str, ...]
+    required_capabilities: frozenset[str]
 
 
 def log(message: str) -> None:
@@ -244,6 +259,38 @@ def load_manifest(
         filename = _require_string(entry, "filename", context)
         sha256 = _require_string(entry, "sha256", context)
         size_bytes = entry.get("size_bytes")
+        raw_capabilities = entry.get("capabilities", [])
+        if not isinstance(raw_capabilities, list):
+            raise BatchBenchmarkError(f"{context}.capabilities must be an array")
+        for capability in raw_capabilities:
+            if not isinstance(capability, str):
+                raise BatchBenchmarkError(f"{context}.capabilities must contain strings")
+        capabilities = frozenset(raw_capabilities)
+        if len(capabilities) != len(raw_capabilities):
+            raise BatchBenchmarkError(f"{context}.capabilities contains duplicates")
+        if not capabilities <= {"video"}:
+            raise BatchBenchmarkError(f"{context}.capabilities contains an unknown capability")
+        raw_projector = entry.get("projector")
+        projector = None
+        if raw_projector is not None:
+            projector_context = f"{context}.projector"
+            projector_entry = _require_object(raw_projector, projector_context)
+            projector_filename = _require_string(projector_entry, "filename", projector_context)
+            projector_sha256 = _require_string(projector_entry, "sha256", projector_context)
+            projector_size = projector_entry.get("size_bytes")
+            _validate_local_name(projector_filename, "filename", projector_context)
+            size_is_integer = type(projector_size) is int
+            size_is_positive = size_is_integer and projector_size > 0
+            if not size_is_positive:
+                raise BatchBenchmarkError(f"{projector_context}.size_bytes must be a positive integer")
+            if projector_filename == filename:
+                raise BatchBenchmarkError(f"{projector_context}.filename must differ from the model filename")
+            projector = ProjectorSpec(projector_filename, projector_size, projector_sha256)
+        supports_video = "video" in capabilities
+        has_projector = projector is not None
+        missing_video_projector = supports_video and not has_projector
+        if missing_video_projector:
+            raise BatchBenchmarkError(f"{context}: video capability requires a projector")
         raw_modes = _require_object(entry.get("test-modes", {}), f"{context}.test-modes")
         test_modes = {}
         supported_modes = {
@@ -320,6 +367,8 @@ def load_manifest(
                 filename=filename,
                 size_bytes=size_bytes,
                 sha256=sha256,
+                capabilities=capabilities,
+                projector=projector,
             )
         )
     return ModelManifest(tiers=tuple(tiers), models=tuple(models))
@@ -357,6 +406,17 @@ def load_benchmark_spec(path: Path) -> list[BenchmarkSpec]:
                 f"Duplicate benchmark id in specification: {benchmark_id}"
             )
         benchmark_ids.add(benchmark_id)
+        raw_required = entry.get("required_capabilities", [])
+        if not isinstance(raw_required, list):
+            raise BatchBenchmarkError(f"{context}.required_capabilities must be an array")
+        for capability in raw_required:
+            if not isinstance(capability, str):
+                raise BatchBenchmarkError(f"{context}.required_capabilities must contain strings")
+        required = frozenset(raw_required)
+        if len(required) != len(raw_required):
+            raise BatchBenchmarkError(f"{context}.required_capabilities contains duplicates")
+        if not required <= {"video"}:
+            raise BatchBenchmarkError(f"{context}.required_capabilities contains an unknown capability")
 
         raw_argv = entry.get("argv")
         argv_is_an_array = isinstance(raw_argv, list)
@@ -398,7 +458,13 @@ def load_benchmark_spec(path: Path) -> list[BenchmarkSpec]:
                 f"{context}.argv must not contain batch-managed arguments: "
                 f"{', '.join(sorted(present_managed))}"
             )
-        benchmarks.append(BenchmarkSpec(id=benchmark_id, argv=tuple(argv)))
+        benchmarks.append(
+            BenchmarkSpec(
+                id=benchmark_id,
+                argv=tuple(argv),
+                required_capabilities=required,
+            )
+        )
 
     return benchmarks
 
@@ -498,10 +564,10 @@ def plan_batches(
     capacity_bytes: int,
 ) -> list[list[ModelSpec]]:
     """Plan deterministic next-fit batches in descending model-size order."""
-    oversized = [model for model in models if model.size_bytes > capacity_bytes]
+    oversized = [model for model in models if model.resident_size_bytes > capacity_bytes]
     if oversized:
         details = ", ".join(
-            f"{model.id} ({model.size_bytes} bytes)" for model in oversized
+            f"{model.id} ({model.resident_size_bytes} bytes)" for model in oversized
         )
         raise BatchBenchmarkError(
             f"Selected model(s) exceed the {capacity_bytes}-byte batch capacity: "
@@ -510,19 +576,19 @@ def plan_batches(
 
     ordered = sorted(
         models,
-        key=lambda model: model.size_bytes,
+        key=lambda model: model.resident_size_bytes,
         reverse=True,
     )
     batches: list[list[ModelSpec]] = []
     current: list[ModelSpec] = []
     current_size = 0
     for model in ordered:
-        if current and current_size + model.size_bytes > capacity_bytes:
+        if current and current_size + model.resident_size_bytes > capacity_bytes:
             batches.append(current)
             current = []
             current_size = 0
         current.append(model)
-        current_size += model.size_bytes
+        current_size += model.resident_size_bytes
     if current:
         batches.append(current)
     return batches
@@ -536,7 +602,10 @@ def _response_status(response: Any) -> int:
 
 
 def _download_once(
-    model: ModelSpec,
+    url: str,
+    label: str,
+    size_bytes: int,
+    sha256: str,
     temporary_path: Path,
     *,
     urlopen: Callable[..., Any],
@@ -544,7 +613,7 @@ def _download_once(
 ) -> None:
     """Stream and verify one complete response from byte zero."""
     request = urllib.request.Request(
-        model.download_url,
+        url,
         headers={"User-Agent": "hrx-benchmark/1"},
     )
     actual_size = 0
@@ -555,33 +624,87 @@ def _download_once(
             status = _response_status(response)
             if status != 200:
                 raise DownloadError(
-                    f"Download for {model.id} returned HTTP {status}; "
+                    f"Download for {label} returned HTTP {status}; "
                     "expected a full response"
                 )
 
             while chunk := response.read(1024 * 1024):
                 next_size = actual_size + len(chunk)
-                if next_size > model.size_bytes:
+                if next_size > size_bytes:
                     raise DownloadError(
-                        f"Download size exceeded for {model.id}: expected "
-                        f"{model.size_bytes} bytes, received more"
+                        f"Download size exceeded for {label}: expected "
+                        f"{size_bytes} bytes, received more"
                     )
                 output_file.write(chunk)
                 digest.update(chunk)
                 actual_size = next_size
 
-    if actual_size != model.size_bytes:
+    if actual_size != size_bytes:
         raise DownloadError(
-            f"Download size mismatch for {model.id}: expected "
-            f"{model.size_bytes} bytes, got {actual_size}"
+            f"Download size mismatch for {label}: expected "
+            f"{size_bytes} bytes, got {actual_size}"
         )
 
     actual_sha = digest.hexdigest()
-    if actual_sha != model.sha256:
+    if actual_sha != sha256:
         raise DownloadError(
-            f"SHA-256 mismatch for {model.id}: expected {model.sha256}, "
+            f"SHA-256 mismatch for {label}: expected {sha256}, "
             f"got {actual_sha}"
         )
+
+
+def download_asset(
+    *,
+    url: str,
+    label: str,
+    filename: str,
+    size_bytes: int,
+    sha256: str,
+    model_dir: Path,
+    urlopen: Callable[..., Any] | None = None,
+    attempts: int = DOWNLOAD_ATTEMPTS,
+    timeout: float = 120.0,
+    retry_delay: float = 1.0,
+) -> Path:
+    """Download, verify, and atomically publish one pinned asset."""
+    opener = urlopen or urllib.request.urlopen
+    destination = model_dir / filename
+    temporary_path = model_dir / f".{filename}.tmp"
+    last_error: Exception | None = None
+
+    for attempt in range(1, attempts + 1):
+        try:
+            log(f"Downloading {label} (attempt {attempt}/{attempts})")
+            _download_once(
+                url,
+                label,
+                size_bytes,
+                sha256,
+                temporary_path,
+                urlopen=opener,
+                timeout=timeout,
+            )
+            os.replace(temporary_path, destination)
+            log(f"Downloaded and verified {label}")
+            return destination
+        except (DownloadError, OSError, http.client.HTTPException) as exc:
+            last_error = exc
+            if attempt < attempts:
+                log(
+                    f"Download attempt {attempt}/{attempts} failed for "
+                    f"{label}: {exc}; restarting from byte zero"
+                )
+                if retry_delay:
+                    time.sleep(retry_delay * attempt)
+
+    if last_error is None:
+        raise DownloadError(
+            f"Could not download {label}: no attempts were requested"
+        )
+    raise DownloadError(
+        f"Could not download {label} after {attempts} attempt(s): "
+        f"{last_error}"
+    ) from last_error
 
 
 def download_model(
@@ -593,49 +716,41 @@ def download_model(
     timeout: float = 120.0,
     retry_delay: float = 1.0,
 ) -> Path:
-    """Download, verify, and atomically publish one model file."""
-    opener = urlopen or urllib.request.urlopen
+    """Keep a model resident only after its text weights and projector verify."""
     model_dir = models_dir / model.name
     try:
         model_dir.mkdir(parents=True, exist_ok=True)
     except OSError as exc:
-        raise DownloadError(
-            f"Could not prepare model directory for {model.id}: {exc}"
-        ) from exc
-    destination = model_dir / model.filename
-    temporary_path = model_dir / f".{model.filename}.tmp"
-    last_error: Exception | None = None
-
-    for attempt in range(1, attempts + 1):
-        try:
-            log(f"Downloading {model.id} (attempt {attempt}/{attempts})")
-            _download_once(
-                model,
-                temporary_path,
-                urlopen=opener,
-                timeout=timeout,
-            )
-            os.replace(temporary_path, destination)
-            log(f"Downloaded and verified {model.id}")
-            return destination
-        except (DownloadError, OSError, http.client.HTTPException) as exc:
-            last_error = exc
-            if attempt < attempts:
-                log(
-                    f"Download attempt {attempt}/{attempts} failed for "
-                    f"{model.id}: {exc}; restarting from byte zero"
-                )
-                if retry_delay:
-                    time.sleep(retry_delay * attempt)
-
-    if last_error is None:
-        raise DownloadError(
-            f"Could not download {model.id}: no attempts were requested"
+        raise DownloadError(f"Could not prepare model directory for {model.id}: {exc}") from exc
+    options = {
+        "urlopen": urlopen,
+        "attempts": attempts,
+        "timeout": timeout,
+        "retry_delay": retry_delay,
+    }
+    main = download_asset(
+        url=model.download_url,
+        label=model.id,
+        filename=model.filename,
+        size_bytes=model.size_bytes,
+        sha256=model.sha256,
+        model_dir=model_dir,
+        **options,
+    )
+    if model.projector:
+        repository = urllib.parse.quote(model.repository, safe="/")
+        filename = urllib.parse.quote(model.projector.filename, safe="")
+        url = f"{HF_BASE_URL}/{repository}/resolve/{model.revision}/{filename}"
+        download_asset(
+            url=url,
+            label=f"{model.id} projector",
+            filename=model.projector.filename,
+            size_bytes=model.projector.size_bytes,
+            sha256=model.projector.sha256,
+            model_dir=model_dir,
+            **options,
         )
-    raise DownloadError(
-        f"Could not download {model.id} after {attempts} attempt(s): "
-        f"{last_error}"
-    ) from last_error
+    return main
 
 
 def download_batch(
@@ -754,7 +869,7 @@ def run(args: argparse.Namespace) -> int:
         )
         log(f"Planned {len(batches)} resident batch(es)")
         for batch_number, batch in enumerate(batches, start=1):
-            batch_size = sum(model.size_bytes for model in batch)
+            batch_size = sum(model.resident_size_bytes for model in batch)
             log(
                 f"Batch {batch_number}: "
                 f"{', '.join(model.id for model in batch)} "
@@ -781,11 +896,21 @@ def run(args: argparse.Namespace) -> int:
                     )
                 else:
                     for benchmark in benchmarks:
+                        eligible = [
+                            model for model in resident
+                            if benchmark.required_capabilities <= model.capabilities
+                        ]
+                        if not eligible:
+                            log(
+                                f"Skipping {benchmark.id} in batch {batch_number}: "
+                                "no eligible models"
+                            )
+                            continue
                         command = build_benchmark_command(
                             benchmark,
                             batch_number=batch_number,
                             models_dir=models_dir,
-                            resident=resident,
+                            resident=eligible,
                         )
                         log("++ " + shlex.join(command))
                         try:

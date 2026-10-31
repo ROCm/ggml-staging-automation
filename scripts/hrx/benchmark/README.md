@@ -24,6 +24,40 @@ The runner and workflow use a 60 GiB disk budget (64,424,509,440 bytes), with a
 2 GiB reserve and a further cap at available disk space. This is a binary GiB
 budget, not decimal GB; the `--max-disk-gib` option retains the existing units.
 
+## Video and image checks
+
+The [video test set](../../../benchmarks/hrx/video/README.md) contains two short
+temporal clips and a dog photo. A model runs this check only when its manifest
+entry declares `"capabilities": ["video"]` and pins a `projector` from the same
+repository revision. The batch runner verifies and budgets both GGUF files.
+Qwen3.8-27B is the initial opt-in model in the `all` tier. The explicit
+`--model-ids '["qwen3.8-27b"]'` selection runs only that model; skipping
+`lemonade-benchmark` and `perplexity` runs only the video worker.
+
+The worker starts the CI-built `llama-server` directly, once per model and
+backend. It places text and projector on HRX0 or Vulkan0, sends each fixture
+once for warmup and three times for measurement, and requires every fixed-choice
+answer to match. A failed Vulkan reference or HRX answer fails the worker.
+The JSON artifact and CI summary include wall latency and generation tok/s
+from `llama-server`; speed does not gate the result. The job installs ffmpeg for
+video decoding and retains server logs for diagnosis.
+
+For local validation, point `--models-dir` at a directory containing the model
+directory named by the manifest and both pinned files. For example, from this
+repository root:
+
+```sh
+python3 scripts/hrx/benchmark/run_video_benchmark.py \
+  --llama-server release/benchmark-package/bin/llama-server \
+  --model-manifest benchmarks/hrx/model_manifest.json \
+  --test-set benchmarks/hrx/video/test_set.json \
+  --models-dir /path/to/shared/models \
+  --models Qwen3.8-27B-GGUF \
+  --output lemonade-benchmark/video.json \
+  --hrx-log lemonade-benchmark-debug/video-hrx.log \
+  --vulkan-log lemonade-benchmark-debug/video-vulkan.log
+```
+
 ## Lemonade release and test modes
 
 The [release pin](../../../benchmarks/hrx/lemonade_release.json) selects a

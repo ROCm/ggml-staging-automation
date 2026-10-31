@@ -18,7 +18,7 @@ on:
           - tests-only
           - benchmarks-only
       skip_benchmarks:
-        description: 'JSON list of benchmark IDs to skip, e.g. ["lemonade-benchmark"] or ["perplexity"].'
+        description: 'JSON list of benchmark IDs to skip: lemonade-benchmark, perplexity, or video.'
         type: string
         default: '[]'
       model_ids:
