@@ -133,6 +133,12 @@ jobs:
           sudo -n apt-get update
           sudo -n apt-get install -y --no-install-recommends mesa-vulkan-drivers
 
+      - name: Install video decoder
+        if: ${{ inputs.validation_mode != 'tests-only' && !contains(fromJSON(inputs.skip_benchmarks), 'video') }}
+        run: |
+          sudo -n apt-get update
+          sudo -n apt-get install -y --no-install-recommends ffmpeg
+
       - name: Record source commits
         if: inputs.validation_mode != 'tests-only'
         id: sources
@@ -208,6 +214,17 @@ jobs:
             "$PWD/lemonade-benchmark/perplexity.json" \
             >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Write video report
+        if: ${{ inputs.validation_mode != 'tests-only' && !contains(fromJSON(inputs.skip_benchmarks), 'video') }}
+        run: |
+          if [ -f "$PWD/lemonade-benchmark/video.json" ]; then
+            python3 scripts/hrx/benchmark/write_video_benchmark_report.py \
+              "$PWD/lemonade-benchmark/video.json" \
+              >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "No video-enabled models were selected." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
       - name: Upload benchmark results
         if: ${{ always() && (steps.benchmark.outcome == 'success' || steps.benchmark.outcome == 'failure') }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -217,6 +234,7 @@ jobs:
             lemonade-benchmark/benchmark-hrx.json
             lemonade-benchmark/benchmark-vulkan.json
             lemonade-benchmark/perplexity.json
+            lemonade-benchmark/video.json
             lemonade-benchmark/metadata.json
           if-no-files-found: error
           retention-days: 45
@@ -234,6 +252,8 @@ jobs:
             lemonade-benchmark-debug/responses-vulkan.jsonl
             lemonade-benchmark-debug/perplexity-hrx.log
             lemonade-benchmark-debug/perplexity-vulkan.log
+            lemonade-benchmark-debug/video-hrx.log
+            lemonade-benchmark-debug/video-vulkan.log
           if-no-files-found: warn
 
       - name: Fail unexpected benchmark results
