@@ -39,6 +39,26 @@
         "--vulkan-log",
         "lemonade-benchmark-debug/perplexity-vulkan.log"
       ]
+    },
+    {
+      "id": "video",
+      "required_capabilities": ["video"],
+      "argv": [
+        "python3",
+        "scripts/hrx/benchmark/run_video_benchmark.py",
+        "--llama-server",
+        "release/benchmark-package/bin/llama-server",
+        "--model-manifest",
+        "benchmarks/hrx/model_manifest.json",
+        "--test-set",
+        "benchmarks/hrx/video/test_set.json",
+        "--output",
+        "lemonade-benchmark/video.json",
+        "--hrx-log",
+        "lemonade-benchmark-debug/video-hrx.log",
+        "--vulkan-log",
+        "lemonade-benchmark-debug/video-vulkan.log"
+      ]
     }
   ]
 }
