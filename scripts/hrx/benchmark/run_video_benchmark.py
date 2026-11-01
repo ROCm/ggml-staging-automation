@@ -227,6 +227,8 @@ def run_backend(
         device,
         "--n-gpu-layers",
         "all",
+        "--log-verbosity",
+        "5",
         "--ctx-size",
         "4096",
         "--parallel",
