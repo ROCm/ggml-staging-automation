@@ -335,6 +335,168 @@
       "filename": "Qwen3.5-2B-UD-Q4_K_XL.gguf",
       "size_bytes": 1339752704,
       "sha256": "0af96165ea615bea39a04118d63f0b6d35908aea850ee4a51aa6151d851b8b35"
+    },
+    {
+      "id": "ornith-1.5-9b",
+      "tier": "all",
+      "name": "Ornith-1.5-9B-GGUF",
+      "repository": "ornith-ai/Ornith-1.5-9B-GGUF",
+      "revision": "abdd624b12ebf020b767fff532ff44fe552b28c3",
+      "filename": "Ornith-1.5-9B-Q4_K_M.gguf",
+      "size_bytes": 5780090816,
+      "sha256": "70c112196e0b7023803c9762752e46d29e612a92c83f995bc3ba1ceb07e8fab6",
+      "test-modes": {
+        "lemonade-benchmark": [
+          "mtp:off"
+        ]
+      }
+    },
+    {
+      "id": "ornith-1.5-35b-a3b",
+      "tier": "all",
+      "name": "Ornith-1.5-35B-A3B-GGUF",
+      "repository": "ornith-ai/Ornith-1.5-35B-A3B-GGUF",
+      "revision": "12393612fd4f730ff5aadc23e9b8f9648aa49ceb",
+      "filename": "Ornith-1.5-35B-Q4_K_M.gguf",
+      "size_bytes": 21713463040,
+      "sha256": "42739874cc2ccfdb8523b23fbe52e29b2a7555c8176737ca9ca0b5d59859d41f",
+      "test-modes": {
+        "lemonade-benchmark": [
+          "mtp:off"
+        ]
+      }
+    },
+    {
+      "id": "qwen3.5-9b",
+      "tier": "all",
+      "name": "Qwen3.5-9B-GGUF",
+      "repository": "unsloth/Qwen3.5-9B-GGUF",
+      "revision": "3885219b6810b007914f3a7950a8d1b469d598a5",
+      "filename": "Qwen3.5-9B-UD-Q4_K_XL.gguf",
+      "size_bytes": 5966095584,
+      "sha256": "6f5d30666c2d8ae16a306e616d95341dcf3cc46810df84d7e6f5a7d1e4c1b293",
+      "test-modes": {
+        "lemonade-benchmark": [
+          "mtp:off"
+        ]
+      }
+    },
+    {
+      "id": "gemma-4-e4b-it",
+      "tier": "all",
+      "name": "gemma-4-E4B-it-GGUF",
+      "repository": "unsloth/gemma-4-E4B-it-GGUF",
+      "revision": "bfc15c382204943c3a8fff0c750b94ae2364d7a3",
+      "filename": "gemma-4-E4B-it-Q4_K_M.gguf",
+      "size_bytes": 4977171584,
+      "sha256": "85a896a047553e842f25297ee5b031d64ff30147d9c4af17b1e4b394cd1fab87",
+      "test-modes": {
+        "lemonade-benchmark": [
+          "mtp:off"
+        ]
+      }
+    },
+    {
+      "id": "gemma-4-e2b-it",
+      "tier": "all",
+      "name": "gemma-4-E2B-it-GGUF",
+      "repository": "unsloth/gemma-4-E2B-it-GGUF",
+      "revision": "0314792d7f1f7e229411f620751375812bb9faf2",
+      "filename": "gemma-4-E2B-it-Q4_K_M.gguf",
+      "size_bytes": 3106738272,
+      "sha256": "740185b21d22ceb83a11c3aa62ad5842ef32c70f6096d756bbee85a1e4ec34b8",
+      "test-modes": {
+        "lemonade-benchmark": [
+          "mtp:off"
+        ]
+      }
+    },
+    {
+      "id": "qwen3-coder-30b-a3b-instruct",
+      "tier": "all",
+      "name": "Qwen3-Coder-30B-A3B-Instruct-GGUF",
+      "repository": "unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF",
+      "revision": "b17cb02dd882d5b6ab62fc777ad2995f19668350",
+      "filename": "Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf",
+      "size_bytes": 18556689568,
+      "sha256": "fadc3e5f8d42bf7e894a785b05082e47daee4df26680389817e2093056f088ad",
+      "test-modes": {
+        "lemonade-benchmark": [
+          "mtp:off"
+        ]
+      }
+    },
+    {
+      "id": "qwen3.6-35b-a3b",
+      "tier": "all",
+      "name": "Qwen3.6-35B-A3B-GGUF",
+      "repository": "unsloth/Qwen3.6-35B-A3B-GGUF",
+      "revision": "a483e9e6cbd595906af30beda3187c2663a1118c",
+      "filename": "Qwen3.6-35B-A3B-UD-Q3_K_M.gguf",
+      "size_bytes": 16600710112,
+      "sha256": "1b715841683f960bd9a49f008181bd910ee169b78d4cf465b6fde7f4d929ff99",
+      "test-modes": {
+        "lemonade-benchmark": [
+          "mtp:off"
+        ]
+      }
+    },
+    {
+      "id": "mellum2.1-12b-a2.5b-thinking",
+      "tier": "all",
+      "name": "Mellum2.1-12B-A2.5B-Thinking-GGUF",
+      "repository": "JetBrains/Mellum2.1-12B-A2.5B-Thinking-GGUF",
+      "revision": "4159d684ffdb09ba89dc2a58feb3e75c54eef036",
+      "filename": "Mellum2.1-12B-A2.5B-Thinking-Q4_K_M.gguf",
+      "size_bytes": 8071295264,
+      "sha256": "ecc4d5b8107fc219e23c494b2d107552137637b6c6002ee713e0ba8af7fa2755",
+      "test-modes": {
+        "lemonade-benchmark": [
+          "mtp:off"
+        ]
+      }
+    },
+    {
+      "id": "gemma-4-26b-a4b-it",
+      "tier": "all",
+      "name": "gemma-4-26B-A4B-it-GGUF",
+      "repository": "unsloth/gemma-4-26B-A4B-it-GGUF",
+      "revision": "c099eb48e663fd284577b04978a94ffccb261841",
+      "filename": "gemma-4-26B-A4B-it-UD-Q4_K_M.gguf",
+      "size_bytes": 16947541728,
+      "sha256": "f2c28b3dc4776931ac6f879e11f203dec637ea0f14267a86ec8f6165f63f293f",
+      "test-modes": {
+        "lemonade-benchmark": [
+          "mtp:off"
+        ]
+      }
+    },
+    {
+      "id": "muse-glimmer-30b",
+      "tier": "all",
+      "name": "Muse-Glimmer-30B-GGUF",
+      "repository": "unsloth/Muse-Glimmer-30B-GGUF",
+      "revision": "faa5b025c584459c13febfa5c59883516710ae39",
+      "filename": "Muse-Glimmer-30B-UD-Q4_K_XL.gguf",
+      "size_bytes": 15878222368,
+      "sha256": "82bece304887a313ece08400bc030f6066c7bff5b906b0cd40308ec8a409fd38",
+      "test-modes": {
+        "lemonade-benchmark": [
+          "mtp:off"
+        ]
+      },
+      "expected_results": {
+        "lemonade-benchmark": {
+          "hrx": {
+            "mtp:off": "report-only"
+          }
+        },
+        "perplexity": {
+          "hrx": {
+            "default": "report-only"
+          }
+        }
+      }
     }
   ]
 }

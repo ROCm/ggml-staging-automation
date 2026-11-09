@@ -1,0 +1,53 @@
+# Copyright 2026 The HRX Authors
+#
+# Licensed under the Apache License v2.0 with LLVM Exceptions.
+# See https://llvm.org/LICENSE.txt for license information.
+# SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
+
+name: Batch 1 model coverage
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - users/astgeorg/batch1-model-ci
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Linux / HRX
+    uses: ./.github/workflows/build_llama_cpp_linux.yml
+    permissions:
+      contents: read
+    with:
+      name: Batch 1 build
+      artifact_name: llama-cpp-linux-x86_64
+      package_root_name: llama.cpp-install
+
+  models:
+    name: Batch 1 / HRX and Vulkan
+    needs: build
+    uses: ./.github/workflows/release_test_bench.yml
+    permissions:
+      contents: read
+      actions: read
+    with:
+      name: Batch 1 models
+      release_artifact_name: llama-cpp-linux-x86_64
+      package_root_name: llama.cpp-install
+      validation_mode: benchmarks-only
+      model_tier: all
+      # All ten also belong to ordinary all-tier CI. This explicit selection
+      # keeps the qualification run focused on the first gallery batch.
+      model_ids: >-
+        ["ornith-1.5-9b", "ornith-1.5-35b-a3b", "qwen3.5-9b",
+         "gemma-4-e4b-it", "gemma-4-e2b-it", "qwen3-coder-30b-a3b-instruct",
+         "qwen3.6-35b-a3b", "mellum2.1-12b-a2.5b-thinking",
+         "gemma-4-26b-a4b-it", "muse-glimmer-30b"]
