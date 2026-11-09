@@ -131,3 +131,6 @@ backends. CI preserves the measurements and applies the normal relative
 HRX/Vulkan check; passing that check does not establish expected model quality.
 The backend pin includes the merged Gemma scale fusion from PR #183, which
 removed the scale REPEAT CPU fallback recorded in the earlier survey.
+HRX is pinned to the survey's validated `82214dfb` revision. The earlier
+automation pin `558e5fe2` cannot parse the `check.expect.approximate` operations
+used by the current llama.cpp kernel corpus and fails before model execution.
