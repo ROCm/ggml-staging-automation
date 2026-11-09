@@ -129,6 +129,15 @@ survey's full-corpus context-2048 qualification.
 The survey's Gemma variants have unusually high absolute perplexity on both
 backends. CI preserves the measurements and applies the normal relative
 HRX/Vulkan check; passing that check does not establish expected model quality.
+Gemma 26B perplexity remains gating. With the CI-built binary, both backends
+produced repetitive text from an unframed WikiText prefix and coherent text
+from the identical prefix framed as an assistant response. This supports a
+mismatch between raw-text perplexity and the model's chat format; it does not
+explain the measured 7.93% HRX/Vulkan prefill gap. The relative check remains
+useful for detecting backend regressions. Report-only reasons, such as Muse's
+memory requirement above, are documented here; the manifest's
+`expected_results` entries contain only the expectation, without a reason field.
+
 The backend pin includes the merged Gemma scale fusion from PR #183, which
 removed the scale REPEAT CPU fallback recorded in the earlier survey.
 HRX is pinned to the survey's validated `82214dfb` revision. The earlier
