@@ -56,8 +56,9 @@ How it works:
   huggingface.co, at most two at a time, each streamed to a temporary file,
   size-bounded, SHA-256 verified, and then atomically renamed into place. A
   failed attempt restarts from byte zero (no Range resumption) up to three
-  times. A model that never downloads is reported and the batch continues with
-  whatever did.
+  times. HTTP errors honor Retry-After seconds or dates; a 429 without a valid
+  header backs off for 60 then 120 seconds. A model that never downloads is
+  reported and the batch continues with whatever did.
 - Workers run only when at least one model in the batch is resident and are
   passed only the resident models, so a partial batch still yields data.
 - Batch cleanup runs in a finally block. If a batch directory cannot be removed
@@ -79,10 +80,13 @@ import shutil
 import subprocess
 import sys
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from datetime import timezone
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Any, Callable
 
@@ -91,6 +95,7 @@ GIB = 1024**3
 RESERVED_BYTES = 2 * GIB
 MAX_CONCURRENT_DOWNLOADS = 2
 DOWNLOAD_ATTEMPTS = 3
+RATE_LIMIT_RETRY_DELAY = 60.0
 HF_BASE_URL = "https://huggingface.co"
 
 
@@ -584,6 +589,27 @@ def _download_once(
         )
 
 
+def _retry_after_seconds(value: str | None) -> float | None:
+    """Parse an external Retry-After header; invalid values use local backoff."""
+    if value is None:
+        return None
+    value = value.strip()
+    is_ascii = value.isascii()
+    is_decimal = value.isdecimal()
+    is_delay_seconds = is_ascii and is_decimal
+    try:
+        if is_delay_seconds:
+            delay = float(value)
+            return delay if math.isfinite(delay) else None
+        deadline = parsedate_to_datetime(value)
+        # The obsolete asctime HTTP-date format has no explicit timezone.
+        if deadline.tzinfo is None:
+            deadline = deadline.replace(tzinfo=timezone.utc)
+        return max(0.0, deadline.timestamp() - time.time())
+    except (ValueError, OverflowError):
+        return None
+
+
 def download_model(
     model: ModelSpec,
     models_dir: Path,
@@ -620,13 +646,22 @@ def download_model(
             return destination
         except (DownloadError, OSError, http.client.HTTPException) as exc:
             last_error = exc
+            delay = retry_delay * attempt
+            if isinstance(exc, urllib.error.HTTPError):
+                header = exc.headers.get("Retry-After") if exc.headers else None
+                server_delay = _retry_after_seconds(header)
+                if server_delay is not None:
+                    delay = max(delay, server_delay)
+                elif exc.code == 429:
+                    delay = max(delay, RATE_LIMIT_RETRY_DELAY * 2 ** (attempt - 1))
+                exc.close()
             if attempt < attempts:
                 log(
                     f"Download attempt {attempt}/{attempts} failed for "
-                    f"{model.id}: {exc}; restarting from byte zero"
+                    f"{model.id}: {exc}; retrying in {delay:g}s from byte zero"
                 )
-                if retry_delay:
-                    time.sleep(retry_delay * attempt)
+                if delay:
+                    time.sleep(delay)
 
     if last_error is None:
         raise DownloadError(
