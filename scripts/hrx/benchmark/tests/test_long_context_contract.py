@@ -34,6 +34,7 @@ class LongContextOutcomeTests(unittest.TestCase):
 
     def test_failures_take_precedence_over_unsupported_coverage(self) -> None:
         self.assertEqual(aggregate_status(["ok", "unsupported", "failed"]), "fail")
+        self.assertEqual(aggregate_status(["pass", "pass"]), "pass")
         self.assertEqual(classify_outcome("fail", "fail"), "XFAIL")
         self.assertEqual(classify_outcome("fail", "pass"), "FAIL")
 

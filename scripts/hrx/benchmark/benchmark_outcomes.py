@@ -11,9 +11,9 @@ from collections.abc import Iterable
 def aggregate_status(statuses: Iterable[str]) -> str:
     """Return fail unless every requested measurement completed successfully."""
     values = tuple(statuses)
-    if not values:
+    if not values or any(value in {"failed", "fail", "unsupported"} for value in values):
         return "fail"
-    return "pass" if all(value == "ok" for value in values) else "fail"
+    return "pass" if all(value in {"ok", "pass"} for value in values) else "fail"
 
 
 def classify_outcome(
