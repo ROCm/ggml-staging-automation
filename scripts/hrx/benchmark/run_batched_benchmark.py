@@ -743,15 +743,11 @@ def build_benchmark_command(
     models_dir: Path,
     resident: list[ModelSpec],
     long_context_lengths: str = "32768,65536,131072,262144",
-    long_context_scored_tokens: int = 1024,
     context_sweep_decode_tokens: int = 256,
     context_sweep_repetitions: int = 3,
 ) -> list[str]:
     overrides: list[str] = []
-    if benchmark.id == "long-context-perplexity":
-        overrides = ["--context-lengths", long_context_lengths,
-                     "--scored-tokens", str(long_context_scored_tokens)]
-    elif benchmark.id == "context-sweep":
+    if benchmark.id == "context-sweep":
         overrides = ["--contexts", long_context_lengths,
                      "--decode-tokens", str(context_sweep_decode_tokens),
                      "--repetitions", str(context_sweep_repetitions)]
@@ -855,7 +851,6 @@ def run(args: argparse.Namespace) -> int:
                             models_dir=models_dir,
                             resident=resident,
                             long_context_lengths=args.long_context_lengths,
-                            long_context_scored_tokens=args.long_context_scored_tokens,
                             context_sweep_decode_tokens=args.context_sweep_decode_tokens,
                             context_sweep_repetitions=args.context_sweep_repetitions,
                         )
@@ -940,14 +935,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--include-long-context",
         action="store_true",
-        help="Run long-context perplexity and llama-bench sweeps in addition to short checks",
+        help="Run the 8192-context perplexity case and llama-bench context sweeps",
     )
     parser.add_argument(
         "--long-context-lengths",
         default="32768,65536,131072,262144",
-        help="Comma-separated context sizes used by both long-context checks",
+        help="Comma-separated context sizes used by the llama-bench context sweep",
     )
-    parser.add_argument("--long-context-scored-tokens", type=int, default=1024)
     parser.add_argument("--context-sweep-decode-tokens", type=int, default=256)
     parser.add_argument("--context-sweep-repetitions", type=int, default=3)
     parser.add_argument("--model-manifest", type=Path, required=True)
@@ -966,8 +960,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     if (not contexts or tuple(sorted(set(contexts))) != contexts
             or any(value <= 0 for value in contexts)):
         parser.error("--long-context-lengths must be unique positive integers in increasing order")
-    if args.long_context_scored_tokens < 1 or any(value <= args.long_context_scored_tokens for value in contexts):
-        parser.error("each context length must exceed --long-context-scored-tokens")
     if args.context_sweep_decode_tokens < 1 or any(value <= args.context_sweep_decode_tokens for value in contexts):
         parser.error("each context length must exceed --context-sweep-decode-tokens")
     if args.context_sweep_repetitions < 1:

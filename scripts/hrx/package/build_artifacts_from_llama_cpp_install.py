@@ -19,7 +19,6 @@ DEFAULT_LLAMA_BUILD_DIR = REPO_ROOT / "build" / "llama.cpp-build"
 DEFAULT_LLAMA_INSTALL_DIR = REPO_ROOT / "build" / "llama.cpp-install"
 RELEASE_INSTALL_GLOBS = (
     "bin/llama-*",
-    "bin/hrx-stream-perplexity",
     "include/*.h",
     "lib/**/*.cmake",
     "lib/**/*.pc",

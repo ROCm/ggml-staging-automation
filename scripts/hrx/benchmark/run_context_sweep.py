@@ -17,8 +17,8 @@ import math
 import os
 import shlex
 import subprocess
-import sys
 import time
+import struct
 from pathlib import Path
 from typing import Any
 
@@ -34,6 +34,11 @@ from run_batched_benchmark import ModelSpec, load_manifest
 
 
 DEFAULT_CONTEXTS = (32768, 65536, 131072, 262144)
+
+GGUF_NUMERIC_FORMATS = {
+    0: "<B", 1: "<b", 2: "<H", 3: "<h", 4: "<I", 5: "<i",
+    6: "<f", 7: "<?", 10: "<Q", 11: "<q", 12: "<d",
+}
 
 
 class ContextSweepError(RuntimeError):
@@ -67,19 +72,77 @@ def resolve_models(manifest_path: Path, models_dir: Path, names: list[str]) -> l
     return resolved
 
 
-def inspect_model(evaluator: Path, model_path: Path, timeout: float) -> tuple[int | None, str | None]:
-    result = subprocess.run(
-        [os.fspath(evaluator), "--inspect", os.fspath(model_path)],
-        text=True, encoding="utf-8", errors="replace", stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT, timeout=timeout,
-    )
-    if result.returncode != 0:
-        return None, result.stdout.strip() or f"metadata inspection exited {result.returncode}"
+def inspect_model(model_path: Path) -> tuple[int | None, str | None]:
+    """Read the architecture context field from the GGUF metadata header."""
     try:
-        metadata = json.loads(result.stdout.strip().splitlines()[-1])
-        return int(metadata["model_context"]), None
-    except (IndexError, KeyError, TypeError, ValueError, json.JSONDecodeError):
-        return None, "metadata inspector returned invalid JSON"
+        with model_path.open("rb") as model_file:
+            def read_exact(count: int) -> bytes:
+                value = model_file.read(count)
+                if len(value) != count:
+                    raise ValueError("truncated GGUF metadata")
+                return value
+
+            def read_u32() -> int:
+                return struct.unpack("<I", read_exact(4))[0]
+
+            def read_u64() -> int:
+                return struct.unpack("<Q", read_exact(8))[0]
+
+            def read_string() -> str:
+                return read_exact(read_u64()).decode("utf-8")
+
+            def read_value(value_type: int) -> Any:
+                if value_type == 8:
+                    return read_string()
+                value_format = GGUF_NUMERIC_FORMATS.get(value_type)
+                if value_format is None:
+                    raise ValueError(f"unsupported GGUF metadata type {value_type}")
+                return struct.unpack(value_format, read_exact(struct.calcsize(value_format)))[0]
+
+            def skip_value(value_type: int) -> None:
+                if value_type == 9:
+                    element_type = read_u32()
+                    count = read_u64()
+                    if element_type == 8:
+                        for _ in range(count):
+                            read_string()
+                    elif element_type in GGUF_NUMERIC_FORMATS:
+                        model_file.seek(struct.calcsize(GGUF_NUMERIC_FORMATS[element_type]) * count, 1)
+                    else:
+                        raise ValueError(f"unsupported GGUF array type {element_type}")
+                    return
+                if value_type == 8:
+                    read_string()
+                    return
+                value_format = GGUF_NUMERIC_FORMATS.get(value_type)
+                if value_format is None:
+                    raise ValueError(f"unsupported GGUF metadata type {value_type}")
+                model_file.seek(struct.calcsize(value_format), 1)
+
+            if read_exact(4) != b"GGUF":
+                raise ValueError("invalid GGUF magic")
+            version = read_u32()
+            if version not in (2, 3):
+                raise ValueError(f"unsupported GGUF version {version}")
+            read_u64()  # Tensor count.
+            metadata_count = read_u64()
+            values: dict[str, Any] = {}
+            for _ in range(metadata_count):
+                key = read_string()
+                value_type = read_u32()
+                if key == "general.architecture" or key.endswith(".context_length"):
+                    values[key] = read_value(value_type)
+                else:
+                    skip_value(value_type)
+            architecture = values.get("general.architecture")
+            if not isinstance(architecture, str):
+                raise ValueError("missing general.architecture metadata")
+            context = values.get(f"{architecture}.context_length")
+            if not isinstance(context, int) or context < 1:
+                raise ValueError(f"missing or invalid {architecture}.context_length metadata")
+            return context, None
+    except (KeyError, TypeError, ValueError, OSError, UnicodeDecodeError, struct.error) as exc:
+        return None, f"could not read GGUF context metadata: {exc}"
 
 
 def run_measurement(
@@ -211,15 +274,13 @@ def run_measurement(
 
 def run(args: argparse.Namespace) -> int:
     llama_bench = args.llama_bench.resolve()
-    evaluator = args.context_inspector.resolve()
     models_dir = args.models_dir.resolve()
     models = resolve_models(args.model_manifest, models_dir, args.models)
     if (not args.context_lengths or args.decode_tokens < 1
             or any(length <= args.decode_tokens for length in args.context_lengths)):
         raise ContextSweepError("every context length must exceed --decode-tokens")
-    for binary in (llama_bench, evaluator):
-        if not binary.is_file():
-            raise ContextSweepError(f"Required benchmark binary is missing: {binary}")
+    if not llama_bench.is_file():
+        raise ContextSweepError(f"Required benchmark binary is missing: {llama_bench}")
 
     logs = {"hrx": args.hrx_log, "vulkan": args.vulkan_log}
     for path in logs.values():
@@ -231,7 +292,7 @@ def run(args: argparse.Namespace) -> int:
         "schema_version": 1,
         "source_revisions": source_revisions(),
         "llama_bench": os.fspath(llama_bench),
-        "context_inspector": os.fspath(evaluator),
+        "metadata_reader": "GGUF metadata header (Python standard library)",
         "devices": {"hrx": args.hrx_device, "vulkan": args.vulkan_device},
         "settings": {
             "context_lengths": list(args.context_lengths),
@@ -249,7 +310,7 @@ def run(args: argparse.Namespace) -> int:
     }
     unexpected = False
     for spec, model_path in models:
-        model_context, inspect_error = inspect_model(evaluator, model_path, args.run_timeout_seconds)
+        model_context, inspect_error = inspect_model(model_path)
         row: dict[str, Any] = {
             "model": spec.name, "model_id": spec.id, "file": spec.filename,
             "model_sha256": spec.sha256, "model_revision": spec.revision,
@@ -362,7 +423,6 @@ def run(args: argparse.Namespace) -> int:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--llama-bench", type=Path, required=True)
-    parser.add_argument("--context-inspector", type=Path, required=True)
     parser.add_argument("--model-manifest", type=Path, required=True)
     parser.add_argument("--models-dir", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
