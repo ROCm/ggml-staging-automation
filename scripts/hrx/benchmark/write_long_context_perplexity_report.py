@@ -33,7 +33,9 @@ def format_report(document: dict[str, Any]) -> str:
         "Each context row prefills exactly N − scored tokens from the corpus, then scores the next "
         "tokens by teacher-forced continuation with full-vocabulary likelihood. The evaluator retains "
         "one vocabulary-logit row at a time. Contexts above a model's declared training context are "
-        "reported as unsupported; allocation failures remain failures.",
+        "record an unsupported diagnostic and count as failed checks; allocation failures remain "
+        "failures. Only explicit context/backend `fail` expectations classify model failures as "
+        "XFAIL; infrastructure failures are never excused.",
         "",
         "| Model | Context | Prefix / scored | HRX PPL | Vulkan PPL | HRX/Vulkan | HRX outcome | Vulkan outcome |",
         "| --- | ---: | ---: | ---: | ---: | ---: | --- | --- |",

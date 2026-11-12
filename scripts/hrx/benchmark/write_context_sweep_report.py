@@ -41,7 +41,9 @@ def format_report(document: dict[str, Any]) -> str:
         "Prefill uses a separate `pp N` run. Decode uses `tg T @ d (N − T)`: llama-bench "
         "prefills the history before starting the timer, then measures T generated tokens. The "
         "combined `-pg` result is not used. Contexts above the GGUF-declared training context "
-        "are reported unsupported; hardware allocation failures are retained as failures.",
+        "retain an unsupported diagnostic and count as failed checks; hardware allocation failures "
+        "are failures. Only explicit context/backend `fail` expectations classify model failures "
+        "as XFAIL; infrastructure failures are never excused.",
         "",
         "| Model | Context | HRX pp tok/s | Vulkan pp tok/s | pp ratio | HRX tg tok/s | Vulkan tg tok/s | tg ratio | HRX outcome | Vulkan outcome |",
         "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |",
