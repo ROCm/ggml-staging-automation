@@ -1,0 +1,33 @@
+#!/usr/bin/env python3
+# Copyright Advanced Micro Devices, Inc.
+# SPDX-License-Identifier: MIT
+"""Shared outcome handling for benchmark measurements."""
+
+from __future__ import annotations
+
+from collections.abc import Iterable
+
+
+def aggregate_status(statuses: Iterable[str]) -> str:
+    """Return fail unless every requested measurement completed successfully."""
+    values = tuple(statuses)
+    if not values:
+        return "fail"
+    return "pass" if all(value == "ok" for value in values) else "fail"
+
+
+def classify_outcome(
+    result: str, expectation: str, *, expected_failure_allowed: bool = True,
+) -> str:
+    """Apply the manifest's pass/fail/report-only expectation to one mode."""
+    if expectation == "report-only":
+        return "REPORT_ONLY"
+    if expectation == "fail":
+        if result == "pass":
+            return "XPASS"
+        return "XFAIL" if expected_failure_allowed else "FAIL"
+    return "FAIL" if result == "fail" else "PASS"
+
+
+def is_unexpected(outcome: str) -> bool:
+    return outcome in ("FAIL", "XPASS")

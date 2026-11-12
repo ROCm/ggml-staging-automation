@@ -43,8 +43,8 @@ def format_report(document: dict[str, Any]) -> str:
         "combined `-pg` result is not used. Contexts above the GGUF-declared training context "
         "are reported unsupported; hardware allocation failures are retained as failures.",
         "",
-        "| Model | Context | HRX pp tok/s | Vulkan pp tok/s | pp ratio | HRX tg tok/s | Vulkan tg tok/s | tg ratio |",
-        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+        "| Model | Context | HRX pp tok/s | Vulkan pp tok/s | pp ratio | HRX tg tok/s | Vulkan tg tok/s | tg ratio | HRX outcome | Vulkan outcome |",
+        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |",
     ]
     failures = []
     for model in document["models"]:
@@ -56,10 +56,11 @@ def format_report(document: dict[str, Any]) -> str:
                 f"{_throughput(hrx['prefill'])} | {_throughput(vulkan['prefill'])} | "
                 f"{_ratio(hrx['prefill'], vulkan['prefill'])} | "
                 f"{_throughput(hrx['decode'])} | {_throughput(vulkan['decode'])} | "
-                f"{_ratio(hrx['decode'], vulkan['decode'])} |"
+                f"{_ratio(hrx['decode'], vulkan['decode'])} | {hrx['outcome']} | {vulkan['outcome']} |"
             )
             for backend_name, measurements in (("HRX", hrx), ("Vulkan", vulkan)):
-                for kind, measurement in measurements.items():
+                for kind in ("prefill", "decode"):
+                    measurement = measurements[kind]
                     if measurement["status"] == "failed":
                         failures.append(
                             f"- {format_code(model['model'])} context {context} {backend_name} {kind}: "

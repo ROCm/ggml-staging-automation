@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import shlex
 import subprocess
@@ -22,6 +23,7 @@ from pathlib import Path
 from typing import Any
 
 from benchmark_output import append_batch_log, atomic_write_json, merge_benchmark_output
+from benchmark_outcomes import aggregate_status, classify_outcome, is_unexpected
 from benchmark_provenance import source_revisions
 from run_batched_benchmark import ModelSpec, load_manifest
 
@@ -31,6 +33,13 @@ DEFAULT_CONTEXTS = (32768, 65536, 131072, 262144)
 
 class ContextSweepError(RuntimeError):
     """Raised for invalid sweep configuration or inputs."""
+
+
+def parse_context_lengths(value: str) -> tuple[int, ...]:
+    try:
+        return tuple(int(item) for item in value.split(","))
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("contexts must be comma-separated integers") from exc
 
 
 def log(message: str) -> None:
@@ -75,7 +84,8 @@ def run_measurement(
     if context_length > model_context:
         return {
             "status": "unsupported", "reason": "requested context exceeds model training context",
-            "model_context": model_context, "context_length": context_length,
+            "failure_kind": "model-context", "model_context": model_context,
+            "context_length": context_length,
         }
     if kind == "prefill":
         prompt, generated, depth = context_length, 0, 0
@@ -178,7 +188,9 @@ def run_measurement(
             error, failure_kind = f"timed out after {args.run_timeout_seconds} seconds", "execution"
         elif exit_code in (-9, -11) or any(term in combined for term in ("out of memory", "allocation failed", "failed to allocate", "out of device memory", "std::bad_alloc")):
             error, failure_kind = f"llama-bench exited {exit_code} after allocation failure", "resource-exhausted"
-        elif any(term in combined for term in ("no matching device", "device not found", "unknown device", "unsupported device", "failed to initialize backend")):
+        elif any(term in combined for term in ("no matching device", "device not found", "unknown device", "failed to initialize backend")):
+            error, failure_kind = f"backend device unavailable: {device}", "infrastructure"
+        elif "unsupported device" in combined:
             error, failure_kind = f"backend device unavailable: {device}", "unsupported-device"
             measurement["status"] = "unsupported"
         else:
@@ -192,7 +204,8 @@ def run(args: argparse.Namespace) -> int:
     evaluator = args.context_inspector.resolve()
     models_dir = args.models_dir.resolve()
     models = resolve_models(args.model_manifest, models_dir, args.models)
-    if args.decode_tokens < 1 or any(length <= args.decode_tokens for length in args.context_lengths):
+    if (not args.context_lengths or args.decode_tokens < 1
+            or any(length <= args.decode_tokens for length in args.context_lengths)):
         raise ContextSweepError("every context length must exceed --decode-tokens")
     for binary in (llama_bench, evaluator):
         if not binary.is_file():
@@ -231,22 +244,32 @@ def run(args: argparse.Namespace) -> int:
             "model": spec.name, "model_id": spec.id, "file": spec.filename,
             "model_sha256": spec.sha256, "model_revision": spec.revision,
             "model_context": model_context, "batch": args.batch_number, "contexts": {},
-            "expected_results": {
-                backend: spec.expectation("context-sweep", backend)
-                for backend in ("hrx", "vulkan")
-            },
+            "expected_results": {backend: {} for backend in ("hrx", "vulkan")},
         }
-        backend_failed = {"hrx": False, "vulkan": False}
         if inspect_error:
             for context_length in args.context_lengths:
-                row["contexts"][str(context_length)] = {
-                    backend: {"prefill": {"status": "failed", "error": inspect_error,
-                                            "failure_kind": "metadata", "log": logs[backend].name},
-                              "decode": {"status": "failed", "error": inspect_error,
-                                          "failure_kind": "metadata", "log": logs[backend].name}}
-                    for backend in logs
+                by_backend = {}
+                for backend in logs:
+                    expectation = spec.expectation("context-sweep", backend, str(context_length))
+                    row["expected_results"][backend][str(context_length)] = expectation
+                    measurement = {
+                        "status": "failed", "error": inspect_error,
+                        "failure_kind": "infrastructure", "log": logs[backend].name,
+                    }
+                    outcome = classify_outcome(
+                        "fail", expectation, expected_failure_allowed=False,
+                    )
+                    by_backend[backend] = {
+                        "prefill": dict(measurement), "decode": dict(measurement),
+                        "result": "fail", "outcome": outcome,
+                    }
+                    unexpected = unexpected or is_unexpected(outcome)
+                row["contexts"][str(context_length)] = by_backend
+            for backend in logs:
+                row["expected_results"][backend] = {
+                    str(length): spec.expectation("context-sweep", backend, str(length))
+                    for length in args.context_lengths
                 }
-            backend_failed = {"hrx": True, "vulkan": True}
         else:
             for context_length in args.context_lengths:
                 by_backend = {}
@@ -265,23 +288,45 @@ def run(args: argparse.Namespace) -> int:
                         ),
                     }
                 row["contexts"][str(context_length)] = by_backend
-                for backend, results in by_backend.items():
-                    for result in results.values():
-                        backend_failed[backend] = (
-                            backend_failed[backend] or result["status"] == "failed"
-                        )
+                for backend, measurements in by_backend.items():
+                    expectation = spec.expectation("context-sweep", backend, str(context_length))
+                    row["expected_results"][backend][str(context_length)] = expectation
+                    raw_result = aggregate_status(
+                        measurement["status"] for measurement in measurements.values()
+                    )
+                    failed_measurements = [
+                        measurement for measurement in measurements.values()
+                        if measurement["status"] != "ok"
+                    ]
+                    expected_failure_allowed = all(
+                        measurement.get("failure_kind") in {
+                            "model-context", "resource-exhausted", "unsupported-device",
+                        }
+                        for measurement in failed_measurements
+                    )
+                    outcome = classify_outcome(
+                        raw_result, expectation,
+                        expected_failure_allowed=expected_failure_allowed,
+                    )
+                    by_backend["result"] = raw_result
+                    by_backend["outcome"] = outcome
+                    unexpected = unexpected or is_unexpected(outcome)
                 log(f"{spec.id} context={context_length}: HRX pp={by_backend['hrx']['prefill'].get('tokens_per_second')} tg={by_backend['hrx']['decode'].get('tokens_per_second')}; Vulkan pp={by_backend['vulkan']['prefill'].get('tokens_per_second')} tg={by_backend['vulkan']['decode'].get('tokens_per_second')}")
         document["models"].append(row)
-        row["result"] = "fail" if backend_failed["hrx"] else "pass"
-        row["reference_result"] = "fail" if backend_failed["vulkan"] else "pass"
-        for backend, failed in backend_failed.items():
-            expectation = row["expected_results"][backend]
-            if expectation == "report-only":
-                continue
-            if expectation == "fail":
-                unexpected = unexpected or not failed
-            else:
-                unexpected = unexpected or failed
+        row["result"] = aggregate_status(
+            values["hrx"]["result"] for values in row["contexts"].values()
+        )
+        row["reference_result"] = aggregate_status(
+            values["vulkan"]["result"] for values in row["contexts"].values()
+        )
+        hrx_outcomes = [values["hrx"]["outcome"] for values in row["contexts"].values()]
+        vulkan_outcomes = [values["vulkan"]["outcome"] for values in row["contexts"].values()]
+        row["outcome"] = "FAIL" if "FAIL" in hrx_outcomes else (
+            "XPASS" if "XPASS" in hrx_outcomes else "XFAIL" if "XFAIL" in hrx_outcomes else "PASS"
+        )
+        row["reference_outcome"] = "FAIL" if "FAIL" in vulkan_outcomes else (
+            "XPASS" if "XPASS" in vulkan_outcomes else "XFAIL" if "XFAIL" in vulkan_outcomes else "PASS"
+        )
 
     if args.batched:
         if args.batch_number is None:
@@ -310,7 +355,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--vulkan-log", type=Path, required=True)
     parser.add_argument("--hrx-device", default="HRX0")
     parser.add_argument("--vulkan-device", default="Vulkan0")
-    parser.add_argument("--contexts", dest="context_lengths", type=lambda value: tuple(int(x) for x in value.split(",")), default=DEFAULT_CONTEXTS)
+    parser.add_argument("--contexts", dest="context_lengths", type=parse_context_lengths, default=DEFAULT_CONTEXTS)
     parser.add_argument("--decode-tokens", type=int, default=256)
     parser.add_argument("--repetitions", type=int, default=3)
     parser.add_argument("--batch-size", type=int, default=2048)
@@ -328,9 +373,15 @@ def parse_args() -> argparse.Namespace:
         parser.error("--batch-number is required with --batched")
     if args.batch_number is not None and not args.batched:
         parser.error("--batch-number requires --batched")
-    if (tuple(sorted(set(args.context_lengths))) != args.context_lengths
+    if (not args.context_lengths or tuple(sorted(set(args.context_lengths))) != args.context_lengths
             or any(length <= 0 for length in args.context_lengths)):
         parser.error("--contexts must be unique positive integers in increasing order")
+    if args.decode_tokens < 1 or any(length <= args.decode_tokens for length in args.context_lengths):
+        parser.error("--decode-tokens must be positive and less than every context")
+    if args.batch_size < 1 or args.ubatch_size < 1:
+        parser.error("--batch-size and --ubatch-size must be positive")
+    if not math.isfinite(args.run_timeout_seconds) or args.run_timeout_seconds <= 0:
+        parser.error("--run-timeout-seconds must be finite and positive")
     return args
 
 

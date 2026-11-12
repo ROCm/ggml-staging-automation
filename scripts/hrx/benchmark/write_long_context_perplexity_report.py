@@ -35,8 +35,8 @@ def format_report(document: dict[str, Any]) -> str:
         "one vocabulary-logit row at a time. Contexts above a model's declared training context are "
         "reported as unsupported; allocation failures remain failures.",
         "",
-        "| Model | Context | Prefix / scored | HRX PPL | Vulkan PPL | HRX/Vulkan |",
-        "| --- | ---: | ---: | ---: | ---: | ---: |",
+        "| Model | Context | Prefix / scored | HRX PPL | Vulkan PPL | HRX/Vulkan | HRX outcome | Vulkan outcome |",
+        "| --- | ---: | ---: | ---: | ---: | ---: | --- | --- |",
     ]
     failures = []
     for model in document["models"]:
@@ -48,7 +48,8 @@ def format_report(document: dict[str, Any]) -> str:
             lines.append(
                 f"| {format_code(model['model'])} | {int(context):,} | "
                 f"{hrx.get('prefix_tokens', int(context) - document['contexts'][context]['scored_tokens']):,} / "
-                f"{document['contexts'][context]['scored_tokens']:,} | {_ppl(hrx)} | {_ppl(vulkan)} | {comparison} |"
+                f"{document['contexts'][context]['scored_tokens']:,} | {_ppl(hrx)} | {_ppl(vulkan)} | "
+                f"{comparison} | {pair['hrx_outcome']} | {pair['vulkan_outcome']} |"
             )
             for backend, measurement in (("HRX", hrx), ("Vulkan", vulkan)):
                 if measurement["status"] == "failed":

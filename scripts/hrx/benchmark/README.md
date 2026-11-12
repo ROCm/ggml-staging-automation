@@ -56,8 +56,10 @@ teacher-forced perplexity at 32K, 64K, 128K and 256K tokens, and a separate
 `llama-bench` prefill/decode sweep at those contexts. The PPL evaluator scores
 the final 1024 corpus continuation tokens after an exact `N - 1024` prefix,
 computing full-vocabulary likelihood one token at a time. Contexts above a
-GGUF's declared training context are recorded as unsupported; contexts that
-fit the model but exhaust the selected device are recorded as failures.
+GGUF's declared training context retain an unsupported diagnostic and count as
+failed checks, as do contexts that exhaust the selected device. An expected
+failure must be declared for that check, backend and context; otherwise it
+fails CI.
 
 The context sweep runs `pp N` and `tg 256 @ d (N - 256)` as separate
 measurements. llama-bench's depth is prefetched outside the timed decode
@@ -70,7 +72,10 @@ kept in the JSON artifact and backend logs.
 
 Long-check expectations use their own `long-context-perplexity` and
 `context-sweep` keys; exceptions configured for short `perplexity` do not
-carry over. HRX coverage above 32K depends on the llama.cpp submodule including
+carry over. Use a decimal context length as a mode when declaring a
+context-specific exception, and include that mode in `test-modes`; omitted
+contexts continue to expect a pass. Infrastructure failures and unavailable
+PPL comparisons are not excused by a model XFAIL. HRX coverage above 32K depends on the llama.cpp submodule including
 the graph-resource, 256K attention-bound and long-context accumulation fixes
 from [#185](https://github.com/AMD-Ecosystem/llama.cpp/pull/185),
 [#193](https://github.com/AMD-Ecosystem/llama.cpp/pull/193) and
@@ -102,12 +107,13 @@ Exceptions are independent for each model, check, backend and mode. For example:
 ```
 
 Omitted expectations mean `pass`. Use `default` for ordinary models and
-perplexity, and explicit `mtp:off`/`mtp:on` keys for expanded Lemonade cases. `fail`
+perplexity, explicit `mtp:off`/`mtp:on` keys for expanded Lemonade cases, and
+decimal token counts for long-context checks. `fail`
 requires failure (a success is a CI-failing XPASS); `report-only` retains the
 measured outcome without gating. No exception is inherited by the other mode
 or backend. Unsupported benchmark/mode combinations, duplicate modes and
 expectations for unselected modes are rejected. Modes are independent cases,
-not a Cartesian product. Perplexity currently supports only `default`.
+not a Cartesian product. Short perplexity supports only `default`.
 Infrastructure and malformed-artifact errors remain fatal.
 
 The pinned Lemonade release predates automatic HRX MTP enablement. Updating the

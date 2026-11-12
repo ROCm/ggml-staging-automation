@@ -45,6 +45,7 @@ from benchmark_output import (
     merge_benchmark_output,
 )
 from benchmark_provenance import source_revisions
+from benchmark_outcomes import aggregate_status, classify_outcome, is_unexpected
 from run_batched_benchmark import ModelSpec, load_manifest
 
 
@@ -72,6 +73,13 @@ def numerical_verdict(hrx: dict, vulkan: dict, maximum: float) -> str:
         return "unavailable"
     exceeds_limit = hrx["ppl"]["value"] > maximum * vulkan["ppl"]["value"]
     return "fail" if exceeds_limit else "pass"
+
+
+def parse_context_lengths(value: str) -> tuple[int, ...]:
+    try:
+        return tuple(int(item) for item in value.split(","))
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("context lengths must be comma-separated integers") from exc
 
 
 class PerplexityBenchmarkError(RuntimeError):
@@ -527,6 +535,7 @@ def _run_stream_measurement(
             measurement.update({
                 "status": "unsupported",
                 "reason": result_document.get("reason"),
+                "failure_kind": "model-context",
                 "model_context": result_document.get("model_context"),
             })
         else:
@@ -547,7 +556,14 @@ def _run_stream_measurement(
             failure_kind = "resource-exhausted"
         else:
             error = f"streaming evaluator exited with status {exit_code}"
-            failure_kind = "execution"
+            lowered = output.lower()
+            failure_kind = (
+                "unsupported-device"
+                if any(term in lowered for term in ("unsupported device", "device does not support"))
+                else "infrastructure"
+                if any(term in lowered for term in ("device not found", "no matching device", "failed to initialize backend"))
+                else "execution"
+            )
         measurement.update({"error": error, "failure_kind": failure_kind})
 
     return measurement
@@ -597,13 +613,11 @@ def run_streaming_perplexity(args: argparse.Namespace) -> int:
             "model": model.spec.name, "model_id": model.spec.id,
             "file": model.spec.filename, "model_sha256": model.spec.sha256,
             "model_revision": model.spec.revision, "batch": args.batch_number,
-            "expected_results": {
-                backend: model.spec.expectation("long-context-perplexity", backend)
-                for backend in ("hrx", "vulkan")
-            },
+            "expected_results": {backend: {} for backend in ("hrx", "vulkan")},
             "contexts": {},
         }
-        backend_failed = {"hrx": False, "vulkan": False}
+        backend_results = {"hrx": [], "vulkan": []}
+        backend_outcomes = {"hrx": [], "vulkan": []}
         for context_length in contexts:
             pair: dict[str, Any] = {}
             for backend, device in (("hrx", args.hrx_device), ("vulkan", args.vulkan_device)):
@@ -631,27 +645,55 @@ def run_streaming_perplexity(args: argparse.Namespace) -> int:
                 verdict = "unavailable"
             pair["ratio"] = ratio
             pair["numerical_verdict"] = verdict
-            row["contexts"][str(context_length)] = pair
-
-            backend_failed["hrx"] = (
-                backend_failed["hrx"] or hrx["status"] == "failed" or verdict == "fail"
-            )
-            backend_failed["vulkan"] = backend_failed["vulkan"] or vulkan["status"] == "failed"
-
-        hrx_statuses = [pair["hrx"]["status"] for pair in row["contexts"].values()]
-        vulkan_statuses = [pair["vulkan"]["status"] for pair in row["contexts"].values()]
-        row["result"] = "unsupported" if all(status == "unsupported" for status in hrx_statuses) else ("fail" if "failed" in hrx_statuses or any(pair["numerical_verdict"] == "fail" for pair in row["contexts"].values()) else "pass")
-        row["reference_result"] = "unsupported" if all(status == "unsupported" for status in vulkan_statuses) else ("fail" if "failed" in vulkan_statuses else "pass")
-        row["outcome"] = row["result"].upper()
-        row["reference_outcome"] = row["reference_result"].upper()
-        for backend, failed in backend_failed.items():
-            expectation = row["expected_results"][backend]
-            if expectation == "report-only":
-                continue
-            if expectation == "fail":
-                unexpected = unexpected or not failed
+            if verdict == "unavailable" and any(
+                measurement.get("failure_kind") == "infrastructure"
+                or (measurement["status"] == "failed" and measurement.get("failure_kind") not in {
+                    "model-context", "resource-exhausted", "unsupported-device",
+                })
+                for measurement in (hrx, vulkan)
+            ):
+                pair["comparison_result"] = "fail"
+                unexpected = True
             else:
-                unexpected = unexpected or failed
+                pair["comparison_result"] = "pass" if verdict != "unavailable" else "unavailable"
+
+            for backend, measurement in (("hrx", hrx), ("vulkan", vulkan)):
+                raw_statuses = [measurement["status"]]
+                if backend == "hrx" and verdict == "fail":
+                    raw_statuses.append("failed")
+                raw_result = aggregate_status(raw_statuses)
+                expectation = model.spec.expectation(
+                    "long-context-perplexity", backend, str(context_length),
+                )
+                row["expected_results"][backend][str(context_length)] = expectation
+                eligible_failure_kinds = {"model-context", "resource-exhausted", "unsupported-device", "numerical"}
+                failure_kinds = []
+                if measurement["status"] != "ok":
+                    failure_kinds.append(measurement.get("failure_kind"))
+                if backend == "hrx" and verdict == "fail":
+                    failure_kinds.append("numerical")
+                expected_failure_allowed = all(
+                    kind in eligible_failure_kinds for kind in failure_kinds
+                )
+                outcome = classify_outcome(
+                    raw_result, expectation,
+                    expected_failure_allowed=expected_failure_allowed,
+                )
+                pair[f"{backend}_result"] = raw_result
+                pair[f"{backend}_outcome"] = outcome
+                backend_results[backend].append(raw_result)
+                backend_outcomes[backend].append(outcome)
+                unexpected = unexpected or is_unexpected(outcome)
+            row["contexts"][str(context_length)] = pair
+        row["result"] = aggregate_status(backend_results["hrx"])
+        row["reference_result"] = aggregate_status(backend_results["vulkan"])
+        for backend in ("hrx", "vulkan"):
+            outcomes = backend_outcomes[backend]
+            field = "outcome" if backend == "hrx" else "reference_outcome"
+            row[field] = "FAIL" if "FAIL" in outcomes else (
+                "XPASS" if "XPASS" in outcomes else "XFAIL" if "XFAIL" in outcomes else
+                "REPORT_ONLY" if outcomes and all(value == "REPORT_ONLY" for value in outcomes) else "PASS"
+            )
         output["models"].append(row)
 
     if args.batched:
@@ -671,12 +713,12 @@ def run_streaming_perplexity(args: argparse.Namespace) -> int:
     return 1 if unexpected else 0
 
 
-def main() -> int:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--llama-perplexity", type=Path)
     parser.add_argument("--stream-perplexity", type=Path)
     parser.add_argument(
-        "--context-lengths", type=lambda value: tuple(int(item) for item in value.split(",")),
+        "--context-lengths", type=parse_context_lengths,
         default=DEFAULT_LONG_CONTEXTS,
         help="Comma-separated long-context token counts for streaming PPL",
     )
@@ -700,7 +742,7 @@ def main() -> int:
         help="Extra argument forwarded to llama-perplexity (repeatable).",
     )
     parser.add_argument("--models", nargs="+", required=True)
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
     if args.stream_perplexity is None and args.llama_perplexity is None:
         parser.error("--llama-perplexity is required unless --stream-perplexity is set")
     ratio_is_finite = math.isfinite(args.max_perplexity_ratio)
@@ -717,8 +759,18 @@ def main() -> int:
     if (not args.context_lengths or tuple(sorted(set(args.context_lengths))) != args.context_lengths
             or any(length <= 0 for length in args.context_lengths)):
         parser.error("--context-lengths must be unique positive integers in increasing order")
+    if args.stream_perplexity is not None and (
+        args.scored_tokens < 1 or any(length <= args.scored_tokens for length in args.context_lengths)
+    ):
+        parser.error("--scored-tokens must be positive and less than every context length")
+    if not math.isfinite(args.run_timeout_seconds) or args.run_timeout_seconds <= 0:
+        parser.error("--run-timeout-seconds must be finite and positive")
+    return args
+
+
+def main() -> int:
     try:
-        return run(args)
+        return run(parse_args())
     except (
         OSError,
         RuntimeError,

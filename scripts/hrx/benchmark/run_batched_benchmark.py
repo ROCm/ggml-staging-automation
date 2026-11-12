@@ -257,6 +257,16 @@ def load_manifest(
             "long-context-perplexity": {"default"},
             "context-sweep": {"default"},
         }
+
+        def valid_mode(check: str, mode: str) -> bool:
+            if mode in supported_modes[check]:
+                return True
+            return (
+                check in {"long-context-perplexity", "context-sweep"}
+                and mode.isdecimal()
+                and int(mode) > 0
+            )
+
         for check, modes in raw_modes.items():
             if check not in supported_modes:
                 raise BatchBenchmarkError(f"{context}: unknown benchmark {check!r}")
@@ -271,7 +281,7 @@ def load_manifest(
             for mode in modes:
                 if not isinstance(mode, str):
                     raise BatchBenchmarkError(f"{context}: modes for {check} must be strings")
-                if mode not in supported_modes[check]:
+                if not valid_mode(check, mode):
                     raise BatchBenchmarkError(f"{context}: unsupported mode {mode!r} for {check}")
             if len(set(modes)) != len(modes):
                 raise BatchBenchmarkError(f"{context}: duplicate modes for {check}")
