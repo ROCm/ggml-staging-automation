@@ -45,7 +45,12 @@ from benchmark_output import (
     merge_benchmark_output,
 )
 from benchmark_provenance import source_revisions
-from benchmark_outcomes import aggregate_status, classify_outcome, is_unexpected
+from benchmark_outcomes import (
+    MODEL_FAILURE_KINDS,
+    aggregate_status,
+    classify_outcome,
+    is_unexpected,
+)
 from run_batched_benchmark import ModelSpec, load_manifest
 
 
@@ -516,11 +521,20 @@ def _run_stream_measurement(
         "exit_code": exit_code, "duration_s": round(duration_s, 3),
         "ppl": None, "log": log_file.name, "command": command,
     }
-    if not timed_out and exit_code == 0:
-        try:
-            result_document = json.loads(output.strip().splitlines()[-1])
-        except (IndexError, json.JSONDecodeError):
-            result_document = None
+    try:
+        result_document = json.loads(output.strip().splitlines()[-1])
+    except (IndexError, json.JSONDecodeError):
+        result_document = None
+    if (not timed_out and isinstance(result_document, dict)
+            and result_document.get("status") == "failed"):
+        failure_kind = result_document.get("failure_kind")
+        if failure_kind not in MODEL_FAILURE_KINDS | {"infrastructure"}:
+            failure_kind = "infrastructure"
+        measurement.update({
+            "error": result_document.get("reason", "streaming evaluator failed"),
+            "failure_kind": failure_kind,
+        })
+    elif not timed_out and exit_code == 0:
         if isinstance(result_document, dict) and result_document.get("status") == "ok":
             measurement.update({
                 "status": "ok",
@@ -535,7 +549,7 @@ def _run_stream_measurement(
             measurement.update({
                 "status": "unsupported",
                 "reason": result_document.get("reason"),
-                "failure_kind": "model-context",
+                "failure_kind": result_document.get("failure_kind", "model-context"),
                 "model_context": result_document.get("model_context"),
             })
         else:
@@ -548,7 +562,7 @@ def _run_stream_measurement(
         if timed_out:
             error = f"timed out after {args.run_timeout_seconds} seconds"
             failure_kind = "execution"
-        elif exit_code in (-9, -11) or any(term in lowered for term in (
+        elif exit_code == -9 or any(term in lowered for term in (
             "out of memory", "allocation failed", "failed to allocate",
             "out of device memory", "std::bad_alloc",
         )):
@@ -556,14 +570,7 @@ def _run_stream_measurement(
             failure_kind = "resource-exhausted"
         else:
             error = f"streaming evaluator exited with status {exit_code}"
-            lowered = output.lower()
-            failure_kind = (
-                "unsupported-device"
-                if any(term in lowered for term in ("unsupported device", "device does not support"))
-                else "infrastructure"
-                if any(term in lowered for term in ("device not found", "no matching device", "failed to initialize backend"))
-                else "execution"
-            )
+            failure_kind = "infrastructure"
         measurement.update({"error": error, "failure_kind": failure_kind})
 
     return measurement
@@ -647,9 +654,8 @@ def run_streaming_perplexity(args: argparse.Namespace) -> int:
             pair["numerical_verdict"] = verdict
             if verdict == "unavailable" and any(
                 measurement.get("failure_kind") == "infrastructure"
-                or (measurement["status"] == "failed" and measurement.get("failure_kind") not in {
-                    "model-context", "resource-exhausted", "unsupported-device",
-                })
+                or (measurement["status"] == "failed"
+                    and measurement.get("failure_kind") not in MODEL_FAILURE_KINDS)
                 for measurement in (hrx, vulkan)
             ):
                 pair["comparison_result"] = "fail"
@@ -666,18 +672,21 @@ def run_streaming_perplexity(args: argparse.Namespace) -> int:
                     "long-context-perplexity", backend, str(context_length),
                 )
                 row["expected_results"][backend][str(context_length)] = expectation
-                eligible_failure_kinds = {"model-context", "resource-exhausted", "unsupported-device", "numerical"}
                 failure_kinds = []
                 if measurement["status"] != "ok":
                     failure_kinds.append(measurement.get("failure_kind"))
                 if backend == "hrx" and verdict == "fail":
                     failure_kinds.append("numerical")
                 expected_failure_allowed = all(
-                    kind in eligible_failure_kinds for kind in failure_kinds
+                    kind in MODEL_FAILURE_KINDS for kind in failure_kinds
+                )
+                infrastructure_failure = any(
+                    kind not in MODEL_FAILURE_KINDS for kind in failure_kinds
                 )
                 outcome = classify_outcome(
                     raw_result, expectation,
                     expected_failure_allowed=expected_failure_allowed,
+                    infrastructure_failure=infrastructure_failure,
                 )
                 pair[f"{backend}_result"] = raw_result
                 pair[f"{backend}_outcome"] = outcome

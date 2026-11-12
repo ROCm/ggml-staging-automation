@@ -59,7 +59,11 @@ computing full-vocabulary likelihood one token at a time. Contexts above a
 GGUF's declared training context retain an unsupported diagnostic and count as
 failed checks, as do contexts that exhaust the selected device. An expected
 failure must be declared for that check, backend and context; otherwise it
-fails CI.
+fails CI. The evaluator records model-context, model-execution and
+resource-exhaustion failures separately from infrastructure errors. Only the
+first three can match an explicit expected failure; unavailable devices,
+invalid artifacts and incomplete comparisons remain fatal, including for
+report-only models.
 
 The context sweep runs `pp N` and `tg 256 @ d (N - 256)` as separate
 measurements. llama-bench's depth is prefetched outside the timed decode

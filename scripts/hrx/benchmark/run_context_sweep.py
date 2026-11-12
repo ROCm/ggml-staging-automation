@@ -23,7 +23,12 @@ from pathlib import Path
 from typing import Any
 
 from benchmark_output import append_batch_log, atomic_write_json, merge_benchmark_output
-from benchmark_outcomes import aggregate_status, classify_outcome, is_unexpected
+from benchmark_outcomes import (
+    MODEL_FAILURE_KINDS,
+    aggregate_status,
+    classify_outcome,
+    is_unexpected,
+)
 from benchmark_provenance import source_revisions
 from run_batched_benchmark import ModelSpec, load_manifest
 
@@ -151,8 +156,10 @@ def run_measurement(
         "warmup_duration_s": round(warmup_duration, 3),
         "context_length": context_length, "model_context": model_context,
         "prompt_tokens": prompt, "decode_tokens": generated,
-        "decode_history_tokens": depth, "warmups": "llama-bench default warmup enabled",
-        "repetitions": args.repetitions, "warmups": 1,
+        "decode_history_tokens": depth,
+        "llama_bench_default_warmup": True,
+        "explicit_exact_workload_warmups": 1,
+        "repetitions": args.repetitions,
     }
     if not timed_out and exit_code == 0:
         try:
@@ -186,15 +193,18 @@ def run_measurement(
         combined = (stdout + "\n" + stderr).lower()
         if timed_out:
             error, failure_kind = f"timed out after {args.run_timeout_seconds} seconds", "execution"
-        elif exit_code in (-9, -11) or any(term in combined for term in ("out of memory", "allocation failed", "failed to allocate", "out of device memory", "std::bad_alloc")):
+        elif exit_code == -9 or any(term in combined for term in ("out of memory", "allocation failed", "failed to allocate", "out of device memory", "std::bad_alloc")):
             error, failure_kind = f"llama-bench exited {exit_code} after allocation failure", "resource-exhausted"
-        elif any(term in combined for term in ("no matching device", "device not found", "unknown device", "failed to initialize backend")):
+        elif any(term in combined for term in ("no matching device", "device not found", "unknown device", "failed to initialize backend", "unsupported device")):
             error, failure_kind = f"backend device unavailable: {device}", "infrastructure"
-        elif "unsupported device" in combined:
-            error, failure_kind = f"backend device unavailable: {device}", "unsupported-device"
-            measurement["status"] = "unsupported"
+        elif any(term in combined for term in (
+            "prefill failed", "decode failed", "failed to decode",
+            "llama_decode failed", "failed to evaluate", "evaluation failed",
+            "failed to compute", "graph compute failed", "nonfinite", "non-finite",
+        )):
+            error, failure_kind = f"model execution failed: llama-bench exited {exit_code}", "model-execution"
         else:
-            error, failure_kind = f"llama-bench exited with status {exit_code}", "execution"
+            error, failure_kind = f"llama-bench exited with status {exit_code}", "infrastructure"
         measurement.update({"error": error, "failure_kind": failure_kind})
     return measurement
 
@@ -258,6 +268,7 @@ def run(args: argparse.Namespace) -> int:
                     }
                     outcome = classify_outcome(
                         "fail", expectation, expected_failure_allowed=False,
+                        infrastructure_failure=True,
                     )
                     by_backend[backend] = {
                         "prefill": dict(measurement), "decode": dict(measurement),
@@ -298,15 +309,19 @@ def run(args: argparse.Namespace) -> int:
                         measurement for measurement in measurements.values()
                         if measurement["status"] != "ok"
                     ]
+                    failure_kinds = [
+                        measurement.get("failure_kind") for measurement in failed_measurements
+                    ]
                     expected_failure_allowed = all(
-                        measurement.get("failure_kind") in {
-                            "model-context", "resource-exhausted", "unsupported-device",
-                        }
-                        for measurement in failed_measurements
+                        kind in MODEL_FAILURE_KINDS for kind in failure_kinds
+                    )
+                    infrastructure_failure = any(
+                        kind not in MODEL_FAILURE_KINDS for kind in failure_kinds
                     )
                     outcome = classify_outcome(
                         raw_result, expectation,
                         expected_failure_allowed=expected_failure_allowed,
+                        infrastructure_failure=infrastructure_failure,
                     )
                     measurements["result"] = raw_result
                     measurements["outcome"] = outcome

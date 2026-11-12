@@ -14,11 +14,47 @@
 #include <iostream>
 #include <iterator>
 #include <limits>
+#include <new>
 #include <stdexcept>
 #include <string>
 #include <vector>
 
 namespace {
+
+class BenchmarkFailure : public std::runtime_error {
+public:
+    BenchmarkFailure(const std::string & kind, const std::string & message)
+        : std::runtime_error(message), kind(kind) {}
+
+    const std::string kind;
+};
+
+std::string json_escape(const std::string & value) {
+    std::string escaped;
+    for (const unsigned char character : value) {
+        switch (character) {
+            case '"': escaped += "\\\""; break;
+            case '\\': escaped += "\\\\"; break;
+            case '\b': escaped += "\\b"; break;
+            case '\f': escaped += "\\f"; break;
+            case '\n': escaped += "\\n"; break;
+            case '\r': escaped += "\\r"; break;
+            case '\t': escaped += "\\t"; break;
+            default:
+                if (character < 0x20) {
+                    escaped += '?';
+                } else {
+                    escaped += static_cast<char>(character);
+                }
+        }
+    }
+    return escaped;
+}
+
+void print_failure(const std::string & kind, const std::string & reason) {
+    std::cout << "{\"status\":\"failed\",\"failure_kind\":\"" << json_escape(kind)
+              << "\",\"reason\":\"" << json_escape(reason) << "\"}\n";
+}
 
 std::string read_file(const std::string & path) {
     std::ifstream input(path, std::ios::binary);
@@ -88,13 +124,13 @@ void inspect(const std::string & model_path) {
 double negative_log_likelihood(const float * logits, int32_t vocab_size, llama_token target,
                                int32_t position) {
     if (!logits || target < 0 || target >= vocab_size) {
-        throw std::runtime_error("invalid logits or target at token position " + std::to_string(position));
+        throw BenchmarkFailure("model-execution", "invalid logits or target at token position " + std::to_string(position));
     }
     double maximum = -std::numeric_limits<double>::infinity();
     for (int32_t i = 0; i < vocab_size; ++i) {
         const double value = logits[i];
         if (!std::isfinite(value)) {
-            throw std::runtime_error("nonfinite vocabulary logit at token position " + std::to_string(position));
+            throw BenchmarkFailure("model-execution", "nonfinite vocabulary logit at token position " + std::to_string(position));
         }
         maximum = std::max(maximum, value);
     }
@@ -104,7 +140,7 @@ double negative_log_likelihood(const float * logits, int32_t vocab_size, llama_t
     }
     const double nll = maximum + std::log(exponential_sum) - logits[target];
     if (!std::isfinite(nll)) {
-        throw std::runtime_error("nonfinite token likelihood at position " + std::to_string(position));
+        throw BenchmarkFailure("model-execution", "nonfinite token likelihood at position " + std::to_string(position));
     }
     return nll;
 }
@@ -123,7 +159,7 @@ void prefill(llama_context * context, llama_batch & batch, const std::vector<lla
             batch.logits[i] = position == count - 1 ? 1 : 0;
         }
         if (llama_decode(context, batch) != 0) {
-            throw std::runtime_error("prefill failed at token offset " + std::to_string(offset));
+            throw BenchmarkFailure("model-execution", "prefill failed at token offset " + std::to_string(offset));
         }
     }
 }
@@ -136,7 +172,7 @@ void run(const std::string & model_path, const std::string & corpus_path,
 
     const int32_t training_context = read_training_context(model_path);
     if (context_length > training_context) {
-        std::cout << "{\"status\":\"unsupported\",\"reason\":\"requested context exceeds model training context\","
+        std::cout << "{\"status\":\"unsupported\",\"failure_kind\":\"model-context\",\"reason\":\"requested context exceeds model training context\","
                   << "\"context_length\":" << context_length << ",\"model_context\":" << training_context << "}\n";
         return;
     }
@@ -153,7 +189,7 @@ void run(const std::string & model_path, const std::string & corpus_path,
     model_params.devices = devices;
     llama_model * model = llama_model_load_from_file(model_path.c_str(), model_params);
     if (!model) {
-        throw std::runtime_error("model load failed");
+        throw BenchmarkFailure("model-execution", "model load failed on the selected backend");
     }
 
     const llama_vocab * vocab = llama_model_get_vocab(model);
@@ -175,10 +211,10 @@ void run(const std::string & model_path, const std::string & corpus_path,
     context_params.no_perf = true;
     llama_context * context = llama_init_from_model(model, context_params);
     if (!context) {
-        throw std::runtime_error("context allocation failed");
+        throw BenchmarkFailure("resource-exhausted", "context allocation failed");
     }
     if (llama_n_ctx(context) != static_cast<uint32_t>(context_length)) {
-        throw std::runtime_error("runtime context differs from requested context");
+        throw BenchmarkFailure("model-context", "runtime context differs from requested context");
     }
 
     constexpr int32_t batch_size = 2048;
@@ -204,7 +240,7 @@ void run(const std::string & model_path, const std::string & corpus_path,
             batch.seq_id[0][0] = 0;
             batch.logits[0] = 1;
             if (llama_decode(context, batch) != 0) {
-                throw std::runtime_error("teacher-forced decode failed at token position " + std::to_string(position));
+                throw BenchmarkFailure("model-execution", "teacher-forced decode failed at token position " + std::to_string(position));
             }
             logits = llama_get_logits_ith(context, -1);
         }
@@ -213,7 +249,7 @@ void run(const std::string & model_path, const std::string & corpus_path,
     const double mean_nll = total_nll / score_tokens;
     const double perplexity = std::exp(mean_nll);
     if (!std::isfinite(perplexity)) {
-        throw std::runtime_error("perplexity is nonfinite");
+        throw BenchmarkFailure("model-execution", "perplexity is nonfinite");
     }
     std::cout << std::setprecision(17)
               << "{\"status\":\"ok\",\"context_length\":" << context_length
@@ -247,8 +283,14 @@ int main(int argc, char ** argv) {
     try {
         run(argv[1], argv[2], argv[3], std::stoi(argv[4]), std::stoi(argv[5]));
         return 0;
+    } catch (const std::bad_alloc & error) {
+        print_failure("resource-exhausted", error.what());
+        return 1;
+    } catch (const BenchmarkFailure & error) {
+        print_failure(error.kind, error.what());
+        return 1;
     } catch (const std::exception & error) {
-        std::cerr << "ERROR " << error.what() << '\n';
+        print_failure("infrastructure", error.what());
         return 1;
     }
 }

@@ -7,6 +7,10 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
+MODEL_FAILURE_KINDS = frozenset({
+    "model-context", "model-execution", "resource-exhausted", "numerical",
+})
+
 
 def aggregate_status(statuses: Iterable[str]) -> str:
     """Return fail unless every requested measurement completed successfully."""
@@ -17,9 +21,15 @@ def aggregate_status(statuses: Iterable[str]) -> str:
 
 
 def classify_outcome(
-    result: str, expectation: str, *, expected_failure_allowed: bool = True,
+    result: str,
+    expectation: str,
+    *,
+    expected_failure_allowed: bool = True,
+    infrastructure_failure: bool = False,
 ) -> str:
     """Apply the manifest's pass/fail/report-only expectation to one mode."""
+    if infrastructure_failure:
+        return "FAIL"
     if expectation == "report-only":
         return "REPORT_ONLY"
     if expectation == "fail":
