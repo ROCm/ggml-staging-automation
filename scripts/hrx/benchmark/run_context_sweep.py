@@ -288,7 +288,7 @@ def run(args: argparse.Namespace) -> int:
                         ),
                     }
                 row["contexts"][str(context_length)] = by_backend
-                for backend, measurements in by_backend.items():
+                for backend, measurements in list(by_backend.items()):
                     expectation = spec.expectation("context-sweep", backend, str(context_length))
                     row["expected_results"][backend][str(context_length)] = expectation
                     raw_result = aggregate_status(
@@ -308,8 +308,8 @@ def run(args: argparse.Namespace) -> int:
                         raw_result, expectation,
                         expected_failure_allowed=expected_failure_allowed,
                     )
-                    by_backend["result"] = raw_result
-                    by_backend["outcome"] = outcome
+                    measurements["result"] = raw_result
+                    measurements["outcome"] = outcome
                     unexpected = unexpected or is_unexpected(outcome)
                 log(f"{spec.id} context={context_length}: HRX pp={by_backend['hrx']['prefill'].get('tokens_per_second')} tg={by_backend['hrx']['decode'].get('tokens_per_second')}; Vulkan pp={by_backend['vulkan']['prefill'].get('tokens_per_second')} tg={by_backend['vulkan']['decode'].get('tokens_per_second')}")
         document["models"].append(row)

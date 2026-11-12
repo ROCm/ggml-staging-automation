@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import sys
 import json
+import argparse
 import tempfile
 import unittest
 from pathlib import Path
@@ -18,6 +19,7 @@ from benchmark_outcomes import aggregate_status, classify_outcome
 import run_context_sweep
 import run_perplexity_benchmark
 from run_batched_benchmark import load_manifest
+from run_batched_benchmark import ModelSpec
 
 
 class LongContextOutcomeTests(unittest.TestCase):
@@ -49,6 +51,61 @@ class LongContextOutcomeTests(unittest.TestCase):
             resolved = load_manifest(fixture).models[0]
         self.assertEqual(resolved.expectation("context-sweep", "hrx", "65536"), "fail")
         self.assertEqual(resolved.expectation("context-sweep", "hrx", "32768"), "pass")
+
+    def test_context_sweep_records_per_context_xfail_and_failure_outcomes(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            models_dir = root / "models"
+            model_path = models_dir / "Model" / "model.gguf"
+            model_path.parent.mkdir(parents=True)
+            model_path.touch()
+            llama_bench = root / "llama-bench"
+            inspector = root / "inspector"
+            llama_bench.touch()
+            inspector.touch()
+            spec = ModelSpec(
+                id="model", tier="all",
+                expected_results={"context-sweep": {
+                    "hrx": {"32": "fail", "64": "fail"},
+                }},
+                test_modes={"context-sweep": ("32", "64")},
+                name="Model", repository="owner/model", revision="rev",
+                filename="model.gguf", size_bytes=1, sha256="0" * 64,
+            )
+            args = argparse.Namespace(
+                llama_bench=llama_bench, context_inspector=inspector,
+                model_manifest=root / "manifest.json", models_dir=models_dir,
+                models=["Model"], output=root / "out.json",
+                hrx_log=root / "hrx.log", vulkan_log=root / "vulkan.log",
+                hrx_device="HRX0", vulkan_device="Vulkan0",
+                context_lengths=(32, 64), decode_tokens=16, repetitions=1,
+                batch_size=32, ubatch_size=16, gpu_layers=99, flash_attn="on",
+                run_timeout_seconds=10, batched=False, batch_number=None,
+            )
+
+            def fake_measurement(_binary, _model, _device, context, _model_context, kind, _args, _log):
+                if context == 32:
+                    return {"status": "unsupported", "failure_kind": "model-context",
+                            "reason": "model context limit"}
+                if kind == "decode" and _device == "HRX0":
+                    return {"status": "unsupported", "failure_kind": "model-context",
+                            "reason": "model context limit"}
+                if kind == "decode" and _device == "Vulkan0":
+                    return {"status": "failed", "failure_kind": "infrastructure",
+                            "error": "backend unavailable"}
+                return {"status": "ok", "tokens_per_second": 1.0}
+
+            with patch.object(run_context_sweep, "resolve_models", return_value=[(spec, model_path)]), \
+                    patch.object(run_context_sweep, "inspect_model", return_value=(128, None)), \
+                    patch.object(run_context_sweep, "run_measurement", side_effect=fake_measurement):
+                self.assertEqual(run_context_sweep.run(args), 1)
+
+            document = json.loads(args.output.read_text(encoding="utf-8"))
+            model = document["models"][0]
+            self.assertEqual(model["contexts"]["32"]["hrx"]["result"], "fail")
+            self.assertEqual(model["contexts"]["32"]["hrx"]["outcome"], "XFAIL")
+            self.assertEqual(model["contexts"]["64"]["hrx"]["outcome"], "XFAIL")
+            self.assertEqual(model["contexts"]["64"]["vulkan"]["outcome"], "FAIL")
 
     def test_context_sweep_rejects_empty_contexts_and_invalid_workload_sizes(self) -> None:
         for invalid in (
