@@ -17,6 +17,26 @@ on:
         description: 'JSON list of benchmark IDs to skip, e.g. ["lemonade-benchmark"] or ["perplexity"].'
         type: string
         default: '[]'
+      include_long_context:
+        description: Run long-context perplexity and llama-bench context sweeps.
+        type: boolean
+        default: false
+      long_context_lengths:
+        description: Comma-separated token counts used by both long-context checks.
+        type: string
+        default: '32768,65536,131072,262144'
+      long_context_scored_tokens:
+        description: Continuation tokens scored at each long PPL context.
+        type: number
+        default: 1024
+      context_sweep_decode_tokens:
+        description: Tokens measured after the populated llama-bench decode history.
+        type: number
+        default: 256
+      context_sweep_repetitions:
+        description: Measured repetitions per llama-bench prefill/decode case.
+        type: number
+        default: 3
       name:
         type: string
         default: Release tests
@@ -163,7 +183,7 @@ jobs:
             --lemonade-release benchmarks/hrx/lemonade_release.json
 
       - name: Fetch perplexity corpus
-        if: ${{ inputs.validation_mode != 'tests-only' && !contains(fromJSON(inputs.skip_benchmarks), 'perplexity') }}
+        if: ${{ inputs.validation_mode != 'tests-only' && (!contains(fromJSON(inputs.skip_benchmarks), 'perplexity') || (inputs.include_long_context && !contains(fromJSON(inputs.skip_benchmarks), 'long-context-perplexity'))) }}
         run: |
           python3 scripts/hrx/benchmark/fetch_wikitext2.py \
             --output-dir "$PWD/perplexity-corpus"
@@ -176,8 +196,17 @@ jobs:
           SKIP_BENCHMARKS: ${{ inputs.skip_benchmarks }}
           BENCHMARK_MODEL_IDS: ${{ inputs.model_ids }}
           BENCHMARK_MODEL_TIER: ${{ inputs.model_tier }}
+          INCLUDE_LONG_CONTEXT: ${{ inputs.include_long_context }}
+          LONG_CONTEXT_LENGTHS: ${{ inputs.long_context_lengths }}
+          LONG_CONTEXT_SCORED_TOKENS: ${{ inputs.long_context_scored_tokens }}
+          CONTEXT_SWEEP_DECODE_TOKENS: ${{ inputs.context_sweep_decode_tokens }}
+          CONTEXT_SWEEP_REPETITIONS: ${{ inputs.context_sweep_repetitions }}
         run: |
           set -euo pipefail
+          long_context_args=()
+          if [[ "$INCLUDE_LONG_CONTEXT" == "true" ]]; then
+            long_context_args+=(--include-long-context)
+          fi
           python3 scripts/hrx/benchmark/run_batched_benchmark.py \
             --benchmark-spec "$PWD/benchmarks/hrx/benchmark_spec.json" \
             --model-manifest "$PWD/benchmarks/hrx/model_manifest.json" \
@@ -185,7 +214,12 @@ jobs:
             --model-tier "$BENCHMARK_MODEL_TIER" \
             --model-ids "$BENCHMARK_MODEL_IDS" \
             --work-root "$RUNNER_TEMP/$BENCHMARK_STATE_NAME" \
-            --max-disk-gib 60
+            --max-disk-gib 60 \
+            --long-context-lengths "$LONG_CONTEXT_LENGTHS" \
+            --long-context-scored-tokens "$LONG_CONTEXT_SCORED_TOKENS" \
+            --context-sweep-decode-tokens "$CONTEXT_SWEEP_DECODE_TOKENS" \
+            --context-sweep-repetitions "$CONTEXT_SWEEP_REPETITIONS" \
+            "${long_context_args[@]}"
 
       - name: Remove perplexity corpus
         # The runners are self-hosted, so benchmark inputs are removed explicitly.
@@ -208,6 +242,20 @@ jobs:
             "$PWD/lemonade-benchmark/perplexity.json" \
             >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Write long-context perplexity report
+        if: ${{ inputs.validation_mode != 'tests-only' && inputs.include_long_context && !contains(fromJSON(inputs.skip_benchmarks), 'long-context-perplexity') }}
+        run: |
+          python3 scripts/hrx/benchmark/write_long_context_perplexity_report.py \
+            "$PWD/lemonade-benchmark/long-context-perplexity.json" \
+            >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Write context-sweep report
+        if: ${{ inputs.validation_mode != 'tests-only' && inputs.include_long_context && !contains(fromJSON(inputs.skip_benchmarks), 'context-sweep') }}
+        run: |
+          python3 scripts/hrx/benchmark/write_context_sweep_report.py \
+            "$PWD/lemonade-benchmark/context-sweep.json" \
+            >> "$GITHUB_STEP_SUMMARY"
+
       - name: Upload benchmark results
         if: ${{ always() && (steps.benchmark.outcome == 'success' || steps.benchmark.outcome == 'failure') }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -217,6 +265,8 @@ jobs:
             lemonade-benchmark/benchmark-hrx.json
             lemonade-benchmark/benchmark-vulkan.json
             lemonade-benchmark/perplexity.json
+            lemonade-benchmark/long-context-perplexity.json
+            lemonade-benchmark/context-sweep.json
             lemonade-benchmark/metadata.json
           if-no-files-found: error
           retention-days: 45
@@ -234,6 +284,10 @@ jobs:
             lemonade-benchmark-debug/responses-vulkan.jsonl
             lemonade-benchmark-debug/perplexity-hrx.log
             lemonade-benchmark-debug/perplexity-vulkan.log
+            lemonade-benchmark-debug/long-context-perplexity-hrx.log
+            lemonade-benchmark-debug/long-context-perplexity-vulkan.log
+            lemonade-benchmark-debug/context-sweep-hrx.log
+            lemonade-benchmark-debug/context-sweep-vulkan.log
           if-no-files-found: warn
 
       - name: Fail unexpected benchmark results

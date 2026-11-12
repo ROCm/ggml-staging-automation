@@ -44,6 +44,7 @@ from benchmark_output import (
     atomic_write_json,
     merge_benchmark_output,
 )
+from benchmark_provenance import source_revisions
 from run_batched_benchmark import ModelSpec, load_manifest
 
 
@@ -58,6 +59,8 @@ REGIMES = {
     "decode-like": {"name": "Decode like", "ctx": 512, "batch": 512,
                     "microbatch": 1, "chunks": 2},
 }
+
+DEFAULT_LONG_CONTEXTS = (32768, 65536, 131072, 262144)
 
 
 def numerical_verdict(hrx: dict, vulkan: dict, maximum: float) -> str:
@@ -225,6 +228,15 @@ def run_perplexity(
     elif missing_estimate:
         failure_kind = "invalid-measurement"
         error = "llama-perplexity did not print a valid finite positive PPL estimate"
+    elif not timed_out and exit_code != 0 and any(
+        term in output.lower()
+        for term in ("backend device is unavailable", "no matching device", "unknown device")
+    ):
+        measurement.update({
+            "status": "unsupported",
+            "reason": output.strip().splitlines()[-1] if output.strip() else "backend device unavailable",
+            "failure_kind": "unsupported-device",
+        })
     else:
         error = None
     succeeded = error is None
@@ -316,6 +328,9 @@ def evaluate_models(document: dict) -> bool:
 
 
 def run(args: argparse.Namespace) -> int:
+    if args.stream_perplexity is not None:
+        return run_streaming_perplexity(args)
+
     llama_perplexity = args.llama_perplexity.resolve()
     models_dir = args.models_dir.resolve()
     corpus_file = args.corpus_file.resolve()
@@ -447,9 +462,225 @@ def run(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_stream_measurement(
+    evaluator: Path,
+    model: ResolvedModel,
+    corpus_file: Path,
+    device: str,
+    context_length: int,
+    args: argparse.Namespace,
+    log_file: Path,
+) -> dict[str, Any]:
+    command = [
+        os.fspath(evaluator), os.fspath(model.path), os.fspath(corpus_file), device,
+        str(context_length), str(args.scored_tokens),
+    ]
+    log("++ " + shlex.join(command))
+    log_file.parent.mkdir(parents=True, exist_ok=True)
+    with log_file.open("a", encoding="utf-8") as handle:
+        handle.write(f"===== {model.spec.id} context={context_length} device={device} =====\n")
+        handle.write("++ " + shlex.join(command) + "\n")
+        handle.flush()
+        started = time.monotonic()
+        try:
+            result = subprocess.run(
+                command, text=True, encoding="utf-8", errors="replace",
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                timeout=args.run_timeout_seconds,
+            )
+            output = result.stdout
+            exit_code = result.returncode
+            timed_out = False
+        except subprocess.TimeoutExpired as exc:
+            output = exc.stdout or ""
+            if isinstance(output, bytes):
+                output = output.decode("utf-8", errors="replace")
+            exit_code = None
+            timed_out = True
+        duration_s = time.monotonic() - started
+        handle.write(output)
+        if not output.endswith("\n"):
+            handle.write("\n")
+        handle.flush()
+
+    measurement: dict[str, Any] = {
+        "status": "failed", "error": None, "failure_kind": None,
+        "exit_code": exit_code, "duration_s": round(duration_s, 3),
+        "ppl": None, "log": log_file.name, "command": command,
+    }
+    if not timed_out and exit_code == 0:
+        try:
+            result_document = json.loads(output.strip().splitlines()[-1])
+        except (IndexError, json.JSONDecodeError):
+            result_document = None
+        if isinstance(result_document, dict) and result_document.get("status") == "ok":
+            measurement.update({
+                "status": "ok",
+                "ppl": {"value": result_document["ppl"], "uncertainty": 0.0},
+                "mean_nll": result_document["mean_nll"],
+                "prefix_tokens": result_document["prefix_tokens"],
+                "scored_tokens": result_document["scored_tokens"],
+                "model_context": result_document["model_context"],
+                "vocab_size": result_document["vocab_size"],
+            })
+        elif isinstance(result_document, dict) and result_document.get("status") == "unsupported":
+            measurement.update({
+                "status": "unsupported",
+                "reason": result_document.get("reason"),
+                "model_context": result_document.get("model_context"),
+            })
+        else:
+            measurement.update({
+                "error": "streaming evaluator did not emit a valid result document",
+                "failure_kind": "invalid-measurement",
+            })
+    else:
+        lowered = output.lower()
+        if timed_out:
+            error = f"timed out after {args.run_timeout_seconds} seconds"
+            failure_kind = "execution"
+        elif exit_code in (-9, -11) or any(term in lowered for term in (
+            "out of memory", "allocation failed", "failed to allocate",
+            "out of device memory", "std::bad_alloc",
+        )):
+            error = f"streaming evaluator exited with status {exit_code} after an allocation failure"
+            failure_kind = "resource-exhausted"
+        else:
+            error = f"streaming evaluator exited with status {exit_code}"
+            failure_kind = "execution"
+        measurement.update({"error": error, "failure_kind": failure_kind})
+
+    return measurement
+
+
+def run_streaming_perplexity(args: argparse.Namespace) -> int:
+    """Measure bounded, teacher-forced PPL windows at long corpus prefixes."""
+    evaluator = args.stream_perplexity.resolve()
+    corpus_file = args.corpus_file.resolve()
+    models_dir = args.models_dir.resolve()
+    if not evaluator.is_file():
+        raise PerplexityBenchmarkError(f"Streaming evaluator is missing: {evaluator}")
+    if not corpus_file.is_file():
+        raise PerplexityBenchmarkError(f"Corpus file is missing: {corpus_file}")
+    corpus_sha256 = sha256_file(corpus_file)
+    models = resolve_models(args.model_manifest, models_dir, args.models)
+    contexts = args.context_lengths
+    if args.scored_tokens < 1 or any(length <= args.scored_tokens for length in contexts):
+        raise PerplexityBenchmarkError("each context length must exceed --scored-tokens")
+
+    output: dict[str, Any] = {
+        "schema_version": 1,
+        "source_revisions": source_revisions(),
+        "devices": {"hrx": args.hrx_device, "vulkan": args.vulkan_device},
+        "evaluator": os.fspath(evaluator),
+        "contexts": {
+            str(length): {"context_length": length, "scored_tokens": args.scored_tokens,
+                          "prefix_tokens": length - args.scored_tokens}
+            for length in contexts
+        },
+        "settings": {"max_perplexity_ratio": args.max_perplexity_ratio},
+        "corpus": {"name": corpus_file.name, "sha256": corpus_sha256,
+                   "bytes": corpus_file.stat().st_size},
+        "models": [],
+    }
+    logs = {"hrx": args.hrx_log, "vulkan": args.vulkan_log}
+    for path in logs.values():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if args.batched:
+            path.touch(exist_ok=True)
+        else:
+            path.write_text("", encoding="utf-8")
+
+    unexpected = False
+    for model in models:
+        row: dict[str, Any] = {
+            "model": model.spec.name, "model_id": model.spec.id,
+            "file": model.spec.filename, "model_sha256": model.spec.sha256,
+            "model_revision": model.spec.revision, "batch": args.batch_number,
+            "expected_results": {
+                backend: model.spec.expectation("long-context-perplexity", backend)
+                for backend in ("hrx", "vulkan")
+            },
+            "contexts": {},
+        }
+        backend_failed = {"hrx": False, "vulkan": False}
+        for context_length in contexts:
+            pair: dict[str, Any] = {}
+            for backend, device in (("hrx", args.hrx_device), ("vulkan", args.vulkan_device)):
+                active_log = logs[backend]
+                if args.batched:
+                    active_log = models_dir.parent / f"long-context-{backend}.log"
+                pair[backend] = _run_stream_measurement(
+                    evaluator, model, corpus_file, device, context_length,
+                    args, active_log,
+                )
+                measurement = pair[backend]
+                if measurement["status"] == "ok":
+                    log(f"{model.spec.name} context={context_length} {backend} PPL={measurement['ppl']['value']:.6f}")
+                elif measurement["status"] == "unsupported":
+                    log(f"{model.spec.name} context={context_length} {backend} unsupported: model context {measurement['model_context']}")
+                else:
+                    log(f"{model.spec.name} context={context_length} {backend} failed: {measurement['error']}")
+            hrx = pair["hrx"]
+            vulkan = pair["vulkan"]
+            if hrx["status"] == "ok" and vulkan["status"] == "ok":
+                ratio = hrx["ppl"]["value"] / vulkan["ppl"]["value"]
+                verdict = "fail" if ratio > args.max_perplexity_ratio else "pass"
+            else:
+                ratio = None
+                verdict = "unavailable"
+            pair["ratio"] = ratio
+            pair["numerical_verdict"] = verdict
+            row["contexts"][str(context_length)] = pair
+
+            backend_failed["hrx"] = (
+                backend_failed["hrx"] or hrx["status"] == "failed" or verdict == "fail"
+            )
+            backend_failed["vulkan"] = backend_failed["vulkan"] or vulkan["status"] == "failed"
+
+        hrx_statuses = [pair["hrx"]["status"] for pair in row["contexts"].values()]
+        vulkan_statuses = [pair["vulkan"]["status"] for pair in row["contexts"].values()]
+        row["result"] = "unsupported" if all(status == "unsupported" for status in hrx_statuses) else ("fail" if "failed" in hrx_statuses or any(pair["numerical_verdict"] == "fail" for pair in row["contexts"].values()) else "pass")
+        row["reference_result"] = "unsupported" if all(status == "unsupported" for status in vulkan_statuses) else ("fail" if "failed" in vulkan_statuses else "pass")
+        row["outcome"] = row["result"].upper()
+        row["reference_outcome"] = row["reference_result"].upper()
+        for backend, failed in backend_failed.items():
+            expectation = row["expected_results"][backend]
+            if expectation == "report-only":
+                continue
+            if expectation == "fail":
+                unexpected = unexpected or not failed
+            else:
+                unexpected = unexpected or failed
+        output["models"].append(row)
+
+    if args.batched:
+        if args.batch_number is None:
+            raise PerplexityBenchmarkError("--batch-number is required with --batched")
+        merged_count = merge_benchmark_output(args.output, output)
+        log(f"Merged {merged_count} model(s) from batch {args.batch_number} into {args.output}")
+        for backend, log_path in logs.items():
+            active_log = models_dir.parent / f"long-context-{backend}.log"
+            try:
+                append_batch_log(log_path, active_log, args.batch_number)
+            except OSError as exc:
+                log(f"Warning: could not append {backend} batch log: {exc}")
+    else:
+        atomic_write_json(args.output, output)
+        log(f"Wrote {args.output}")
+    return 1 if unexpected else 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--llama-perplexity", type=Path, required=True)
+    parser.add_argument("--llama-perplexity", type=Path)
+    parser.add_argument("--stream-perplexity", type=Path)
+    parser.add_argument(
+        "--context-lengths", type=lambda value: tuple(int(item) for item in value.split(",")),
+        default=DEFAULT_LONG_CONTEXTS,
+        help="Comma-separated long-context token counts for streaming PPL",
+    )
+    parser.add_argument("--scored-tokens", type=int, default=1024)
     parser.add_argument("--model-manifest", type=Path, required=True)
     parser.add_argument("--corpus-file", type=Path, required=True)
     parser.add_argument("--models-dir", type=Path, required=True)
@@ -470,6 +701,8 @@ def main() -> int:
     )
     parser.add_argument("--models", nargs="+", required=True)
     args = parser.parse_args()
+    if args.stream_perplexity is None and args.llama_perplexity is None:
+        parser.error("--llama-perplexity is required unless --stream-perplexity is set")
     ratio_is_finite = math.isfinite(args.max_perplexity_ratio)
     ratio_is_positive = args.max_perplexity_ratio > 0
     ratio_is_valid = ratio_is_finite and ratio_is_positive
@@ -481,6 +714,9 @@ def main() -> int:
         parser.error("--batch-number requires --batched")
     if args.batch_number is not None and args.batch_number < 1:
         parser.error("--batch-number must be a positive integer")
+    if (not args.context_lengths or tuple(sorted(set(args.context_lengths))) != args.context_lengths
+            or any(length <= 0 for length in args.context_lengths)):
+        parser.error("--context-lengths must be unique positive integers in increasing order")
     try:
         return run(args)
     except (

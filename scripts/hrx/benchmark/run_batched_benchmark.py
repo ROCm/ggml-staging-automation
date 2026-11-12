@@ -254,6 +254,8 @@ def load_manifest(
         supported_modes = {
             "lemonade-benchmark": {"default", "mtp:on", "mtp:off"},
             "perplexity": {"default"},
+            "long-context-perplexity": {"default"},
+            "context-sweep": {"default"},
         }
         for check, modes in raw_modes.items():
             if check not in supported_modes:
@@ -730,9 +732,22 @@ def build_benchmark_command(
     batch_number: int,
     models_dir: Path,
     resident: list[ModelSpec],
+    long_context_lengths: str = "32768,65536,131072,262144",
+    long_context_scored_tokens: int = 1024,
+    context_sweep_decode_tokens: int = 256,
+    context_sweep_repetitions: int = 3,
 ) -> list[str]:
+    overrides: list[str] = []
+    if benchmark.id == "long-context-perplexity":
+        overrides = ["--context-lengths", long_context_lengths,
+                     "--scored-tokens", str(long_context_scored_tokens)]
+    elif benchmark.id == "context-sweep":
+        overrides = ["--contexts", long_context_lengths,
+                     "--decode-tokens", str(context_sweep_decode_tokens),
+                     "--repetitions", str(context_sweep_repetitions)]
     return [
         *benchmark.argv,
+        *overrides,
         "--batched",
         "--batch-number",
         str(batch_number),
@@ -769,7 +784,15 @@ def run(args: argparse.Namespace) -> int:
             args.model_manifest, known_checks={benchmark.id for benchmark in benchmarks}
         )
         # Model expectations may refer to workers omitted from this run.
-        benchmarks = select_benchmarks(benchmarks, args.skip_benchmarks)
+        try:
+            skip_benchmarks = json.loads(args.skip_benchmarks)
+        except json.JSONDecodeError as exc:
+            raise BatchBenchmarkError("--skip-benchmarks must be a JSON array of IDs") from exc
+        if not isinstance(skip_benchmarks, list):
+            raise BatchBenchmarkError("--skip-benchmarks must be a JSON array of IDs")
+        if not args.include_long_context:
+            skip_benchmarks.extend(("long-context-perplexity", "context-sweep"))
+        benchmarks = select_benchmarks(benchmarks, json.dumps(skip_benchmarks))
         log(f"Selected benchmarks: {', '.join(benchmark.id for benchmark in benchmarks)}")
         selected = select_models(manifest, args.model_tier, args.model_ids)
         work_root = prepare_work_root(args.work_root)
@@ -821,6 +844,10 @@ def run(args: argparse.Namespace) -> int:
                             batch_number=batch_number,
                             models_dir=models_dir,
                             resident=resident,
+                            long_context_lengths=args.long_context_lengths,
+                            long_context_scored_tokens=args.long_context_scored_tokens,
+                            context_sweep_decode_tokens=args.context_sweep_decode_tokens,
+                            context_sweep_repetitions=args.context_sweep_repetitions,
                         )
                         log("++ " + shlex.join(command))
                         try:
@@ -900,6 +927,19 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default="[]",
         help='JSON array of benchmark IDs to skip, e.g. ["perplexity"]; default: []',
     )
+    parser.add_argument(
+        "--include-long-context",
+        action="store_true",
+        help="Run long-context perplexity and llama-bench sweeps in addition to short checks",
+    )
+    parser.add_argument(
+        "--long-context-lengths",
+        default="32768,65536,131072,262144",
+        help="Comma-separated context sizes used by both long-context checks",
+    )
+    parser.add_argument("--long-context-scored-tokens", type=int, default=1024)
+    parser.add_argument("--context-sweep-decode-tokens", type=int, default=256)
+    parser.add_argument("--context-sweep-repetitions", type=int, default=3)
     parser.add_argument("--model-manifest", type=Path, required=True)
     parser.add_argument("--model-tier", default="single", metavar="TIER")
     parser.add_argument(
@@ -908,7 +948,21 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--work-root", type=Path, required=True)
     parser.add_argument("--max-disk-gib", type=float, default=60.0)
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    try:
+        contexts = tuple(int(value) for value in args.long_context_lengths.split(","))
+    except ValueError:
+        parser.error("--long-context-lengths must be comma-separated integers")
+    if (not contexts or tuple(sorted(set(contexts))) != contexts
+            or any(value <= 0 for value in contexts)):
+        parser.error("--long-context-lengths must be unique positive integers in increasing order")
+    if args.long_context_scored_tokens < 1 or any(value <= args.long_context_scored_tokens for value in contexts):
+        parser.error("each context length must exceed --long-context-scored-tokens")
+    if args.context_sweep_decode_tokens < 1 or any(value <= args.context_sweep_decode_tokens for value in contexts):
+        parser.error("each context length must exceed --context-sweep-decode-tokens")
+    if args.context_sweep_repetitions < 1:
+        parser.error("--context-sweep-repetitions must be positive")
+    return args
 
 
 def main(argv: list[str] | None = None) -> int:

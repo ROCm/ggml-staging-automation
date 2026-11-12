@@ -39,6 +39,44 @@
         "--vulkan-log",
         "lemonade-benchmark-debug/perplexity-vulkan.log"
       ]
+    },
+    {
+      "id": "long-context-perplexity",
+      "argv": [
+        "python3",
+        "scripts/hrx/benchmark/run_perplexity_benchmark.py",
+        "--model-manifest",
+        "benchmarks/hrx/model_manifest.json",
+        "--corpus-file",
+        "perplexity-corpus/wiki.test.raw",
+        "--stream-perplexity",
+        "release/benchmark-package/bin/hrx-stream-perplexity",
+        "--output",
+        "lemonade-benchmark/long-context-perplexity.json",
+        "--hrx-log",
+        "lemonade-benchmark-debug/long-context-perplexity-hrx.log",
+        "--vulkan-log",
+        "lemonade-benchmark-debug/long-context-perplexity-vulkan.log"
+      ]
+    },
+    {
+      "id": "context-sweep",
+      "argv": [
+        "python3",
+        "scripts/hrx/benchmark/run_context_sweep.py",
+        "--model-manifest",
+        "benchmarks/hrx/model_manifest.json",
+        "--llama-bench",
+        "release/benchmark-package/bin/llama-bench",
+        "--context-inspector",
+        "release/benchmark-package/bin/hrx-stream-perplexity",
+        "--output",
+        "lemonade-benchmark/context-sweep.json",
+        "--hrx-log",
+        "lemonade-benchmark-debug/context-sweep-hrx.log",
+        "--vulkan-log",
+        "lemonade-benchmark-debug/context-sweep-vulkan.log"
+      ]
     }
   ]
 }

@@ -167,6 +167,21 @@ def build_llama_cpp(
         )
         if vulkan_sdk_dir is not None:
             copy_vulkan_loader(vulkan_sdk_dir, install_dir / "lib")
+        # The long-context PPL evaluator keeps only one vocabulary-logit row in
+        # memory. Build and install it beside llama-perplexity so benchmark
+        # packages use the same pinned llama.cpp and backend libraries.
+        evaluator_build_dir = build_dir.parent / "hrx-stream-perplexity-build"
+        run([
+            "cmake",
+            "-S",
+            REPO_ROOT / "scripts" / "hrx" / "benchmark" / "stream_perplexity",
+            "-B",
+            evaluator_build_dir,
+            f"-DCMAKE_PREFIX_PATH={install_dir}",
+            f"-DCMAKE_INSTALL_PREFIX={install_dir}",
+        ], env=env)
+        run(["cmake", "--build", evaluator_build_dir, "--target", "hrx-stream-perplexity"], env=env)
+        run(["cmake", "--install", evaluator_build_dir, "--prefix", install_dir], env=env)
 
 
 def main() -> int:

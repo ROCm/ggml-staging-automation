@@ -21,6 +21,26 @@ on:
         description: 'JSON list of benchmark IDs to skip, e.g. ["lemonade-benchmark"] or ["perplexity"].'
         type: string
         default: '[]'
+      include_long_context:
+        description: Run long-context perplexity and llama-bench context sweeps.
+        type: boolean
+        default: false
+      long_context_lengths:
+        description: Comma-separated token counts used by both long-context checks.
+        type: string
+        default: '32768,65536,131072,262144'
+      long_context_scored_tokens:
+        description: Continuation tokens scored at each long PPL context.
+        type: number
+        default: 1024
+      context_sweep_decode_tokens:
+        description: Tokens measured after the populated llama-bench decode history.
+        type: number
+        default: 256
+      context_sweep_repetitions:
+        description: Measured repetitions per llama-bench prefill/decode case.
+        type: number
+        default: 3
       model_ids:
         description: 'JSON array of exact model IDs, including select-only models; overrides model_tier when non-empty.'
         type: string
@@ -98,4 +118,9 @@ jobs:
       model_tier: ${{ needs.select_models.outputs.model_tier }}
       model_ids: ${{ inputs.model_ids || '[]' }}
       skip_benchmarks: ${{ inputs.skip_benchmarks || '[]' }}
+      include_long_context: ${{ inputs.include_long_context || false }}
+      long_context_lengths: ${{ inputs.long_context_lengths || '32768,65536,131072,262144' }}
+      long_context_scored_tokens: ${{ inputs.long_context_scored_tokens || 1024 }}
+      context_sweep_decode_tokens: ${{ inputs.context_sweep_decode_tokens || 256 }}
+      context_sweep_repetitions: ${{ inputs.context_sweep_repetitions || 3 }}
       validation_mode: ${{ inputs.validation_mode || 'tests-and-benchmarks' }}
