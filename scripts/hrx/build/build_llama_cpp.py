@@ -167,6 +167,8 @@ def build_llama_cpp(
         )
         if vulkan_sdk_dir is not None:
             copy_vulkan_loader(vulkan_sdk_dir, install_dir / "lib")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     add_common_path_args(parser)
