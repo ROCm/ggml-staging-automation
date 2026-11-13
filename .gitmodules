@@ -5,4 +5,4 @@
 [submodule "llama.cpp"]
 	path = llama.cpp
 	url = https://github.com/AaronStGeorge/llama.cpp.git
-	branch = fix-bump-pr-181-2
+	branch = fix-bump-pr-181-3
