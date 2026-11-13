@@ -21,18 +21,6 @@ on:
         description: 'JSON benchmark IDs to run, e.g. ["context-sweep"].'
         type: string
         default: '["lemonade-benchmark","perplexity"]'
-      long_context_lengths:
-        description: Comma-separated context-sweep token counts.
-        type: string
-        default: '32768,65536,131072,262144'
-      context_sweep_decode_tokens:
-        description: Tokens measured after the populated llama-bench decode history.
-        type: number
-        default: 256
-      context_sweep_repetitions:
-        description: Measured repetitions per llama-bench prefill/decode case.
-        type: number
-        default: 3
       model_ids:
         description: 'JSON array of exact model IDs, including select-only models; overrides model_tier when non-empty.'
         type: string
@@ -110,7 +98,4 @@ jobs:
       model_tier: ${{ needs.select_models.outputs.model_tier }}
       model_ids: ${{ inputs.model_ids || '[]' }}
       include_benchmarks: ${{ inputs.include_benchmarks || '["lemonade-benchmark","perplexity"]' }}
-      long_context_lengths: ${{ inputs.long_context_lengths || '32768,65536,131072,262144' }}
-      context_sweep_decode_tokens: ${{ inputs.context_sweep_decode_tokens || 256 }}
-      context_sweep_repetitions: ${{ inputs.context_sweep_repetitions || 3 }}
       validation_mode: ${{ inputs.validation_mode || 'tests-and-benchmarks' }}

@@ -741,18 +741,9 @@ def build_benchmark_command(
     batch_number: int,
     models_dir: Path,
     resident: list[ModelSpec],
-    long_context_lengths: str = "32768,65536,131072,262144",
-    context_sweep_decode_tokens: int = 256,
-    context_sweep_repetitions: int = 3,
 ) -> list[str]:
-    overrides: list[str] = []
-    if benchmark.id == "context-sweep":
-        overrides = ["--contexts", long_context_lengths,
-                     "--decode-tokens", str(context_sweep_decode_tokens),
-                     "--repetitions", str(context_sweep_repetitions)]
     return [
         *benchmark.argv,
-        *overrides,
         "--batched",
         "--batch-number",
         str(batch_number),
@@ -841,9 +832,6 @@ def run(args: argparse.Namespace) -> int:
                             batch_number=batch_number,
                             models_dir=models_dir,
                             resident=resident,
-                            long_context_lengths=args.long_context_lengths,
-                            context_sweep_decode_tokens=args.context_sweep_decode_tokens,
-                            context_sweep_repetitions=args.context_sweep_repetitions,
                         )
                         log("++ " + shlex.join(command))
                         try:
@@ -923,13 +911,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default='["lemonade-benchmark","perplexity"]',
         help='JSON array of benchmark IDs to run; default: ["lemonade-benchmark","perplexity"]',
     )
-    parser.add_argument(
-        "--long-context-lengths",
-        default="32768,65536,131072,262144",
-        help="Comma-separated context sizes used by the llama-bench context sweep",
-    )
-    parser.add_argument("--context-sweep-decode-tokens", type=int, default=256)
-    parser.add_argument("--context-sweep-repetitions", type=int, default=3)
     parser.add_argument("--model-manifest", type=Path, required=True)
     parser.add_argument("--model-tier", default="single", metavar="TIER")
     parser.add_argument(
@@ -938,19 +919,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--work-root", type=Path, required=True)
     parser.add_argument("--max-disk-gib", type=float, default=60.0)
-    args = parser.parse_args(argv)
-    try:
-        contexts = tuple(int(value) for value in args.long_context_lengths.split(","))
-    except ValueError:
-        parser.error("--long-context-lengths must be comma-separated integers")
-    if (not contexts or tuple(sorted(set(contexts))) != contexts
-            or any(value <= 0 for value in contexts)):
-        parser.error("--long-context-lengths must be unique positive integers in increasing order")
-    if args.context_sweep_decode_tokens < 1 or any(value <= args.context_sweep_decode_tokens for value in contexts):
-        parser.error("each context length must exceed --context-sweep-decode-tokens")
-    if args.context_sweep_repetitions < 1:
-        parser.error("--context-sweep-repetitions must be positive")
-    return args
+    return parser.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> int:

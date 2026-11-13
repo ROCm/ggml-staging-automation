@@ -17,18 +17,6 @@ on:
         description: 'JSON benchmark IDs to run, e.g. ["context-sweep"].'
         type: string
         default: '["lemonade-benchmark","perplexity"]'
-      long_context_lengths:
-        description: Comma-separated context-sweep token counts.
-        type: string
-        default: '32768,65536,131072,262144'
-      context_sweep_decode_tokens:
-        description: Tokens measured after the populated llama-bench decode history.
-        type: number
-        default: 256
-      context_sweep_repetitions:
-        description: Measured repetitions per llama-bench prefill/decode case.
-        type: number
-        default: 3
       name:
         type: string
         default: Release tests
@@ -188,9 +176,6 @@ jobs:
           INCLUDE_BENCHMARKS: ${{ inputs.include_benchmarks }}
           BENCHMARK_MODEL_IDS: ${{ inputs.model_ids }}
           BENCHMARK_MODEL_TIER: ${{ inputs.model_tier }}
-          LONG_CONTEXT_LENGTHS: ${{ inputs.long_context_lengths }}
-          CONTEXT_SWEEP_DECODE_TOKENS: ${{ inputs.context_sweep_decode_tokens }}
-          CONTEXT_SWEEP_REPETITIONS: ${{ inputs.context_sweep_repetitions }}
         run: |
           set -euo pipefail
           python3 scripts/hrx/benchmark/run_batched_benchmark.py \
@@ -200,10 +185,7 @@ jobs:
             --model-tier "$BENCHMARK_MODEL_TIER" \
             --model-ids "$BENCHMARK_MODEL_IDS" \
             --work-root "$RUNNER_TEMP/$BENCHMARK_STATE_NAME" \
-            --max-disk-gib 60 \
-            --long-context-lengths "$LONG_CONTEXT_LENGTHS" \
-            --context-sweep-decode-tokens "$CONTEXT_SWEEP_DECODE_TOKENS" \
-            --context-sweep-repetitions "$CONTEXT_SWEEP_REPETITIONS"
+            --max-disk-gib 60
 
       - name: Remove perplexity corpus
         # The runners are self-hosted, so benchmark inputs are removed explicitly.
