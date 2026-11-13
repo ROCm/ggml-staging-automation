@@ -3,8 +3,8 @@
 # SPDX-License-Identifier: MIT
 """Render one combined perplexity artifact as one current-run comparison table.
 
-Each row shows the configured HRX/Vulkan estimates, their ratios and numerical
-verdicts, and the aggregate check. XFAIL and report-only checks
+Each row shows prefill-like and decode-like HRX/Vulkan estimates, their ratios
+and numerical verdicts, and the aggregate check. XFAIL and report-only checks
 never hide raw numerical failures. A failed Vulkan reference makes the check FAIL regardless
 of the HRX expectation. Failed measurements remain unavailable in the table;
 details below it identify the backend, regime, error kind, log, and model batch.
@@ -57,15 +57,13 @@ def format_report(document: dict[str, Any]) -> str:
     """Render complete model rows and their failure evidence from one artifact."""
     corpus = document["corpus"]
     settings = document["settings"]
-    regimes = document["regimes"]
     extra_args = settings["extra_args"]
     arguments = (
         " ".join(format_code(arg) for arg in extra_args)
         if extra_args else "_(none)_"
     )
     lines = [
-        "## HRX/Vulkan perplexity" if document.get("check_id") != "long-context-perplexity"
-        else "## HRX/Vulkan long-context perplexity",
+        "## HRX/Vulkan perplexity",
         "",
         f"**Corpus:** {format_code(corpus['name'])} "
         f"(sha256 {format_code(corpus['sha256'][:12])}) · "
@@ -81,32 +79,26 @@ def format_report(document: dict[str, Any]) -> str:
         )
     lines.extend([
         "",
-        ("The long-context run uses llama-perplexity with an 8192-token context, "
-         "which scores tokens after an approximately 4096-token prefix. "
-         if document.get("check_id") == "long-context-perplexity" else "")
-        + "Ratios are HRX PPL divided by Vulkan PPL; equality at the limit passes. "
+        "Ratios are HRX PPL divided by Vulkan PPL; equality at the limit passes. "
         "Numerical verdicts require valid measurements from both backends. "
         "`—` marks an unavailable measurement or comparison. The check applies "
-        "the HRX expectation once across all listed regimes; Vulkan failures are "
-        "always fatal. XFAIL and report-only checks leave measured verdicts visible.",
+        "the HRX expectation once across both regimes; Vulkan failures are always "
+        "fatal. XFAIL and report-only checks leave the measured numerical "
+        "verdicts visible.",
         "",
     ])
     if not document["models"]:
         return "\n".join([*lines, "No models were benchmarked."])
 
     lines.extend([
-        "| Model | " + " | ".join(
-            f"{regime['name']} HRX PPL | {regime['name']} Vulkan PPL | {regime['name']} ratio (verdict)"
-            for regime in regimes.values()
-        ) + " | Check |",
-        "| --- | " + " | ".join(
-            "---: | ---: | ---" for _ in regimes
-        ) + " | --- |",
+        "| Model | Prefill HRX PPL | Prefill Vulkan PPL | Prefill ratio (verdict) | "
+        "Decode HRX PPL | Decode Vulkan PPL | Decode ratio (verdict) | Check |",
+        "| --- | ---: | ---: | --- | ---: | ---: | --- | --- |",
     ])
     failures = []
     for row in document["models"]:
         cells = [format_code(row["model"])]
-        for regime_id in regimes:
+        for regime_id in ("prefill-like", "decode-like"):
             pair = row["regimes"][regime_id]
             cells.extend([
                 format_ppl(pair["hrx"]),

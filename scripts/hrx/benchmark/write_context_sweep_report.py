@@ -40,21 +40,25 @@ def format_report(document: dict[str, Any]) -> str:
         "",
         "Prefill uses a separate `pp N` run. Decode uses `tg T @ d (N − T)`: llama-bench "
         "prefills the history before starting the timer, then measures T generated tokens. The "
-        "combined `-pg` result is not used. Contexts above the GGUF-declared training context "
-        "retain an unsupported diagnostic and count as failed checks; hardware allocation failures "
+        "combined `-pg` result is not used. The sweep also attempts contexts above the "
+        "GGUF-declared context; these rows are marked below. Hardware allocation failures "
         "are failures. Only explicit context/backend `fail` expectations classify model failures "
         "as XFAIL; infrastructure failures are never excused.",
         "",
-        "| Model | Context | HRX pp tok/s | Vulkan pp tok/s | pp ratio | HRX tg tok/s | Vulkan tg tok/s | tg ratio | HRX outcome | Vulkan outcome |",
-        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |",
+        "| Model | Context | GGUF context | HRX pp tok/s | Vulkan pp tok/s | pp ratio | HRX tg tok/s | Vulkan tg tok/s | tg ratio | HRX outcome | Vulkan outcome |",
+        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |",
     ]
     failures = []
     for model in document["models"]:
+        declared_context = model["model_context"]
+        declared_context_text = f"{declared_context:,}" if declared_context is not None else "unknown"
         for context, backends in model["contexts"].items():
             hrx = backends["hrx"]
             vulkan = backends["vulkan"]
+            above_declared = declared_context is not None and int(context) > declared_context
             lines.append(
-                f"| {format_code(model['model'])} | {int(context):,} | "
+                f"| {format_code(model['model'])} | {int(context):,}{' (above)' if above_declared else ''} | "
+                f"{declared_context_text} | "
                 f"{_throughput(hrx['prefill'])} | {_throughput(vulkan['prefill'])} | "
                 f"{_ratio(hrx['prefill'], vulkan['prefill'])} | "
                 f"{_throughput(hrx['decode'])} | {_throughput(vulkan['decode'])} | "

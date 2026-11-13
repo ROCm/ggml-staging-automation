@@ -41,26 +41,6 @@
       ]
     },
     {
-      "id": "long-context-perplexity",
-      "argv": [
-        "python3",
-        "scripts/hrx/benchmark/run_perplexity_benchmark.py",
-        "--llama-perplexity",
-        "release/benchmark-package/bin/llama-perplexity",
-        "--long-context",
-        "--model-manifest",
-        "benchmarks/hrx/model_manifest.json",
-        "--corpus-file",
-        "perplexity-corpus/wiki.test.raw",
-        "--output",
-        "lemonade-benchmark/long-context-perplexity.json",
-        "--hrx-log",
-        "lemonade-benchmark-debug/long-context-perplexity-hrx.log",
-        "--vulkan-log",
-        "lemonade-benchmark-debug/long-context-perplexity-vulkan.log"
-      ]
-    },
-    {
       "id": "context-sweep",
       "argv": [
         "python3",

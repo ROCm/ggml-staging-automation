@@ -44,9 +44,6 @@ from benchmark_output import (
     atomic_write_json,
     merge_benchmark_output,
 )
-from benchmark_outcomes import (
-    aggregate_status,
-)
 from run_batched_benchmark import ModelSpec, load_manifest
 
 
@@ -60,11 +57,6 @@ REGIMES = {
                      "microbatch": 512, "chunks": 32},
     "decode-like": {"name": "Decode like", "ctx": 512, "batch": 512,
                     "microbatch": 1, "chunks": 2},
-}
-
-LONG_CONTEXT_REGIMES = {
-    "long-context": {"name": "Long context", "ctx": 8192, "batch": 512,
-                      "microbatch": 512, "chunks": 32},
 }
 
 
@@ -170,7 +162,7 @@ def run_perplexity(
 ) -> tuple[dict[str, Any], bool]:
     """Measure one model on one device and record the outcome as a row."""
     regime_id = phase.regime_id
-    regime = args.regimes[regime_id]
+    regime = REGIMES[regime_id]
     command = [
         os.fspath(llama_perplexity),
         *args.perplexity_arg,
@@ -233,15 +225,6 @@ def run_perplexity(
     elif missing_estimate:
         failure_kind = "invalid-measurement"
         error = "llama-perplexity did not print a valid finite positive PPL estimate"
-    elif not timed_out and exit_code != 0 and any(
-        term in output.lower()
-        for term in ("backend device is unavailable", "no matching device", "unknown device")
-    ):
-        measurement.update({
-            "status": "unsupported",
-            "reason": output.strip().splitlines()[-1] if output.strip() else "backend device unavailable",
-            "failure_kind": "unsupported-device",
-        })
     else:
         error = None
     succeeded = error is None
@@ -340,9 +323,7 @@ def run(args: argparse.Namespace) -> int:
         raise PerplexityBenchmarkError(f"Corpus file is missing: {corpus_file}")
     corpus_sha256 = sha256_file(corpus_file)
     models = resolve_models(args.model_manifest, models_dir, args.models)
-    regimes = LONG_CONTEXT_REGIMES if args.long_context else REGIMES
-    expectation_check = "long-context-perplexity" if args.long_context else "perplexity"
-    phase_specs = (
+    phases = (
         PerplexityPhase(
             name="HRX prefill-like",
             backend="hrx",
@@ -372,24 +353,11 @@ def run(args: argparse.Namespace) -> int:
             log=args.vulkan_log,
         ),
     )
-    phases = tuple(
-        PerplexityPhase(
-            name=f"{backend.upper()} {regime['name'].lower()}",
-            backend=backend,
-            device=args.hrx_device if backend == "hrx" else args.vulkan_device,
-            regime_id=regime_id,
-            log=args.hrx_log if backend == "hrx" else args.vulkan_log,
-        )
-        for regime_id, regime in regimes.items()
-        for backend in ("hrx", "vulkan")
-    ) if args.long_context else phase_specs
-    args.regimes = regimes
     batch_data = {
         "schema_version": 2,
-        "check_id": expectation_check,
         "devices": {"hrx": args.hrx_device, "vulkan": args.vulkan_device},
         "llama_perplexity": os.fspath(llama_perplexity),
-        "regimes": regimes,
+        "regimes": REGIMES,
         "settings": {
             "extra_args": list(args.perplexity_arg),
             "max_perplexity_ratio": args.max_perplexity_ratio,
@@ -403,10 +371,10 @@ def run(args: argparse.Namespace) -> int:
             {
                 "model": model.spec.name,
                 "file": model.spec.filename,
-                "expected_results": {backend: model.spec.expectation(expectation_check, backend)
+                "expected_results": {backend: model.spec.expectation("perplexity", backend)
                                      for backend in ("hrx", "vulkan")},
                 "batch": args.batch_number,
-                "regimes": {regime_id: {} for regime_id in regimes},
+                "regimes": {regime_id: {} for regime_id in REGIMES},
             }
             for model in models
         ],
@@ -479,10 +447,9 @@ def run(args: argparse.Namespace) -> int:
     return 0
 
 
-def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--llama-perplexity", type=Path, required=True)
-    parser.add_argument("--long-context", action="store_true")
     parser.add_argument("--model-manifest", type=Path, required=True)
     parser.add_argument("--corpus-file", type=Path, required=True)
     parser.add_argument("--models-dir", type=Path, required=True)
@@ -502,7 +469,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Extra argument forwarded to llama-perplexity (repeatable).",
     )
     parser.add_argument("--models", nargs="+", required=True)
-    args = parser.parse_args(argv)
+    args = parser.parse_args()
     ratio_is_finite = math.isfinite(args.max_perplexity_ratio)
     ratio_is_positive = args.max_perplexity_ratio > 0
     ratio_is_valid = ratio_is_finite and ratio_is_positive
@@ -514,14 +481,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         parser.error("--batch-number requires --batched")
     if args.batch_number is not None and args.batch_number < 1:
         parser.error("--batch-number must be a positive integer")
-    if not math.isfinite(args.run_timeout_seconds) or args.run_timeout_seconds <= 0:
-        parser.error("--run-timeout-seconds must be finite and positive")
-    return args
-
-
-def main() -> int:
     try:
-        return run(parse_args())
+        return run(args)
     except (
         OSError,
         RuntimeError,

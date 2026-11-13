@@ -49,34 +49,29 @@ disabled so each run processes the full prompt. The next scenario loads a fresh
 model. Perplexity remains one comparison per model, with both existing
 prefill-like and decode-like regimes; it does not exercise MTP.
 
-Long-context work is opt-in through `include_long_context` on the CI workflow
-or `--include-long-context` on `run_batched_benchmark.py`. It adds an
-`llama-perplexity` case with an 8192-token context, alongside the existing short
-perplexity cases. `llama-perplexity` scores the latter half of its context, so
-this case evaluates tokens after an approximately 4096-token prefix. A
-separate `llama-bench` prefill/decode sweep runs at 32K, 64K, 128K and 256K.
-Contexts above a GGUF's declared training context retain an unsupported
-diagnostic and count as failed checks, as do contexts that exhaust the selected
-device. An expected failure must be declared for that check and backend;
-otherwise it fails CI. Infrastructure failures and unavailable devices remain
-fatal, including for report-only models.
+The CI `include_benchmarks` input and runner `--include-benchmarks` option select
+benchmark IDs as a JSON array. The default is
+`["lemonade-benchmark","perplexity"]`; use `["context-sweep"]` to run only the
+long-context `llama-bench` sweep. It measures prefill and decode at 32K, 64K,
+128K and 256K.
 
 The context sweep runs `pp N` and `tg 256 @ d (N - 256)` as separate
 measurements. llama-bench's depth is prefetched outside the timed decode
 section, so the decode result starts with populated KV. It uses the default
 workload warmup and three measured repetitions. `--contexts`,
 `--decode-tokens`, and `--repetitions` on `run_context_sweep.py` allow local
-overrides. The sweep reads the architecture and training context fields from
-each GGUF metadata header. Raw commands, logs, model/corpus provenance, and
+overrides. The sweep attempts every requested size, including sizes above the
+GGUF-declared context, and marks those rows in the report. Hardware allocation
+failures still count as failed checks. The sweep reads the architecture and
+context fields from each GGUF metadata header. Raw commands, logs, model provenance, and
 llama-bench output fields are kept in the JSON artifact and backend logs.
 
-Long-check expectations use their own `long-context-perplexity` and
-`context-sweep` keys; exceptions configured for short `perplexity` do not
-carry over. The PPL check uses the ordinary `default` mode. Use a decimal
-context length as a mode for a context-specific sweep exception, and include
-that mode in `test-modes`; omitted contexts continue to expect a pass.
-Infrastructure failures and unavailable PPL comparisons are not excused by a
-model XFAIL. HRX coverage above 32K depends on the llama.cpp submodule including
+Sweep expectations use their own `context-sweep` key; exceptions configured
+for `perplexity` do not carry over. Use a decimal context length as a mode for
+a context-specific sweep exception, and include that mode in `test-modes`;
+omitted contexts continue to expect a pass. Infrastructure failures and
+unavailable devices remain fatal, including for report-only models. HRX
+coverage above 32K depends on the llama.cpp submodule including
 the graph-resource, 256K attention-bound and long-context accumulation fixes
 from [#185](https://github.com/AMD-Ecosystem/llama.cpp/pull/185),
 [#193](https://github.com/AMD-Ecosystem/llama.cpp/pull/193) and

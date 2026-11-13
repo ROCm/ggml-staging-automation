@@ -17,14 +17,10 @@ on:
           - tests-and-benchmarks
           - tests-only
           - benchmarks-only
-      skip_benchmarks:
-        description: 'JSON list of benchmark IDs to skip, e.g. ["lemonade-benchmark"] or ["perplexity"].'
+      include_benchmarks:
+        description: 'JSON benchmark IDs to run, e.g. ["context-sweep"].'
         type: string
-        default: '[]'
-      include_long_context:
-        description: Run an 8192-context perplexity check and llama-bench context sweeps.
-        type: boolean
-        default: false
+        default: '["lemonade-benchmark","perplexity"]'
       long_context_lengths:
         description: Comma-separated context-sweep token counts.
         type: string
@@ -113,8 +109,7 @@ jobs:
       package_root_name: llama.cpp-install
       model_tier: ${{ needs.select_models.outputs.model_tier }}
       model_ids: ${{ inputs.model_ids || '[]' }}
-      skip_benchmarks: ${{ inputs.skip_benchmarks || '[]' }}
-      include_long_context: ${{ inputs.include_long_context || false }}
+      include_benchmarks: ${{ inputs.include_benchmarks || '["lemonade-benchmark","perplexity"]' }}
       long_context_lengths: ${{ inputs.long_context_lengths || '32768,65536,131072,262144' }}
       context_sweep_decode_tokens: ${{ inputs.context_sweep_decode_tokens || 256 }}
       context_sweep_repetitions: ${{ inputs.context_sweep_repetitions || 3 }}

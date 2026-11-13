@@ -31,8 +31,8 @@ Boundary contract:
 
 - Inputs: --benchmark-spec (ordered "benchmarks" with "id" and "argv"),
   --model-manifest (ordered "tiers" and "models"), --model-tier, --model-ids, --work-root,
-  and --max-disk-gib. Optional --skip-benchmarks is a JSON array of IDs
-  to omit; the remaining workers run in specification order.
+  and --max-disk-gib. Optional --include-benchmarks is a JSON array of IDs
+  to run in specification order.
   Both JSON files are fully validated up front; a malformed
   file fails the run before any download.
 - Worker invocation: each worker's argv is run verbatim with the batch-managed
@@ -254,7 +254,6 @@ def load_manifest(
         supported_modes = {
             "lemonade-benchmark": {"default", "mtp:on", "mtp:off"},
             "perplexity": {"default"},
-            "long-context-perplexity": {"default"},
             "context-sweep": {"default"},
         }
 
@@ -262,7 +261,7 @@ def load_manifest(
             if mode in supported_modes[check]:
                 return True
             return (
-                check in {"long-context-perplexity", "context-sweep"}
+                check == "context-sweep"
                 and mode.isdecimal()
                 and int(mode) > 0
             )
@@ -424,15 +423,15 @@ def select_benchmarks(
     benchmarks: list[BenchmarkSpec],
     requested: str,
 ) -> list[BenchmarkSpec]:
-    """Validate the user skip list and preserve specification order."""
+    """Validate the user include list and preserve specification order."""
     try:
         ids = json.loads(requested)
     except json.JSONDecodeError as exc:
-        raise BatchBenchmarkError("--skip-benchmarks must be a JSON array of IDs") from exc
+        raise BatchBenchmarkError("--include-benchmarks must be a JSON array of IDs") from exc
     if not isinstance(ids, list):
-        raise BatchBenchmarkError("--skip-benchmarks must be a JSON array of IDs")
+        raise BatchBenchmarkError("--include-benchmarks must be a JSON array of IDs")
     for benchmark_id in ids:
-        _require_string_value(benchmark_id, "--skip-benchmarks entry")
+        _require_string_value(benchmark_id, "--include-benchmarks entry")
     known_ids = {benchmark.id for benchmark in benchmarks}
     unknown_ids = set(ids) - known_ids
     if unknown_ids:
@@ -440,9 +439,9 @@ def select_benchmarks(
             f"Unknown benchmark IDs: {', '.join(sorted(unknown_ids))}; "
             f"available IDs: {', '.join(sorted(known_ids))}"
         )
-    selected = [benchmark for benchmark in benchmarks if benchmark.id not in ids]
+    selected = [benchmark for benchmark in benchmarks if benchmark.id in ids]
     if not selected:
-        raise BatchBenchmarkError("--skip-benchmarks must leave at least one benchmark")
+        raise BatchBenchmarkError("--include-benchmarks must select at least one benchmark")
     return selected
 
 
@@ -790,15 +789,7 @@ def run(args: argparse.Namespace) -> int:
             args.model_manifest, known_checks={benchmark.id for benchmark in benchmarks}
         )
         # Model expectations may refer to workers omitted from this run.
-        try:
-            skip_benchmarks = json.loads(args.skip_benchmarks)
-        except json.JSONDecodeError as exc:
-            raise BatchBenchmarkError("--skip-benchmarks must be a JSON array of IDs") from exc
-        if not isinstance(skip_benchmarks, list):
-            raise BatchBenchmarkError("--skip-benchmarks must be a JSON array of IDs")
-        if not args.include_long_context:
-            skip_benchmarks.extend(("long-context-perplexity", "context-sweep"))
-        benchmarks = select_benchmarks(benchmarks, json.dumps(skip_benchmarks))
+        benchmarks = select_benchmarks(benchmarks, args.include_benchmarks)
         log(f"Selected benchmarks: {', '.join(benchmark.id for benchmark in benchmarks)}")
         selected = select_models(manifest, args.model_tier, args.model_ids)
         work_root = prepare_work_root(args.work_root)
@@ -928,14 +919,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="JSON command list; relative argv paths use the current directory",
     )
     parser.add_argument(
-        "--skip-benchmarks",
-        default="[]",
-        help='JSON array of benchmark IDs to skip, e.g. ["perplexity"]; default: []',
-    )
-    parser.add_argument(
-        "--include-long-context",
-        action="store_true",
-        help="Run the 8192-context perplexity case and llama-bench context sweeps",
+        "--include-benchmarks",
+        default='["lemonade-benchmark","perplexity"]',
+        help='JSON array of benchmark IDs to run; default: ["lemonade-benchmark","perplexity"]',
     )
     parser.add_argument(
         "--long-context-lengths",

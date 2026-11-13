@@ -149,12 +149,6 @@ def run_measurement(
     llama_bench: Path, model_path: Path, device: str, context_length: int,
     model_context: int, kind: str, args: argparse.Namespace, log_path: Path,
 ) -> dict[str, Any]:
-    if context_length > model_context:
-        return {
-            "status": "unsupported", "reason": "requested context exceeds model training context",
-            "failure_kind": "model-context", "model_context": model_context,
-            "context_length": context_length,
-        }
     if kind == "prefill":
         prompt, generated, depth = context_length, 0, 0
     else:
@@ -218,6 +212,7 @@ def run_measurement(
         "warmup_command": warmup_command, "warmup_exit_code": warmup_exit,
         "warmup_duration_s": round(warmup_duration, 3),
         "context_length": context_length, "model_context": model_context,
+        "beyond_model_context": context_length > model_context,
         "prompt_tokens": prompt, "decode_tokens": generated,
         "decode_history_tokens": depth,
         "llama_bench_default_warmup": True,
