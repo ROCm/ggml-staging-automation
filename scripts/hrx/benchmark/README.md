@@ -49,35 +49,12 @@ disabled so each run processes the full prompt. The next scenario loads a fresh
 model. Perplexity remains one comparison per model, with both existing
 prefill-like and decode-like regimes; it does not exercise MTP.
 
-The CI `include_benchmarks` input and runner `--include-benchmarks` option select
-benchmark IDs as a JSON array. The default is
-`["lemonade-benchmark","perplexity"]`; use `["context-sweep"]` to run only the
-long-context `llama-bench` sweep. It measures prefill and decode at 32K, 64K,
-128K and 256K.
-
-The context sweep runs `pp N` and `tg 256 @ d (N - 256)` as separate
-measurements. llama-bench's depth is prefetched outside the timed decode
-section, so the decode result starts with populated KV. It uses the default
-workload warmup and three measured repetitions. `--contexts`,
-`--decode-tokens`, and `--repetitions` on `run_context_sweep.py` allow local
-overrides. The sweep attempts every requested size, including sizes above the
-GGUF-declared context, and marks those rows in the report. Hardware allocation
-failures still count as failed checks. The sweep reads the architecture and
-context fields from each GGUF metadata header. Raw commands, logs, model provenance, and
-llama-bench output fields are kept in the JSON artifact and backend logs.
-
-Sweep expectations use their own `context-sweep` key; exceptions configured
-for `perplexity` do not carry over. Use a decimal context length as a mode for
-a context-specific sweep exception, and include that mode in `test-modes`;
-omitted contexts continue to expect a pass. Infrastructure failures and
-unavailable devices remain fatal, including for report-only models. HRX
-coverage above 32K depends on the llama.cpp submodule including
-the graph-resource, 256K attention-bound and long-context accumulation fixes
-from [#185](https://github.com/AMD-Ecosystem/llama.cpp/pull/185),
-[#193](https://github.com/AMD-Ecosystem/llama.cpp/pull/193) and
-[#194](https://github.com/AMD-Ecosystem/llama.cpp/pull/194). The reports record
-the exact submodule revisions so a source-pin update can be reviewed
-separately from benchmark automation changes.
+The optional `context-sweep` benchmark uses `llama-bench` to measure separate
+prefill and 256-token decode throughput at 32K, 64K, 128K and 256K context on
+HRX and Vulkan. Decode starts after the preceding context has been populated.
+The sweep also tries sizes above a model's GGUF-declared context and marks them
+in the report. Select it with the CI `include_benchmarks` input set to
+`["context-sweep"]`; the default remains `["lemonade-benchmark","perplexity"]`.
 
 Speculative counters and verification of actual drafting are deferred. A passing
 on-case establishes successful generation with Lemonade defaults, not that MTP
@@ -104,7 +81,7 @@ Exceptions are independent for each model, check, backend and mode. For example:
 
 Omitted expectations mean `pass`. Use `default` for ordinary models and
 perplexity, explicit `mtp:off`/`mtp:on` keys for expanded Lemonade cases, and
-decimal token counts for long-context checks. `fail`
+decimal token counts for context-sweep exceptions. `fail`
 requires failure (a success is a CI-failing XPASS); `report-only` retains the
 measured outcome without gating. No exception is inherited by the other mode
 or backend. Unsupported benchmark/mode combinations, duplicate modes and
