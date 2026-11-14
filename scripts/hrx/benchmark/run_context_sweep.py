@@ -24,7 +24,6 @@ from pathlib import Path
 from typing import Any
 
 from benchmark_output import append_batch_log, atomic_write_json, merge_benchmark_output
-from benchmark_provenance import source_revisions
 from run_batched_benchmark import ModelSpec, load_manifest
 
 
@@ -39,6 +38,22 @@ GGUF_NUMERIC_FORMATS = {
 
 class ContextSweepError(RuntimeError):
     """Raised for invalid sweep configuration or inputs."""
+
+
+def source_revisions() -> dict[str, str]:
+    """Record the automation, llama.cpp, and HRX commits in the sweep artifact."""
+    repository_root = Path(__file__).resolve().parents[3]
+    revisions = {}
+    for name, path in (
+        ("automation", repository_root),
+        ("llama_cpp", repository_root / "llama.cpp"),
+        ("hrx_system", repository_root / "hrx-system"),
+    ):
+        revisions[name] = subprocess.check_output(
+            ["git", "-C", str(path), "rev-parse", "HEAD"],
+            text=True,
+        ).strip()
+    return revisions
 
 
 def aggregate_status(statuses: Iterable[str]) -> str:
