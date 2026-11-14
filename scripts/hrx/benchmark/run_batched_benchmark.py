@@ -31,8 +31,8 @@ Boundary contract:
 
 - Inputs: --benchmark-spec (ordered "benchmarks" with "id" and "argv"),
   --model-manifest (ordered "tiers" and "models"), --model-tier, --model-ids, --work-root,
-  and --max-disk-gib. Optional --skip-benchmarks is a JSON array of IDs
-  to omit; the remaining workers run in specification order.
+  and --max-disk-gib. Optional --include-benchmarks is a JSON array of IDs
+  to run in specification order.
   Both JSON files are fully validated up front; a malformed
   file fails the run before any download.
 - Worker invocation: each worker's argv is run verbatim with the batch-managed
@@ -254,7 +254,18 @@ def load_manifest(
         supported_modes = {
             "lemonade-benchmark": {"default", "mtp:on", "mtp:off"},
             "perplexity": {"default"},
+            "context-sweep": {"default"},
         }
+
+        def valid_mode(check: str, mode: str) -> bool:
+            if mode in supported_modes[check]:
+                return True
+            return (
+                check == "context-sweep"
+                and mode.isdecimal()
+                and int(mode) > 0
+            )
+
         for check, modes in raw_modes.items():
             if check not in supported_modes:
                 raise BatchBenchmarkError(f"{context}: unknown benchmark {check!r}")
@@ -269,7 +280,7 @@ def load_manifest(
             for mode in modes:
                 if not isinstance(mode, str):
                     raise BatchBenchmarkError(f"{context}: modes for {check} must be strings")
-                if mode not in supported_modes[check]:
+                if not valid_mode(check, mode):
                     raise BatchBenchmarkError(f"{context}: unsupported mode {mode!r} for {check}")
             if len(set(modes)) != len(modes):
                 raise BatchBenchmarkError(f"{context}: duplicate modes for {check}")
@@ -412,15 +423,15 @@ def select_benchmarks(
     benchmarks: list[BenchmarkSpec],
     requested: str,
 ) -> list[BenchmarkSpec]:
-    """Validate the user skip list and preserve specification order."""
+    """Validate the user include list and preserve specification order."""
     try:
         ids = json.loads(requested)
     except json.JSONDecodeError as exc:
-        raise BatchBenchmarkError("--skip-benchmarks must be a JSON array of IDs") from exc
+        raise BatchBenchmarkError("--include-benchmarks must be a JSON array of IDs") from exc
     if not isinstance(ids, list):
-        raise BatchBenchmarkError("--skip-benchmarks must be a JSON array of IDs")
+        raise BatchBenchmarkError("--include-benchmarks must be a JSON array of IDs")
     for benchmark_id in ids:
-        _require_string_value(benchmark_id, "--skip-benchmarks entry")
+        _require_string_value(benchmark_id, "--include-benchmarks entry")
     known_ids = {benchmark.id for benchmark in benchmarks}
     unknown_ids = set(ids) - known_ids
     if unknown_ids:
@@ -428,9 +439,9 @@ def select_benchmarks(
             f"Unknown benchmark IDs: {', '.join(sorted(unknown_ids))}; "
             f"available IDs: {', '.join(sorted(known_ids))}"
         )
-    selected = [benchmark for benchmark in benchmarks if benchmark.id not in ids]
+    selected = [benchmark for benchmark in benchmarks if benchmark.id in ids]
     if not selected:
-        raise BatchBenchmarkError("--skip-benchmarks must leave at least one benchmark")
+        raise BatchBenchmarkError("--include-benchmarks must select at least one benchmark")
     return selected
 
 
@@ -769,7 +780,7 @@ def run(args: argparse.Namespace) -> int:
             args.model_manifest, known_checks={benchmark.id for benchmark in benchmarks}
         )
         # Model expectations may refer to workers omitted from this run.
-        benchmarks = select_benchmarks(benchmarks, args.skip_benchmarks)
+        benchmarks = select_benchmarks(benchmarks, args.include_benchmarks)
         log(f"Selected benchmarks: {', '.join(benchmark.id for benchmark in benchmarks)}")
         selected = select_models(manifest, args.model_tier, args.model_ids)
         work_root = prepare_work_root(args.work_root)
@@ -896,9 +907,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="JSON command list; relative argv paths use the current directory",
     )
     parser.add_argument(
-        "--skip-benchmarks",
-        default="[]",
-        help='JSON array of benchmark IDs to skip, e.g. ["perplexity"]; default: []',
+        "--include-benchmarks",
+        default='["lemonade-benchmark","perplexity"]',
+        help='JSON array of benchmark IDs to run; default: ["lemonade-benchmark","perplexity"]',
     )
     parser.add_argument("--model-manifest", type=Path, required=True)
     parser.add_argument("--model-tier", default="single", metavar="TIER")

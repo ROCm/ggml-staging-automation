@@ -17,10 +17,10 @@ on:
           - tests-and-benchmarks
           - tests-only
           - benchmarks-only
-      skip_benchmarks:
-        description: 'JSON list of benchmark IDs to skip, e.g. ["lemonade-benchmark"] or ["perplexity"].'
+      include_benchmarks:
+        description: 'JSON benchmark IDs to run, e.g. ["context-sweep"].'
         type: string
-        default: '[]'
+        default: '["lemonade-benchmark","perplexity"]'
       model_ids:
         description: 'JSON array of exact model IDs, including select-only models; overrides model_tier when non-empty.'
         type: string
@@ -97,5 +97,5 @@ jobs:
       package_root_name: llama.cpp-install
       model_tier: ${{ needs.select_models.outputs.model_tier }}
       model_ids: ${{ inputs.model_ids || '[]' }}
-      skip_benchmarks: ${{ inputs.skip_benchmarks || '[]' }}
+      include_benchmarks: ${{ inputs.include_benchmarks || '["lemonade-benchmark","perplexity"]' }}
       validation_mode: ${{ inputs.validation_mode || 'tests-and-benchmarks' }}

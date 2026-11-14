@@ -39,6 +39,23 @@
         "--vulkan-log",
         "lemonade-benchmark-debug/perplexity-vulkan.log"
       ]
+    },
+    {
+      "id": "context-sweep",
+      "argv": [
+        "python3",
+        "scripts/hrx/benchmark/run_context_sweep.py",
+        "--model-manifest",
+        "benchmarks/hrx/model_manifest.json",
+        "--llama-bench",
+        "release/benchmark-package/bin/llama-bench",
+        "--output",
+        "lemonade-benchmark/context-sweep.json",
+        "--hrx-log",
+        "lemonade-benchmark-debug/context-sweep-hrx.log",
+        "--vulkan-log",
+        "lemonade-benchmark-debug/context-sweep-vulkan.log"
+      ]
     }
   ]
 }

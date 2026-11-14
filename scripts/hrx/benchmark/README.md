@@ -49,6 +49,14 @@ disabled so each run processes the full prompt. The next scenario loads a fresh
 model. Perplexity remains one comparison per model, with both existing
 prefill-like and decode-like regimes; it does not exercise MTP.
 
+The optional `context-sweep` benchmark uses `llama-bench` on HRX and Vulkan to
+measure a 32K-token prefill ending at each model's GGUF-declared maximum context,
+then 256-token decode at that context. It uses llama-bench's default warmup and
+two measured repetitions per case. `--contexts` accepts `max` and comma-separated
+numeric lengths for additional cases; numeric lengths above a model's limit are
+skipped. Select it with the CI `include_benchmarks` input set to
+`["context-sweep"]`; the default remains `["lemonade-benchmark","perplexity"]`.
+
 Speculative counters and verification of actual drafting are deferred. A passing
 on-case establishes successful generation with Lemonade defaults, not that MTP
 was enabled. Reports label these as requested settings.
@@ -73,12 +81,13 @@ Exceptions are independent for each model, check, backend and mode. For example:
 ```
 
 Omitted expectations mean `pass`. Use `default` for ordinary models and
-perplexity, and explicit `mtp:off`/`mtp:on` keys for expanded Lemonade cases. `fail`
+perplexity, explicit `mtp:off`/`mtp:on` keys for expanded Lemonade cases, and
+decimal token counts for context-sweep exceptions. `fail`
 requires failure (a success is a CI-failing XPASS); `report-only` retains the
 measured outcome without gating. No exception is inherited by the other mode
 or backend. Unsupported benchmark/mode combinations, duplicate modes and
 expectations for unselected modes are rejected. Modes are independent cases,
-not a Cartesian product. Perplexity currently supports only `default`.
+not a Cartesian product. Short perplexity supports only `default`.
 Infrastructure and malformed-artifact errors remain fatal.
 
 The pinned Lemonade release predates automatic HRX MTP enablement. Updating the
