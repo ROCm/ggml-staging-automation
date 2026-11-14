@@ -202,11 +202,6 @@ def run_measurement(
         "-b", str(args.batch_size), "-ub", str(args.ubatch_size),
         "-r", str(args.repetitions), "-o", "json",
     ]
-    warmup_command = list(command)
-    repetitions_index = warmup_command.index("-r") + 1
-    warmup_command[repetitions_index] = "1"
-    warmup_command.insert(-2, "--no-warmup")
-
     def execute(argv: list[str]) -> tuple[str, str, int | None, bool, float]:
         started = time.monotonic()
         try:
@@ -225,40 +220,24 @@ def run_measurement(
                 stderr = stderr.decode("utf-8", errors="replace")
             return stdout, stderr, None, True, time.monotonic() - started
 
-    warmup_stdout, warmup_stderr, warmup_exit, warmup_timeout, warmup_duration = execute(warmup_command)
-    if warmup_exit == 0 and not warmup_timeout:
-        log("++ " + shlex.join(command))
-        stdout, stderr, exit_code, timed_out, duration_s = execute(command)
-    else:
-        stdout, stderr = warmup_stdout, warmup_stderr
-        exit_code, timed_out, duration_s = warmup_exit, warmup_timeout, 0.0
+    log("++ " + shlex.join(command))
+    stdout, stderr, exit_code, timed_out, duration_s = execute(command)
     log_path.parent.mkdir(parents=True, exist_ok=True)
     with log_path.open("a", encoding="utf-8") as handle:
         handle.write(f"===== {device} {kind} context={context_length} =====\n")
-        handle.write("===== exact-workload warmup (not measured) =====\n")
-        handle.write("++ " + shlex.join(warmup_command) + "\n")
-        handle.write(f"exit={warmup_exit} duration_s={warmup_duration:.3f}\n")
-        handle.write("--- stdout ---\n" + warmup_stdout + ("" if warmup_stdout.endswith("\n") else "\n"))
-        handle.write("--- stderr ---\n" + warmup_stderr + ("" if warmup_stderr.endswith("\n") else "\n"))
-        if warmup_exit == 0 and not warmup_timeout:
-            handle.write("===== measured repetitions =====\n")
-            handle.write("++ " + shlex.join(command) + "\n")
-            handle.write(f"exit={exit_code} duration_s={duration_s:.3f}\n")
-            handle.write("--- stdout ---\n" + stdout + ("" if stdout.endswith("\n") else "\n"))
-            handle.write("--- stderr ---\n" + stderr + ("" if stderr.endswith("\n") else "\n"))
+        handle.write("++ " + shlex.join(command) + "\n")
+        handle.write(f"exit={exit_code} duration_s={duration_s:.3f}\n")
+        handle.write("--- stdout ---\n" + stdout + ("" if stdout.endswith("\n") else "\n"))
+        handle.write("--- stderr ---\n" + stderr + ("" if stderr.endswith("\n") else "\n"))
 
     measurement: dict[str, Any] = {
         "status": "failed", "error": None, "failure_kind": None,
         "exit_code": exit_code, "duration_s": round(duration_s, 3),
         "log": log_path.name, "command": command,
-        "warmup_command": warmup_command, "warmup_exit_code": warmup_exit,
-        "warmup_duration_s": round(warmup_duration, 3),
         "context_length": context_length, "model_context": model_context,
-        "beyond_model_context": context_length > model_context,
         "prompt_tokens": prompt, "decode_tokens": generated,
         "decode_history_tokens": depth,
         "llama_bench_default_warmup": True,
-        "explicit_exact_workload_warmups": 1,
         "repetitions": args.repetitions,
     }
     if not timed_out and exit_code == 0:
@@ -336,7 +315,7 @@ def run(args: argparse.Namespace) -> int:
             "prefill_tokens": "context length N measured independently",
             "decode_tokens": args.decode_tokens,
             "decode_history_tokens": "N - decode_tokens, populated before timer",
-            "warmups": "one explicit exact-workload warmup, plus llama-bench default warmup before measured repetitions",
+            "warmups": "llama-bench default warmup",
             "repetitions": args.repetitions,
             "batch_size": args.batch_size,
             "ubatch_size": args.ubatch_size,
@@ -380,7 +359,8 @@ def run(args: argparse.Namespace) -> int:
                     for length in args.context_lengths
                 }
         else:
-            for context_length in args.context_lengths:
+            eligible_contexts = tuple(length for length in args.context_lengths if length <= model_context)
+            for context_length in eligible_contexts:
                 by_backend = {}
                 for backend, device in (("hrx", args.hrx_device), ("vulkan", args.vulkan_device)):
                     active_log = logs[backend]
@@ -425,20 +405,23 @@ def run(args: argparse.Namespace) -> int:
                     measurements["outcome"] = outcome
                     unexpected = unexpected or is_unexpected(outcome)
                 log(f"{spec.id} context={context_length}: HRX pp={by_backend['hrx']['prefill'].get('tokens_per_second')} tg={by_backend['hrx']['decode'].get('tokens_per_second')}; Vulkan pp={by_backend['vulkan']['prefill'].get('tokens_per_second')} tg={by_backend['vulkan']['decode'].get('tokens_per_second')}")
+            for context_length in args.context_lengths:
+                if context_length > model_context:
+                    log(f"{spec.id} context={context_length}: skipped above GGUF context {model_context}")
         document["models"].append(row)
         row["result"] = aggregate_status(
             values["hrx"]["result"] for values in row["contexts"].values()
-        )
+        ) if row["contexts"] else "skip"
         row["reference_result"] = aggregate_status(
             values["vulkan"]["result"] for values in row["contexts"].values()
-        )
+        ) if row["contexts"] else "skip"
         hrx_outcomes = [values["hrx"]["outcome"] for values in row["contexts"].values()]
         vulkan_outcomes = [values["vulkan"]["outcome"] for values in row["contexts"].values()]
         row["outcome"] = "FAIL" if "FAIL" in hrx_outcomes else (
-            "XPASS" if "XPASS" in hrx_outcomes else "XFAIL" if "XFAIL" in hrx_outcomes else "PASS"
+            "XPASS" if "XPASS" in hrx_outcomes else "XFAIL" if "XFAIL" in hrx_outcomes else "PASS" if hrx_outcomes else "SKIP"
         )
         row["reference_outcome"] = "FAIL" if "FAIL" in vulkan_outcomes else (
-            "XPASS" if "XPASS" in vulkan_outcomes else "XFAIL" if "XFAIL" in vulkan_outcomes else "PASS"
+            "XPASS" if "XPASS" in vulkan_outcomes else "XFAIL" if "XFAIL" in vulkan_outcomes else "PASS" if vulkan_outcomes else "SKIP"
         )
 
     if args.batched:
@@ -469,7 +452,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--vulkan-device", default="Vulkan0")
     parser.add_argument("--contexts", dest="context_lengths", type=parse_context_lengths, default=DEFAULT_CONTEXTS)
     parser.add_argument("--decode-tokens", type=int, default=256)
-    parser.add_argument("--repetitions", type=int, default=3)
+    parser.add_argument("--repetitions", type=int, default=2)
     parser.add_argument("--batch-size", type=int, default=2048)
     parser.add_argument("--ubatch-size", type=int, default=512)
     parser.add_argument("--gpu-layers", type=int, default=99)

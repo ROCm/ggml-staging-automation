@@ -52,8 +52,9 @@ prefill-like and decode-like regimes; it does not exercise MTP.
 The optional `context-sweep` benchmark uses `llama-bench` to measure separate
 prefill and 256-token decode throughput at 32K, 64K, 128K and 256K context on
 HRX and Vulkan. Decode starts after the preceding context has been populated.
-The sweep also tries sizes above a model's GGUF-declared context and marks them
-in the report. Select it with the CI `include_benchmarks` input set to
+The sweep skips sizes above each model's GGUF-declared context. It uses
+llama-bench's default warmup and two measured repetitions per case. Select it
+with the CI `include_benchmarks` input set to
 `["context-sweep"]`; the default remains `["lemonade-benchmark","perplexity"]`.
 
 Speculative counters and verification of actual drafting are deferred. A passing

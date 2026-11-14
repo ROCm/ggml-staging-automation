@@ -40,14 +40,17 @@ def format_report(document: dict[str, Any]) -> str:
         "",
         "Prefill uses a separate `pp N` run. Decode uses `tg T @ d (N − T)`: llama-bench "
         "prefills the history before starting the timer, then measures T generated tokens. The "
-        "combined `-pg` result is not used. The sweep also attempts contexts above the "
-        "GGUF-declared context; these rows are marked below. Hardware allocation failures "
-        "are failures. Only explicit context/backend `fail` expectations classify model failures "
+        "combined `-pg` result is not used. Contexts above each model's GGUF-declared "
+        "limit are skipped. Hardware allocation failures are failures. Only explicit "
+        "context/backend `fail` expectations classify model failures "
         "as XFAIL; infrastructure failures are never excused.",
-        "",
-        "| Model | Context | GGUF context | HRX pp tok/s | Vulkan pp tok/s | pp ratio | HRX tg tok/s | Vulkan tg tok/s | tg ratio | HRX outcome | Vulkan outcome |",
-        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |",
     ]
+    if any(model["contexts"] for model in document["models"]):
+        lines.extend([
+            "",
+            "| Model | Context | GGUF context | HRX pp tok/s | Vulkan pp tok/s | pp ratio | HRX tg tok/s | Vulkan tg tok/s | tg ratio | HRX outcome | Vulkan outcome |",
+            "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |",
+        ])
     failures = []
     for model in document["models"]:
         declared_context = model["model_context"]
@@ -55,9 +58,8 @@ def format_report(document: dict[str, Any]) -> str:
         for context, backends in model["contexts"].items():
             hrx = backends["hrx"]
             vulkan = backends["vulkan"]
-            above_declared = declared_context is not None and int(context) > declared_context
             lines.append(
-                f"| {format_code(model['model'])} | {int(context):,}{' (above)' if above_declared else ''} | "
+                f"| {format_code(model['model'])} | {int(context):,} | "
                 f"{declared_context_text} | "
                 f"{_throughput(hrx['prefill'])} | {_throughput(vulkan['prefill'])} | "
                 f"{_ratio(hrx['prefill'], vulkan['prefill'])} | "
@@ -73,6 +75,18 @@ def format_report(document: dict[str, Any]) -> str:
                             f"{measurement['failure_kind']} — {format_table_cell(measurement['error'])} "
                             f"(see {format_code(measurement['log'])})."
                         )
+    skipped = []
+    for model in document["models"]:
+        if model["model_context"] is None:
+            continue
+        lengths = [length for length in settings["context_lengths"] if length > model["model_context"]]
+        if lengths:
+            skipped.append(
+                f"- {format_code(model['model'])}: {', '.join(f'{length:,}' for length in lengths)} "
+                f"(GGUF limit {model['model_context']:,})."
+            )
+    if skipped:
+        lines.extend(["", "### Skipped above model context", "", *skipped])
     if failures:
         lines.extend(["", "### Measurement failures", "", *failures])
     return "\n".join(lines)
