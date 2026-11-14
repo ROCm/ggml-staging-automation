@@ -19,21 +19,17 @@ import shlex
 import subprocess
 import time
 import struct
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
 from benchmark_output import append_batch_log, atomic_write_json, merge_benchmark_output
-from benchmark_outcomes import (
-    MODEL_FAILURE_KINDS,
-    aggregate_status,
-    classify_outcome,
-    is_unexpected,
-)
 from benchmark_provenance import source_revisions
 from run_batched_benchmark import ModelSpec, load_manifest
 
 
 DEFAULT_CONTEXTS = (32768, 65536, 131072, 262144)
+MODEL_FAILURE_KINDS = frozenset({"model-execution", "resource-exhausted"})
 
 GGUF_NUMERIC_FORMATS = {
     0: "<B", 1: "<b", 2: "<H", 3: "<h", 4: "<I", 5: "<i",
@@ -43,6 +39,37 @@ GGUF_NUMERIC_FORMATS = {
 
 class ContextSweepError(RuntimeError):
     """Raised for invalid sweep configuration or inputs."""
+
+
+def aggregate_status(statuses: Iterable[str]) -> str:
+    """Return fail unless every requested measurement completed successfully."""
+    values = tuple(statuses)
+    if not values or any(value in {"failed", "fail", "unsupported"} for value in values):
+        return "fail"
+    return "pass" if all(value in {"ok", "pass"} for value in values) else "fail"
+
+
+def classify_outcome(
+    result: str,
+    expectation: str,
+    *,
+    expected_failure_allowed: bool = True,
+    infrastructure_failure: bool = False,
+) -> str:
+    """Apply the manifest expectation to one context and backend."""
+    if infrastructure_failure:
+        return "FAIL"
+    if expectation == "report-only":
+        return "REPORT_ONLY"
+    if expectation == "fail":
+        if result == "pass":
+            return "XPASS"
+        return "XFAIL" if expected_failure_allowed else "FAIL"
+    return "FAIL" if result == "fail" else "PASS"
+
+
+def is_unexpected(outcome: str) -> bool:
+    return outcome in ("FAIL", "XPASS")
 
 
 def parse_context_lengths(value: str) -> tuple[int, ...]:
