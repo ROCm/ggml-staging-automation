@@ -3,10 +3,10 @@
 # SPDX-License-Identifier: MIT
 """Measure HRX and Vulkan prefill and decode throughput at long contexts.
 
-Each prefill run measures ``pp N``. Each decode run primes ``N - decode_tokens``
-tokens outside the timed section with llama-bench's depth option, then measures
-the requested number of decode tokens. Separate invocations keep pp and tg
-throughput independent; the combined ``-pg`` result is intentionally unused.
+Each prefill run primes the context up to its final 32K tokens, then measures
+that final prompt. Each decode run primes ``N - decode_tokens`` tokens outside
+the timed section, then measures the requested decode tokens. Separate
+invocations give the two tests their different starting depths.
 """
 
 from __future__ import annotations
@@ -16,9 +16,10 @@ import json
 import math
 import os
 import shlex
-import subprocess
-import time
 import struct
+import subprocess
+import sys
+import time
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
@@ -27,7 +28,8 @@ from benchmark_output import append_batch_log, atomic_write_json, merge_benchmar
 from run_batched_benchmark import ModelSpec, load_manifest
 
 
-DEFAULT_CONTEXTS = (32768, 65536, 131072, 262144)
+DEFAULT_CONTEXTS = ("max",)
+DEFAULT_PREFILL_TOKENS = 32768
 MODEL_FAILURE_KINDS = frozenset({"model-execution", "resource-exhausted"})
 
 GGUF_NUMERIC_FORMATS = {
@@ -87,11 +89,11 @@ def is_unexpected(outcome: str) -> bool:
     return outcome in ("FAIL", "XPASS")
 
 
-def parse_context_lengths(value: str) -> tuple[int, ...]:
+def parse_context_lengths(value: str) -> tuple[int | str, ...]:
     try:
-        return tuple(int(item) for item in value.split(","))
+        return tuple("max" if item.strip() == "max" else int(item) for item in value.split(","))
     except ValueError as exc:
-        raise argparse.ArgumentTypeError("contexts must be comma-separated integers") from exc
+        raise argparse.ArgumentTypeError("contexts must be comma-separated integers or max") from exc
 
 
 def log(message: str) -> None:
@@ -192,7 +194,8 @@ def run_measurement(
     model_context: int, kind: str, args: argparse.Namespace, log_path: Path,
 ) -> dict[str, Any]:
     if kind == "prefill":
-        prompt, generated, depth = context_length, 0, 0
+        prompt = min(args.prefill_tokens, context_length)
+        generated, depth = 0, context_length - prompt
     else:
         prompt, generated, depth = 0, args.decode_tokens, context_length - args.decode_tokens
     command = [
@@ -292,9 +295,8 @@ def run(args: argparse.Namespace) -> int:
     llama_bench = args.llama_bench.resolve()
     models_dir = args.models_dir.resolve()
     models = resolve_models(args.model_manifest, models_dir, args.models)
-    if (not args.context_lengths or args.decode_tokens < 1
-            or any(length <= args.decode_tokens for length in args.context_lengths)):
-        raise ContextSweepError("every context length must exceed --decode-tokens")
+    if not args.context_lengths or args.decode_tokens < 1:
+        raise ContextSweepError("contexts and decode tokens must be positive")
     if not llama_bench.is_file():
         raise ContextSweepError(f"Required benchmark binary is missing: {llama_bench}")
 
@@ -312,7 +314,8 @@ def run(args: argparse.Namespace) -> int:
         "devices": {"hrx": args.hrx_device, "vulkan": args.vulkan_device},
         "settings": {
             "context_lengths": list(args.context_lengths),
-            "prefill_tokens": "context length N measured independently",
+            "prefill_tokens": args.prefill_tokens,
+            "prefill_depth_tokens": "N - min(prefill_tokens, N), populated before timer",
             "decode_tokens": args.decode_tokens,
             "decode_history_tokens": "N - decode_tokens, populated before timer",
             "warmups": "llama-bench default warmup",
@@ -359,7 +362,13 @@ def run(args: argparse.Namespace) -> int:
                     for length in args.context_lengths
                 }
         else:
-            eligible_contexts = tuple(length for length in args.context_lengths if length <= model_context)
+            requested_contexts = tuple(
+                model_context if length == "max" else length for length in args.context_lengths
+            )
+            eligible_contexts = tuple(sorted({
+                length for length in requested_contexts
+                if args.decode_tokens < length <= model_context
+            }))
             for context_length in eligible_contexts:
                 by_backend = {}
                 for backend, device in (("hrx", args.hrx_device), ("vulkan", args.vulkan_device)):
@@ -406,7 +415,7 @@ def run(args: argparse.Namespace) -> int:
                     unexpected = unexpected or is_unexpected(outcome)
                 log(f"{spec.id} context={context_length}: HRX pp={by_backend['hrx']['prefill'].get('tokens_per_second')} tg={by_backend['hrx']['decode'].get('tokens_per_second')}; Vulkan pp={by_backend['vulkan']['prefill'].get('tokens_per_second')} tg={by_backend['vulkan']['decode'].get('tokens_per_second')}")
             for context_length in args.context_lengths:
-                if context_length > model_context:
+                if isinstance(context_length, int) and context_length > model_context:
                     log(f"{spec.id} context={context_length}: skipped above GGUF context {model_context}")
         document["models"].append(row)
         row["result"] = aggregate_status(
@@ -451,6 +460,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--hrx-device", default="HRX0")
     parser.add_argument("--vulkan-device", default="Vulkan0")
     parser.add_argument("--contexts", dest="context_lengths", type=parse_context_lengths, default=DEFAULT_CONTEXTS)
+    parser.add_argument("--prefill-tokens", type=int, default=DEFAULT_PREFILL_TOKENS)
     parser.add_argument("--decode-tokens", type=int, default=256)
     parser.add_argument("--repetitions", type=int, default=2)
     parser.add_argument("--batch-size", type=int, default=2048)
@@ -468,11 +478,15 @@ def parse_args() -> argparse.Namespace:
         parser.error("--batch-number is required with --batched")
     if args.batch_number is not None and not args.batched:
         parser.error("--batch-number requires --batched")
-    if (not args.context_lengths or tuple(sorted(set(args.context_lengths))) != args.context_lengths
-            or any(length <= 0 for length in args.context_lengths)):
-        parser.error("--contexts must be unique positive integers in increasing order")
-    if args.decode_tokens < 1 or any(length <= args.decode_tokens for length in args.context_lengths):
-        parser.error("--decode-tokens must be positive and less than every context")
+    numeric_contexts = tuple(length for length in args.context_lengths if isinstance(length, int))
+    if (not args.context_lengths or len(set(args.context_lengths)) != len(args.context_lengths)
+            or tuple(sorted(numeric_contexts)) != numeric_contexts
+            or any(length <= 0 for length in numeric_contexts)):
+        parser.error("--contexts must contain unique positive integers in increasing order and at most one max")
+    if args.decode_tokens < 1 or any(length <= args.decode_tokens for length in numeric_contexts):
+        parser.error("--decode-tokens must be positive and less than every numeric context")
+    if args.prefill_tokens < 1:
+        parser.error("--prefill-tokens must be positive")
     if args.batch_size < 1 or args.ubatch_size < 1:
         parser.error("--batch-size and --ubatch-size must be positive")
     if not math.isfinite(args.run_timeout_seconds) or args.run_timeout_seconds <= 0:

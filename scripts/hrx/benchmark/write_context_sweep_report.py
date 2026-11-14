@@ -31,16 +31,17 @@ def format_report(document: dict[str, Any]) -> str:
     lines = [
         "## HRX/Vulkan llama-bench context sweep",
         "",
-        f"**Contexts:** {', '.join(f'{n:,}' for n in settings['context_lengths'])} · "
+        f"**Requested contexts:** {', '.join(f'{n:,}' if isinstance(n, int) else n for n in settings['context_lengths'])} · "
+        f"**Prefill tokens:** up to {settings['prefill_tokens']:,} · "
         f"**Decode tokens:** {settings['decode_tokens']} · "
         f"**Warmups:** {settings['warmups']} · **Measured repetitions:** {settings['repetitions']}",
         f"**Sources:** automation {format_code(document['source_revisions']['automation'][:12])} · "
         f"llama.cpp {format_code(document['source_revisions']['llama_cpp'][:12])} · "
         f"HRX {format_code(document['source_revisions']['hrx_system'][:12])}",
         "",
-        "Prefill uses a separate `pp N` run. Decode uses `tg T @ d (N − T)`: llama-bench "
-        "prefills the history before starting the timer, then measures T generated tokens. The "
-        "combined `-pg` result is not used. Contexts above each model's GGUF-declared "
+        "Prefill measures the final prompt tokens after llama-bench populates the earlier "
+        "context outside the timer. Decode uses `tg T @ d (N − T)`: llama-bench "
+        "populates the history before timing T generated tokens. Contexts above each model's GGUF-declared "
         "limit are skipped. Hardware allocation failures are failures. Only explicit "
         "context/backend `fail` expectations classify model failures "
         "as XFAIL; infrastructure failures are never excused.",
@@ -58,8 +59,9 @@ def format_report(document: dict[str, Any]) -> str:
         for context, backends in model["contexts"].items():
             hrx = backends["hrx"]
             vulkan = backends["vulkan"]
+            context_text = f"{int(context):,}" if context != "max" else "max"
             lines.append(
-                f"| {format_code(model['model'])} | {int(context):,} | "
+                f"| {format_code(model['model'])} | {context_text} | "
                 f"{declared_context_text} | "
                 f"{_throughput(hrx['prefill'])} | {_throughput(vulkan['prefill'])} | "
                 f"{_ratio(hrx['prefill'], vulkan['prefill'])} | "
@@ -79,7 +81,8 @@ def format_report(document: dict[str, Any]) -> str:
     for model in document["models"]:
         if model["model_context"] is None:
             continue
-        lengths = [length for length in settings["context_lengths"] if length > model["model_context"]]
+        lengths = [length for length in settings["context_lengths"]
+                   if isinstance(length, int) and length > model["model_context"]]
         if lengths:
             skipped.append(
                 f"- {format_code(model['model'])}: {', '.join(f'{length:,}' for length in lengths)} "

@@ -49,12 +49,12 @@ disabled so each run processes the full prompt. The next scenario loads a fresh
 model. Perplexity remains one comparison per model, with both existing
 prefill-like and decode-like regimes; it does not exercise MTP.
 
-The optional `context-sweep` benchmark uses `llama-bench` to measure separate
-prefill and 256-token decode throughput at 32K, 64K, 128K and 256K context on
-HRX and Vulkan. Decode starts after the preceding context has been populated.
-The sweep skips sizes above each model's GGUF-declared context. It uses
-llama-bench's default warmup and two measured repetitions per case. Select it
-with the CI `include_benchmarks` input set to
+The optional `context-sweep` benchmark uses `llama-bench` on HRX and Vulkan to
+measure a 32K-token prefill ending at each model's GGUF-declared maximum context,
+then 256-token decode at that context. It uses llama-bench's default warmup and
+two measured repetitions per case. `--contexts` accepts `max` and comma-separated
+numeric lengths for additional cases; numeric lengths above a model's limit are
+skipped. Select it with the CI `include_benchmarks` input set to
 `["context-sweep"]`; the default remains `["lemonade-benchmark","perplexity"]`.
 
 Speculative counters and verification of actual drafting are deferred. A passing
