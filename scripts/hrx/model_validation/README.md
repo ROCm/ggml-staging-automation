@@ -30,10 +30,10 @@ budget, not decimal GB; the `--max-disk-gib` option retains the existing units.
 
 ## Lemonade release and test modes
 
-The [release pin](../../../benchmarks/hrx/lemonade_release.json) selects a
+The [release pin](../../../model_validation/hrx/lemonade_release.json) selects a
 checksum-verified released Lemonade package. CI benchmarks the same verified
 GGUF through the HRX and regular llama.cpp Vulkan recipes using the CI-built
-server executable. The [model manifest](../../../benchmarks/hrx/model_manifest.json)
+server executable. The [model manifest](../../../model_validation/hrx/model_manifest.json)
 selects weights, tiers, test modes and expectations; `name` also names the local
 model directory.
 

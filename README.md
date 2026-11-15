@@ -82,7 +82,7 @@ job. Failed tests stop model validation. See the
 modes, package contents, and test results.
 
 CI compares HRX and Vulkan through released Lemonade and runs perplexity checks.
-See the [model validation guide](scripts/hrx/benchmark/README.md) for model tiers,
+See the [model validation guide](scripts/hrx/model_validation/README.md) for model tiers,
 per-check test modes, expectations and release configuration.
 
 ## Releases

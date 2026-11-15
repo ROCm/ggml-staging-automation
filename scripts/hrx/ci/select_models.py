@@ -33,10 +33,10 @@ RELEVANT_FILES = {
 }
 RELEVANT_DIRECTORIES = (
     "scripts/hrx/build/",
-    "scripts/hrx/benchmark/",
+    "scripts/hrx/model_validation/",
     "scripts/hrx/package/",
     "scripts/hrx/ci/",
-    "benchmarks/hrx/",
+    "model_validation/hrx/",
 )
 
 

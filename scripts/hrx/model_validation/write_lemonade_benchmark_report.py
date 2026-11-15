@@ -40,14 +40,14 @@ Ratios are omitted when either model case failed or Vulkan has no nonzero rate.
 The worker adds model-level outcomes and errors. Report-only checks show their
 measured result even when it does not block CI. The runner name provides
 context for machine-dependent throughput differences. This script owns its
-two-input CLI; shared output and failure contracts live in ``benchmark_report``.
+two-input CLI; shared output and failure contracts live in ``validation_report``.
 """
 from __future__ import annotations
 import argparse
 import math
 import os
 from pathlib import Path
-from benchmark_report import ReportError, format_table_cell, load_json, write_report
+from validation_report import ReportError, format_table_cell, load_json, write_report
 
 
 def index_scenarios(document):

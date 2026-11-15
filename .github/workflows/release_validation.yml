@@ -81,7 +81,7 @@ jobs:
           python3 scripts/hrx/package/extract_release_package.py \
             --archive "artifacts/${RELEASE_ARTIFACT_NAME}.tar.gz" \
             --package-root-name "$PACKAGE_ROOT_NAME" \
-            --output-dir release/benchmark-package
+            --output-dir release/validation-package
 
       - name: Install CTest
         if: inputs.validation_mode != 'model-validation-only'
@@ -108,7 +108,7 @@ jobs:
         id: hrx_tests
         if: inputs.validation_mode != 'model-validation-only'
         env:
-          LD_LIBRARY_PATH: ${{ github.workspace }}/release/benchmark-package/lib
+          LD_LIBRARY_PATH: ${{ github.workspace }}/release/validation-package/lib
         run: |
           ctest --test-dir release/hrx-tests --parallel 2 --verbose \
             --output-junit "$PWD/release/hrx-tests/junit.xml"
@@ -147,25 +147,25 @@ jobs:
         if: ${{ inputs.validation_mode != 'tests-only' && contains(fromJSON(inputs.include_checks), 'lemonade-benchmark') }}
         run: |
           python3 scripts/hrx/package/fetch_lemonade.py \
-            --pin benchmarks/hrx/lemonade_release.json \
+            --pin model_validation/hrx/lemonade_release.json \
             --output-dir release/lemonade
 
-      - name: Write benchmark metadata
+      - name: Write model validation metadata
         if: inputs.validation_mode != 'tests-only'
         env:
           HRX_SYSTEM_COMMIT: ${{ steps.sources.outputs.hrx_system }}
           LLAMA_CPP_COMMIT: ${{ steps.sources.outputs.llama_cpp }}
         run: |
-          python3 scripts/hrx/benchmark/write_benchmark_metadata.py \
-            --output "$PWD/lemonade-benchmark/metadata.json" \
+          python3 scripts/hrx/model_validation/write_validation_metadata.py \
+            --output "$PWD/model-validation/metadata.json" \
             --llama-cpp-commit "$LLAMA_CPP_COMMIT" \
             --hrx-system-commit "$HRX_SYSTEM_COMMIT" \
-            --lemonade-release benchmarks/hrx/lemonade_release.json
+            --lemonade-release model_validation/hrx/lemonade_release.json
 
       - name: Fetch perplexity corpus
         if: ${{ inputs.validation_mode != 'tests-only' && contains(fromJSON(inputs.include_checks), 'perplexity') }}
         run: |
-          python3 scripts/hrx/benchmark/fetch_wikitext2.py \
+          python3 scripts/hrx/model_validation/fetch_wikitext2.py \
             --output-dir "$PWD/perplexity-corpus"
 
       - name: Run HRX and Vulkan model validation
@@ -178,9 +178,9 @@ jobs:
           VALIDATION_MODEL_TIER: ${{ inputs.model_tier }}
         run: |
           set -euo pipefail
-          python3 scripts/hrx/benchmark/run_model_validation.py \
-            --validation-spec "$PWD/benchmarks/hrx/model_validation_spec.json" \
-            --model-manifest "$PWD/benchmarks/hrx/model_manifest.json" \
+          python3 scripts/hrx/model_validation/run_model_validation.py \
+            --validation-spec "$PWD/model_validation/hrx/model_validation_spec.json" \
+            --model-manifest "$PWD/model_validation/hrx/model_manifest.json" \
             --include-checks "$INCLUDE_CHECKS" \
             --model-tier "$VALIDATION_MODEL_TIER" \
             --model-ids "$VALIDATION_MODEL_IDS" \
@@ -196,23 +196,23 @@ jobs:
       - name: Write Lemonade benchmark report
         if: ${{ inputs.validation_mode != 'tests-only' && contains(fromJSON(inputs.include_checks), 'lemonade-benchmark') }}
         run: |
-          python3 scripts/hrx/benchmark/write_lemonade_benchmark_report.py \
-            "$PWD/lemonade-benchmark/benchmark-hrx.json" \
-            "$PWD/lemonade-benchmark/benchmark-vulkan.json" \
+          python3 scripts/hrx/model_validation/write_lemonade_benchmark_report.py \
+            "$PWD/model-validation/benchmark-hrx.json" \
+            "$PWD/model-validation/benchmark-vulkan.json" \
             >> "$GITHUB_STEP_SUMMARY"
 
       - name: Write perplexity report
         if: ${{ inputs.validation_mode != 'tests-only' && contains(fromJSON(inputs.include_checks), 'perplexity') }}
         run: |
-          python3 scripts/hrx/benchmark/write_perplexity_report.py \
-            "$PWD/lemonade-benchmark/perplexity.json" \
+          python3 scripts/hrx/model_validation/write_perplexity_report.py \
+            "$PWD/model-validation/perplexity.json" \
             >> "$GITHUB_STEP_SUMMARY"
 
       - name: Write long-context benchmark report
         if: ${{ inputs.validation_mode != 'tests-only' && contains(fromJSON(inputs.include_checks), 'long-context-benchmark') }}
         run: |
-          python3 scripts/hrx/benchmark/write_context_sweep_report.py \
-            "$PWD/lemonade-benchmark/long-context-benchmark.json" \
+          python3 scripts/hrx/model_validation/write_context_sweep_report.py \
+            "$PWD/model-validation/long-context-benchmark.json" \
             >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload model validation results
@@ -221,11 +221,11 @@ jobs:
         with:
           name: ${{ env.MODEL_VALIDATION_ARTIFACT_NAME }}
           path: |
-            lemonade-benchmark/benchmark-hrx.json
-            lemonade-benchmark/benchmark-vulkan.json
-            lemonade-benchmark/perplexity.json
-            lemonade-benchmark/long-context-benchmark.json
-            lemonade-benchmark/metadata.json
+            model-validation/benchmark-hrx.json
+            model-validation/benchmark-vulkan.json
+            model-validation/perplexity.json
+            model-validation/long-context-benchmark.json
+            model-validation/metadata.json
           if-no-files-found: error
           retention-days: 45
 
@@ -236,14 +236,14 @@ jobs:
         with:
           name: model-validation-debug-log-${{ matrix.gpu_target }}
           path: |
-            lemonade-benchmark-debug/lemond-hrx.log
-            lemonade-benchmark-debug/lemond-vulkan.log
-            lemonade-benchmark-debug/responses-hrx.jsonl
-            lemonade-benchmark-debug/responses-vulkan.jsonl
-            lemonade-benchmark-debug/perplexity-hrx.log
-            lemonade-benchmark-debug/perplexity-vulkan.log
-            lemonade-benchmark-debug/long-context-benchmark-hrx.log
-            lemonade-benchmark-debug/long-context-benchmark-vulkan.log
+            model-validation-debug/lemond-hrx.log
+            model-validation-debug/lemond-vulkan.log
+            model-validation-debug/responses-hrx.jsonl
+            model-validation-debug/responses-vulkan.jsonl
+            model-validation-debug/perplexity-hrx.log
+            model-validation-debug/perplexity-vulkan.log
+            model-validation-debug/long-context-benchmark-hrx.log
+            model-validation-debug/long-context-benchmark-vulkan.log
           if-no-files-found: warn
 
       - name: Fail unexpected model validation results

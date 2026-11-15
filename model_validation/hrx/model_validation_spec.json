@@ -1,0 +1,61 @@
+{
+  "checks": [
+    {
+      "id": "lemonade-benchmark",
+      "argv": [
+        "python3",
+        "scripts/hrx/model_validation/run_lemonade_benchmark.py",
+        "--lemonade-dir",
+        "release/lemonade",
+        "--llama-server",
+        "release/validation-package/bin/llama-server",
+        "--hrx-output",
+        "model-validation/benchmark-hrx.json",
+        "--vulkan-output",
+        "model-validation/benchmark-vulkan.json",
+        "--hrx-server-log",
+        "model-validation-debug/lemond-hrx.log",
+        "--vulkan-server-log",
+        "model-validation-debug/lemond-vulkan.log",
+        "--model-manifest",
+        "model_validation/hrx/model_manifest.json"
+      ]
+    },
+    {
+      "id": "perplexity",
+      "argv": [
+        "python3",
+        "scripts/hrx/model_validation/run_perplexity.py",
+        "--llama-perplexity",
+        "release/validation-package/bin/llama-perplexity",
+        "--model-manifest",
+        "model_validation/hrx/model_manifest.json",
+        "--corpus-file",
+        "perplexity-corpus/wiki.test.raw",
+        "--output",
+        "model-validation/perplexity.json",
+        "--hrx-log",
+        "model-validation-debug/perplexity-hrx.log",
+        "--vulkan-log",
+        "model-validation-debug/perplexity-vulkan.log"
+      ]
+    },
+    {
+      "id": "long-context-benchmark",
+      "argv": [
+        "python3",
+        "scripts/hrx/model_validation/run_context_sweep.py",
+        "--model-manifest",
+        "model_validation/hrx/model_manifest.json",
+        "--llama-bench",
+        "release/validation-package/bin/llama-bench",
+        "--output",
+        "model-validation/long-context-benchmark.json",
+        "--hrx-log",
+        "model-validation-debug/long-context-benchmark-hrx.log",
+        "--vulkan-log",
+        "model-validation-debug/long-context-benchmark-vulkan.log"
+      ]
+    }
+  ]
+}

@@ -12,7 +12,7 @@ Terms:
 - Batch: a subset of the selected models that fits on disk at once. Models in a
   batch are downloaded together, checked together, and deleted together.
 - Validation check: a command from the model validation specification (for
-  example run_perplexity_benchmark.py). It is invoked once per batch and is expected to
+  example run_perplexity.py). It is invoked once per batch and is expected to
   merge its per-batch results itself.
 - Expected result: ``expected_results`` maps check, backend and mode to
   "pass", "fail", or "report-only". Omitted cases expect a pass. Workers read
@@ -23,8 +23,8 @@ Terms:
 Why this exists: CI runners for the HRX release model validation checks have
 far less free disk than the full model set requires. Instead of pinning model validation to
 whatever fits, this driver keeps the model set as data
-(``benchmarks/hrx/model_manifest.json`` plus
-``benchmarks/hrx/model_validation_spec.json``), splits it into batches
+(``model_validation/hrx/model_manifest.json`` plus
+``model_validation/hrx/model_validation_spec.json``), splits it into batches
 that respect --max-disk-gib, and guarantees no batch leaks onto the next.
 
 Boundary contract:

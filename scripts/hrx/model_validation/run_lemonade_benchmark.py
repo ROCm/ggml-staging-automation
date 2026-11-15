@@ -23,7 +23,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from benchmark_output import append_batch_log, atomic_write_json, merge_benchmark_output
+from validation_output import append_batch_log, atomic_write_json, merge_validation_output
 from run_model_validation import load_manifest
 
 SCENARIOS = ("chat-short", "chat-long-output")
@@ -405,7 +405,7 @@ def run(args):
             finally:
                 daemon_returncode = stop_server(process)
                 if args.batched:
-                    merge_benchmark_output(destination, data)
+                    merge_validation_output(destination, data)
                 else:
                     atomic_write_json(destination, data)
                 if not args.batched:

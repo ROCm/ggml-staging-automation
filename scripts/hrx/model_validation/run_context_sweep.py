@@ -24,7 +24,7 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
-from benchmark_output import append_batch_log, atomic_write_json, merge_benchmark_output
+from validation_output import append_batch_log, atomic_write_json, merge_validation_output
 from run_model_validation import ModelSpec, load_manifest
 
 
@@ -430,7 +430,7 @@ def run(args: argparse.Namespace) -> int:
     if args.batched:
         if args.batch_number is None:
             raise ContextSweepError("--batch-number is required with --batched")
-        merge_benchmark_output(args.output, document)
+        merge_validation_output(args.output, document)
         for backend, log_path in logs.items():
             source = models_dir.parent / f"long-context-benchmark-{backend}.log"
             try:
