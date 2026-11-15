@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import Any
 
 from benchmark_output import append_batch_log, atomic_write_json, merge_benchmark_output
-from run_batched_benchmark import load_manifest
+from run_model_validation import load_manifest
 
 SCENARIOS = ("chat-short", "chat-long-output")
 

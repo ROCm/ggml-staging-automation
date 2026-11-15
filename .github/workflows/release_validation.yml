@@ -10,11 +10,11 @@ on:
   workflow_call:
     inputs:
       validation_mode:
-        description: tests-and-benchmarks, tests-only, or benchmarks-only.
+        description: tests-and-model-validation, tests-only, or model-validation-only.
         type: string
-        default: tests-and-benchmarks
-      include_benchmarks:
-        description: 'JSON benchmark IDs to run, e.g. ["long-context-benchmark"].'
+        default: tests-and-model-validation
+      include_checks:
+        description: 'JSON model validation check IDs to run, e.g. ["long-context-benchmark"].'
         type: string
         default: '["lemonade-benchmark","perplexity"]'
       name:
@@ -32,7 +32,7 @@ on:
         type: string
         default: '[]'
       model_tier:
-        description: Cumulative model manifest tier to benchmark.
+        description: Cumulative model manifest tier to validate.
         type: string
         required: true
       allow_failure:
@@ -45,7 +45,7 @@ permissions:
   actions: read
 
 jobs:
-  benchmark_llama_cpp_release_linux:
+  model_validation_llama_cpp_release_linux:
     name: ${{ inputs.name }} (${{ matrix.gpu_target }})
     continue-on-error: ${{ inputs.allow_failure }}
     strategy:
@@ -59,8 +59,8 @@ jobs:
     runs-on: ${{ matrix.runs_on }}
     timeout-minutes: 360
     env:
-      BENCHMARK_ARTIFACT_NAME: lemonade-bench-${{ matrix.gpu_target }}
-      BENCHMARK_STATE_NAME: lemonade-bench-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.gpu_target }}
+      MODEL_VALIDATION_ARTIFACT_NAME: model-validation-${{ matrix.gpu_target }}
+      MODEL_VALIDATION_STATE_NAME: model-validation-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.gpu_target }}
     steps:
       - name: Checkout automation repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -84,20 +84,20 @@ jobs:
             --output-dir release/benchmark-package
 
       - name: Install CTest
-        if: inputs.validation_mode != 'benchmarks-only'
+        if: inputs.validation_mode != 'model-validation-only'
         run: |
           sudo -n apt-get update
           sudo -n apt-get install -y --no-install-recommends cmake
 
       - name: Download HRX test package
-        if: inputs.validation_mode != 'benchmarks-only'
+        if: inputs.validation_mode != 'model-validation-only'
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: hrx-tests
           path: artifacts
 
       - name: Extract HRX test package
-        if: inputs.validation_mode != 'benchmarks-only'
+        if: inputs.validation_mode != 'model-validation-only'
         run: |
           python3 scripts/hrx/package/extract_release_package.py \
             --archive artifacts/hrx-tests.tar.gz \
@@ -106,7 +106,7 @@ jobs:
 
       - name: Run packaged HRX suites
         id: hrx_tests
-        if: inputs.validation_mode != 'benchmarks-only'
+        if: inputs.validation_mode != 'model-validation-only'
         env:
           LD_LIBRARY_PATH: ${{ github.workspace }}/release/benchmark-package/lib
         run: |
@@ -144,7 +144,7 @@ jobs:
           echo "hrx_system=$hrx_system" >> "$GITHUB_OUTPUT"
 
       - name: Install pinned Lemonade release
-        if: ${{ inputs.validation_mode != 'tests-only' && contains(fromJSON(inputs.include_benchmarks), 'lemonade-benchmark') }}
+        if: ${{ inputs.validation_mode != 'tests-only' && contains(fromJSON(inputs.include_checks), 'lemonade-benchmark') }}
         run: |
           python3 scripts/hrx/package/fetch_lemonade.py \
             --pin benchmarks/hrx/lemonade_release.json \
@@ -163,38 +163,38 @@ jobs:
             --lemonade-release benchmarks/hrx/lemonade_release.json
 
       - name: Fetch perplexity corpus
-        if: ${{ inputs.validation_mode != 'tests-only' && contains(fromJSON(inputs.include_benchmarks), 'perplexity') }}
+        if: ${{ inputs.validation_mode != 'tests-only' && contains(fromJSON(inputs.include_checks), 'perplexity') }}
         run: |
           python3 scripts/hrx/benchmark/fetch_wikitext2.py \
             --output-dir "$PWD/perplexity-corpus"
 
-      - name: Run batched HRX and Vulkan benchmarks
+      - name: Run HRX and Vulkan model validation
         if: inputs.validation_mode != 'tests-only'
-        id: benchmark
+        id: model_validation
         continue-on-error: true
         env:
-          INCLUDE_BENCHMARKS: ${{ inputs.include_benchmarks }}
-          BENCHMARK_MODEL_IDS: ${{ inputs.model_ids }}
-          BENCHMARK_MODEL_TIER: ${{ inputs.model_tier }}
+          INCLUDE_CHECKS: ${{ inputs.include_checks }}
+          VALIDATION_MODEL_IDS: ${{ inputs.model_ids }}
+          VALIDATION_MODEL_TIER: ${{ inputs.model_tier }}
         run: |
           set -euo pipefail
-          python3 scripts/hrx/benchmark/run_batched_benchmark.py \
-            --benchmark-spec "$PWD/benchmarks/hrx/benchmark_spec.json" \
+          python3 scripts/hrx/benchmark/run_model_validation.py \
+            --validation-spec "$PWD/benchmarks/hrx/model_validation_spec.json" \
             --model-manifest "$PWD/benchmarks/hrx/model_manifest.json" \
-            --include-benchmarks "$INCLUDE_BENCHMARKS" \
-            --model-tier "$BENCHMARK_MODEL_TIER" \
-            --model-ids "$BENCHMARK_MODEL_IDS" \
-            --work-root "$RUNNER_TEMP/$BENCHMARK_STATE_NAME" \
+            --include-checks "$INCLUDE_CHECKS" \
+            --model-tier "$VALIDATION_MODEL_TIER" \
+            --model-ids "$VALIDATION_MODEL_IDS" \
+            --work-root "$RUNNER_TEMP/$MODEL_VALIDATION_STATE_NAME" \
             --max-disk-gib 60
 
       - name: Remove perplexity corpus
-        # The runners are self-hosted, so benchmark inputs are removed explicitly.
+        # The runners are self-hosted, so model validation inputs are removed explicitly.
         if: ${{ always() && inputs.validation_mode != 'tests-only' }}
         run: |
           rm -rf "$PWD/perplexity-corpus"
 
       - name: Write Lemonade benchmark report
-        if: ${{ inputs.validation_mode != 'tests-only' && contains(fromJSON(inputs.include_benchmarks), 'lemonade-benchmark') }}
+        if: ${{ inputs.validation_mode != 'tests-only' && contains(fromJSON(inputs.include_checks), 'lemonade-benchmark') }}
         run: |
           python3 scripts/hrx/benchmark/write_lemonade_benchmark_report.py \
             "$PWD/lemonade-benchmark/benchmark-hrx.json" \
@@ -202,24 +202,24 @@ jobs:
             >> "$GITHUB_STEP_SUMMARY"
 
       - name: Write perplexity report
-        if: ${{ inputs.validation_mode != 'tests-only' && contains(fromJSON(inputs.include_benchmarks), 'perplexity') }}
+        if: ${{ inputs.validation_mode != 'tests-only' && contains(fromJSON(inputs.include_checks), 'perplexity') }}
         run: |
           python3 scripts/hrx/benchmark/write_perplexity_report.py \
             "$PWD/lemonade-benchmark/perplexity.json" \
             >> "$GITHUB_STEP_SUMMARY"
 
       - name: Write long-context benchmark report
-        if: ${{ inputs.validation_mode != 'tests-only' && contains(fromJSON(inputs.include_benchmarks), 'long-context-benchmark') }}
+        if: ${{ inputs.validation_mode != 'tests-only' && contains(fromJSON(inputs.include_checks), 'long-context-benchmark') }}
         run: |
           python3 scripts/hrx/benchmark/write_context_sweep_report.py \
             "$PWD/lemonade-benchmark/long-context-benchmark.json" \
             >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Upload benchmark results
-        if: ${{ always() && (steps.benchmark.outcome == 'success' || steps.benchmark.outcome == 'failure') }}
+      - name: Upload model validation results
+        if: ${{ always() && (steps.model_validation.outcome == 'success' || steps.model_validation.outcome == 'failure') }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: ${{ env.BENCHMARK_ARTIFACT_NAME }}
+          name: ${{ env.MODEL_VALIDATION_ARTIFACT_NAME }}
           path: |
             lemonade-benchmark/benchmark-hrx.json
             lemonade-benchmark/benchmark-vulkan.json
@@ -229,12 +229,12 @@ jobs:
           if-no-files-found: error
           retention-days: 45
 
-      - name: Upload benchmark debug logs
-        # Preserve diagnostics when the benchmark or report step fails.
-        if: ${{ always() && (steps.benchmark.outcome == 'success' || steps.benchmark.outcome == 'failure') }}
+      - name: Upload model validation debug logs
+        # Preserve diagnostics when model validation or report steps fail.
+        if: ${{ always() && (steps.model_validation.outcome == 'success' || steps.model_validation.outcome == 'failure') }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: lemonade-bench-debug-log-${{ matrix.gpu_target }}
+          name: model-validation-debug-log-${{ matrix.gpu_target }}
           path: |
             lemonade-benchmark-debug/lemond-hrx.log
             lemonade-benchmark-debug/lemond-vulkan.log
@@ -246,8 +246,8 @@ jobs:
             lemonade-benchmark-debug/long-context-benchmark-vulkan.log
           if-no-files-found: warn
 
-      - name: Fail unexpected benchmark results
-        if: ${{ always() && steps.benchmark.outcome == 'failure' }}
+      - name: Fail unexpected model validation results
+        if: ${{ always() && steps.model_validation.outcome == 'failure' }}
         run: |
-          echo "One or more benchmark batches had unexpected failures or XPASS results." >&2
+          echo "One or more model validation batches had unexpected failures or XPASS results." >&2
           exit 1

@@ -12,13 +12,13 @@ on:
       validation_mode:
         description: Validation steps to run.
         type: choice
-        default: tests-and-benchmarks
+        default: tests-and-model-validation
         options:
-          - tests-and-benchmarks
+          - tests-and-model-validation
           - tests-only
-          - benchmarks-only
-      include_benchmarks:
-        description: 'JSON benchmark IDs to run, e.g. ["long-context-benchmark"].'
+          - model-validation-only
+      include_checks:
+        description: 'JSON model validation check IDs to run, e.g. ["long-context-benchmark"].'
         type: string
         default: '["lemonade-benchmark","perplexity"]'
       model_ids:
@@ -26,7 +26,7 @@ on:
         type: string
         default: '[]'
       model_tier:
-        description: Model tier to benchmark.
+        description: Model tier to validate.
         required: true
         type: choice
         default: single
@@ -43,9 +43,9 @@ permissions:
 
 concurrency:
   # Coverage labels supersede active CI just like a new commit. Other labels
-  # get separate groups so their skipped runs cannot cancel active benchmarks.
+  # get separate groups so their skipped runs cannot cancel active model validation.
   group: >-
-    ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ inputs.validation_mode || 'tests-and-benchmarks' }}-${{ !contains(fromJSON('["ci:single-model","ci:small-models","ci:all-models"]'), github.event.label.name) && github.event.label.name || '' }}
+    ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ inputs.validation_mode || 'tests-and-model-validation' }}-${{ !contains(fromJSON('["ci:single-model","ci:small-models","ci:all-models"]'), github.event.label.name) && github.event.label.name || '' }}
   cancel-in-progress: true
 
 jobs:
@@ -84,10 +84,10 @@ jobs:
       package_root_name: llama.cpp-install
       upload_artifact: true
 
-  llama_cpp_release_bench:
+  llama_cpp_release_validation:
     name: Linux / HRX validation
     needs: [select_models, llama_cpp_linux]
-    uses: ./.github/workflows/release_test_bench.yml
+    uses: ./.github/workflows/release_validation.yml
     permissions:
       contents: read
       actions: read
@@ -97,5 +97,5 @@ jobs:
       package_root_name: llama.cpp-install
       model_tier: ${{ needs.select_models.outputs.model_tier }}
       model_ids: ${{ inputs.model_ids || '[]' }}
-      include_benchmarks: ${{ inputs.include_benchmarks || '["lemonade-benchmark","perplexity"]' }}
-      validation_mode: ${{ inputs.validation_mode || 'tests-and-benchmarks' }}
+      include_checks: ${{ inputs.include_checks || '["lemonade-benchmark","perplexity"]' }}
+      validation_mode: ${{ inputs.validation_mode || 'tests-and-model-validation' }}

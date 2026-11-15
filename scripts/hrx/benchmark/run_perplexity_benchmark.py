@@ -44,7 +44,7 @@ from benchmark_output import (
     atomic_write_json,
     merge_benchmark_output,
 )
-from run_batched_benchmark import ModelSpec, load_manifest
+from run_model_validation import ModelSpec, load_manifest
 
 
 FINAL_ESTIMATE_PATTERN = re.compile(

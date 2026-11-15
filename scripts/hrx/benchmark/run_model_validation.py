@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # Copyright Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
-"""Run benchmark workers over a tiered model set within a fixed disk bound.
+"""Run model validation checks over a tiered model set within a fixed disk bound.
 
 Terms:
 
@@ -10,28 +10,28 @@ Terms:
   the manifest order defines the size of the run. The reserved select-only
   tier is excluded; its models require explicit --model-ids.
 - Batch: a subset of the selected models that fits on disk at once. Models in a
-  batch are downloaded together, benchmarked together, and deleted together.
-- Benchmark worker: a command from the benchmark specification (for example
-  run_perplexity_benchmark.py). It is invoked once per batch and is expected to
+  batch are downloaded together, checked together, and deleted together.
+- Validation check: a command from the model validation specification (for
+  example run_perplexity_benchmark.py). It is invoked once per batch and is expected to
   merge its per-batch results itself.
 - Expected result: ``expected_results`` maps check, backend and mode to
   "pass", "fail", or "report-only". Omitted cases expect a pass. Workers read
   these expectations from the manifest; failures and XPASS are strict.
-- Test modes: optional ``test-modes`` selects cases independently per benchmark.
+- Test modes: optional ``test-modes`` selects cases independently per check.
   Perplexity remains one comparison per model using the "default" mode.
 
-Why this exists: CI runners for the HRX release benchmarks have far less free
-disk than the full model set requires. Instead of pinning benchmarks to
+Why this exists: CI runners for the HRX release model validation checks have
+far less free disk than the full model set requires. Instead of pinning model validation to
 whatever fits, this driver keeps the model set as data
 (``benchmarks/hrx/model_manifest.json`` plus
-``benchmarks/hrx/benchmark_spec.json``), splits it into batches
+``benchmarks/hrx/model_validation_spec.json``), splits it into batches
 that respect --max-disk-gib, and guarantees no batch leaks onto the next.
 
 Boundary contract:
 
-- Inputs: --benchmark-spec (ordered "benchmarks" with "id" and "argv"),
+- Inputs: --validation-spec (ordered "checks" with "id" and "argv"),
   --model-manifest (ordered "tiers" and "models"), --model-tier, --model-ids, --work-root,
-  and --max-disk-gib. Optional --include-benchmarks is a JSON array of IDs
+  and --max-disk-gib. Optional --include-checks is a JSON array of IDs
   to run in specification order.
   Both JSON files are fully validated up front; a malformed
   file fails the run before any download.
@@ -99,8 +99,8 @@ RATE_LIMIT_RETRY_DELAY = 60.0
 HF_BASE_URL = "https://huggingface.co"
 
 
-class BatchBenchmarkError(RuntimeError):
-    """Base error for an invalid or unsafe batched benchmark request."""
+class ModelValidationError(RuntimeError):
+    """Base error for an invalid or unsafe model validation request."""
 
 
 class DownloadError(RuntimeError):
@@ -121,7 +121,7 @@ class ModelSpec:
     sha256: str
 
     def modes(self, check: str) -> tuple[str, ...]:
-        """Use the ordinary case when this benchmark has no explicit modes."""
+        """Use the ordinary case when this check has no explicit modes."""
         return self.test_modes.get(check, ("default",))
 
     def expectation(self, check: str, backend: str, mode: str = "default") -> str:
@@ -141,7 +141,7 @@ class ModelManifest:
 
 
 @dataclass(frozen=True)
-class BenchmarkSpec:
+class ValidationCheck:
     id: str
     argv: tuple[str, ...]
 
@@ -154,14 +154,14 @@ def _load_json(path: Path, description: str) -> Any:
     try:
         return json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
-        raise BatchBenchmarkError(
+        raise ModelValidationError(
             f"Could not load {description} {path}: {exc}"
         ) from exc
 
 
 def _require_object(value: Any, context: str) -> dict[str, Any]:
     if not isinstance(value, dict):
-        raise BatchBenchmarkError(f"{context} must be a JSON object")
+        raise ModelValidationError(f"{context} must be a JSON object")
     return value
 
 
@@ -181,15 +181,15 @@ def _require_string_value(value: Any, context: str) -> str:
     value_is_present = bool(value)
     value_is_valid = value_is_a_string and value_is_present
     if not value_is_valid:
-        raise BatchBenchmarkError(f"{context} must be a non-empty string")
+        raise ModelValidationError(f"{context} must be a non-empty string")
     if "\0" in value:
-        raise BatchBenchmarkError(f"{context} must not contain a NUL byte")
+        raise ModelValidationError(f"{context} must not contain a NUL byte")
     return value
 
 
 def _validate_local_name(value: str, field: str, context: str) -> None:
     if value in {".", ".."} or "/" in value or "\\" in value:
-        raise BatchBenchmarkError(
+        raise ModelValidationError(
             f"{context}.{field} must be a safe single path component"
         )
 
@@ -201,7 +201,7 @@ def _validate_repository(repository: str, context: str) -> None:
         or not all(parts)
         or any(part in {".", ".."} for part in parts)
     ):
-        raise BatchBenchmarkError(
+        raise ModelValidationError(
             f"{context}.repository must be an owner/repository pair"
         )
 
@@ -216,7 +216,7 @@ def load_manifest(
     tiers_are_present = bool(raw_tiers)
     tiers_are_valid = tiers_are_an_array and tiers_are_present
     if not tiers_are_valid:
-        raise BatchBenchmarkError("manifest.tiers must be a non-empty array")
+        raise ModelValidationError("manifest.tiers must be a non-empty array")
 
     tiers: list[str] = []
     tier_names: set[str] = set()
@@ -226,13 +226,13 @@ def load_manifest(
             f"manifest.tiers[{tier_index}]",
         )
         if tier in tier_names:
-            raise BatchBenchmarkError(f"Duplicate model tier in manifest: {tier}")
+            raise ModelValidationError(f"Duplicate model tier in manifest: {tier}")
         tier_names.add(tier)
         tiers.append(tier)
 
     entries = root.get("models")
     if not isinstance(entries, list) or not entries:
-        raise BatchBenchmarkError("manifest.models must be a non-empty array")
+        raise ModelValidationError("manifest.models must be a non-empty array")
 
     models: list[ModelSpec] = []
     ids: set[str] = set()
@@ -268,57 +268,57 @@ def load_manifest(
 
         for check, modes in raw_modes.items():
             if check not in supported_modes:
-                raise BatchBenchmarkError(f"{context}: unknown benchmark {check!r}")
+                raise ModelValidationError(f"{context}: unknown check {check!r}")
             if known_checks is not None:
                 if check not in known_checks:
-                    raise BatchBenchmarkError(f"{context}: unknown check {check!r}")
+                    raise ModelValidationError(f"{context}: unknown check {check!r}")
             modes_are_list = isinstance(modes, list)
             modes_are_present = bool(modes)
             valid_mode_list = modes_are_list and modes_are_present
             if not valid_mode_list:
-                raise BatchBenchmarkError(f"{context}.test-modes.{check} must be a non-empty list")
+                raise ModelValidationError(f"{context}.test-modes.{check} must be a non-empty list")
             for mode in modes:
                 if not isinstance(mode, str):
-                    raise BatchBenchmarkError(f"{context}: modes for {check} must be strings")
+                    raise ModelValidationError(f"{context}: modes for {check} must be strings")
                 if not valid_mode(check, mode):
-                    raise BatchBenchmarkError(f"{context}: unsupported mode {mode!r} for {check}")
+                    raise ModelValidationError(f"{context}: unsupported mode {mode!r} for {check}")
             if len(set(modes)) != len(modes):
-                raise BatchBenchmarkError(f"{context}: duplicate modes for {check}")
+                raise ModelValidationError(f"{context}: duplicate modes for {check}")
             test_modes[check] = tuple(modes)
         expected_results = _require_object(entry.get("expected_results", {}), context)
         for check, backends in expected_results.items():
             if known_checks is not None:
                 if check not in known_checks:
-                    raise BatchBenchmarkError(f"{context}: unknown check {check!r}")
+                    raise ModelValidationError(f"{context}: unknown check {check!r}")
             if check not in supported_modes:
-                raise BatchBenchmarkError(f"{context}: unknown benchmark {check!r}")
+                raise ModelValidationError(f"{context}: unknown check {check!r}")
             valid_modes = test_modes.get(check, ("default",))
             for backend, modes in _require_object(backends, context).items():
                 if backend not in ("hrx", "vulkan"):
-                    raise BatchBenchmarkError(f"{context}: unknown backend {backend!r}")
+                    raise ModelValidationError(f"{context}: unknown backend {backend!r}")
                 for mode, result in _require_object(modes, context).items():
                     if mode not in valid_modes:
-                        raise BatchBenchmarkError(f"{context}: unused mode {mode!r} for {check}")
+                        raise ModelValidationError(f"{context}: unused mode {mode!r} for {check}")
                     if result not in ("pass", "fail", "report-only"):
-                        raise BatchBenchmarkError(f"{context}: invalid expectation {result!r}")
+                        raise ModelValidationError(f"{context}: invalid expectation {result!r}")
 
         _validate_local_name(name, "name", context)
         _validate_local_name(filename, "filename", context)
         _validate_repository(repository, context)
         if tier not in tier_names:
-            raise BatchBenchmarkError(
+            raise ModelValidationError(
                 f"{context}.tier references unknown tier {tier!r}"
             )
         if type(size_bytes) is not int or size_bytes <= 0:
-            raise BatchBenchmarkError(
+            raise ModelValidationError(
                 f"{context}.size_bytes must be a positive integer"
             )
         if model_id in ids:
-            raise BatchBenchmarkError(
+            raise ModelValidationError(
                 f"Duplicate model id in manifest: {model_id}"
             )
         if name in names:
-            raise BatchBenchmarkError(
+            raise ModelValidationError(
                 f"Duplicate runtime model name in manifest: {name}"
             )
 
@@ -341,23 +341,23 @@ def load_manifest(
     return ModelManifest(tiers=tuple(tiers), models=tuple(models))
 
 
-def load_benchmark_spec(path: Path) -> list[BenchmarkSpec]:
-    """Load an ordered version-one benchmark specification."""
+def load_validation_spec(path: Path) -> list[ValidationCheck]:
+    """Load an ordered model validation specification."""
     root = _require_object(
-        _load_json(path, "benchmark specification"),
-        "benchmark specification",
+        _load_json(path, "model validation specification"),
+        "model validation specification",
     )
-    entries = root.get("benchmarks")
+    entries = root.get("checks")
     entries_are_an_array = isinstance(entries, list)
     entries_are_present = bool(entries)
     entries_are_valid = entries_are_an_array and entries_are_present
     if not entries_are_valid:
-        raise BatchBenchmarkError(
-            "benchmark specification must contain at least one benchmark"
+        raise ModelValidationError(
+            "model validation specification must contain at least one check"
         )
 
-    benchmark_ids: set[str] = set()
-    benchmarks: list[BenchmarkSpec] = []
+    check_ids: set[str] = set()
+    checks: list[ValidationCheck] = []
     managed_arguments = {
         "--batched",
         "--batch-number",
@@ -365,21 +365,21 @@ def load_benchmark_spec(path: Path) -> list[BenchmarkSpec]:
         "--models",
     }
     for entry_index, raw_entry in enumerate(entries):
-        context = f"benchmark specification.benchmarks[{entry_index}]"
+        context = f"model validation specification.checks[{entry_index}]"
         entry = _require_object(raw_entry, context)
-        benchmark_id = _require_string(entry, "id", context)
-        if benchmark_id in benchmark_ids:
-            raise BatchBenchmarkError(
-                f"Duplicate benchmark id in specification: {benchmark_id}"
+        check_id = _require_string(entry, "id", context)
+        if check_id in check_ids:
+            raise ModelValidationError(
+                f"Duplicate check id in specification: {check_id}"
             )
-        benchmark_ids.add(benchmark_id)
+        check_ids.add(check_id)
 
         raw_argv = entry.get("argv")
         argv_is_an_array = isinstance(raw_argv, list)
         argv_is_present = bool(raw_argv)
         argv_is_valid = argv_is_an_array and argv_is_present
         if not argv_is_valid:
-            raise BatchBenchmarkError(
+            raise ModelValidationError(
                 f"{context}.argv must be a non-empty string array"
             )
         argv: list[str] = []
@@ -389,12 +389,12 @@ def load_benchmark_spec(path: Path) -> list[BenchmarkSpec]:
             argument_is_present = bool(raw_argument)
             argument_is_valid = argument_is_a_string and argument_is_present
             if not argument_is_valid:
-                raise BatchBenchmarkError(
+                raise ModelValidationError(
                     f"{argument_context} must be a non-empty string"
                 )
             argument_has_nul = "\0" in raw_argument
             if argument_has_nul:
-                raise BatchBenchmarkError(
+                raise ModelValidationError(
                     f"{argument_context} must not contain a NUL byte"
                 )
             argv.append(raw_argument)
@@ -410,38 +410,38 @@ def load_benchmark_spec(path: Path) -> list[BenchmarkSpec]:
                 if is_managed_argument:
                     present_managed.add(managed)
         if present_managed:
-            raise BatchBenchmarkError(
+            raise ModelValidationError(
                 f"{context}.argv must not contain batch-managed arguments: "
                 f"{', '.join(sorted(present_managed))}"
             )
-        benchmarks.append(BenchmarkSpec(id=benchmark_id, argv=tuple(argv)))
+        checks.append(ValidationCheck(id=check_id, argv=tuple(argv)))
 
-    return benchmarks
+    return checks
 
 
-def select_benchmarks(
-    benchmarks: list[BenchmarkSpec],
+def select_checks(
+    checks: list[ValidationCheck],
     requested: str,
-) -> list[BenchmarkSpec]:
+) -> list[ValidationCheck]:
     """Validate the user include list and preserve specification order."""
     try:
         ids = json.loads(requested)
     except json.JSONDecodeError as exc:
-        raise BatchBenchmarkError("--include-benchmarks must be a JSON array of IDs") from exc
+        raise ModelValidationError("--include-checks must be a JSON array of IDs") from exc
     if not isinstance(ids, list):
-        raise BatchBenchmarkError("--include-benchmarks must be a JSON array of IDs")
-    for benchmark_id in ids:
-        _require_string_value(benchmark_id, "--include-benchmarks entry")
-    known_ids = {benchmark.id for benchmark in benchmarks}
+        raise ModelValidationError("--include-checks must be a JSON array of IDs")
+    for check_id in ids:
+        _require_string_value(check_id, "--include-checks entry")
+    known_ids = {check.id for check in checks}
     unknown_ids = set(ids) - known_ids
     if unknown_ids:
-        raise BatchBenchmarkError(
-            f"Unknown benchmark IDs: {', '.join(sorted(unknown_ids))}; "
+        raise ModelValidationError(
+            f"Unknown model validation check IDs: {', '.join(sorted(unknown_ids))}; "
             f"available IDs: {', '.join(sorted(known_ids))}"
         )
-    selected = [benchmark for benchmark in benchmarks if benchmark.id in ids]
+    selected = [check for check in checks if check.id in ids]
     if not selected:
-        raise BatchBenchmarkError("--include-benchmarks must select at least one benchmark")
+        raise ModelValidationError("--include-checks must select at least one check")
     return selected
 
 
@@ -454,27 +454,27 @@ def select_models(
     try:
         requested_ids = json.loads(model_ids_json)
     except json.JSONDecodeError as exc:
-        raise BatchBenchmarkError("--model-ids must be a JSON array of model IDs") from exc
+        raise ModelValidationError("--model-ids must be a JSON array of model IDs") from exc
     if not isinstance(requested_ids, list):
-        raise BatchBenchmarkError("--model-ids must be a JSON array of model IDs")
+        raise ModelValidationError("--model-ids must be a JSON array of model IDs")
     for model_id in requested_ids:
         if not isinstance(model_id, str):
-            raise BatchBenchmarkError("--model-ids entries must be strings")
+            raise ModelValidationError("--model-ids entries must be strings")
     if len(set(requested_ids)) != len(requested_ids):
-        raise BatchBenchmarkError("--model-ids contains duplicate IDs")
+        raise ModelValidationError("--model-ids contains duplicate IDs")
     if requested_ids:
         known_ids = {model.id for model in manifest.models}
         unknown_ids = set(requested_ids) - known_ids
         if unknown_ids:
-            raise BatchBenchmarkError(f"Unknown model IDs: {', '.join(sorted(unknown_ids))}")
+            raise ModelValidationError(f"Unknown model IDs: {', '.join(sorted(unknown_ids))}")
         return [model for model in manifest.models if model.id in requested_ids]
     if requested_tier == "select-only":
-        raise BatchBenchmarkError("select-only models require explicit --model-ids")
+        raise ModelValidationError("select-only models require explicit --model-ids")
     try:
         requested_tier_index = manifest.tiers.index(requested_tier)
     except ValueError:
         available_tiers = ", ".join(manifest.tiers)
-        raise BatchBenchmarkError(
+        raise ModelValidationError(
             f"Unknown model tier {requested_tier!r}; "
             f"available tiers: {available_tiers}"
         ) from None
@@ -484,7 +484,7 @@ def select_models(
         model for model in manifest.models if model.tier in included_tiers
     ]
     if not selected:
-        raise BatchBenchmarkError(
+        raise ModelValidationError(
             f"Model tier {requested_tier!r} does not select any models"
         )
     return selected
@@ -493,13 +493,13 @@ def select_models(
 def calculate_batch_capacity(max_disk_gib: float, free_bytes: int) -> int:
     """Reserve 2 GiB and cap model residency by policy and current free space."""
     if not math.isfinite(max_disk_gib) or max_disk_gib <= 2:
-        raise BatchBenchmarkError(
+        raise ModelValidationError(
             "--max-disk-gib must be finite and greater than 2"
         )
 
     maximum_bytes = int(max_disk_gib * GIB)
     if free_bytes <= RESERVED_BYTES:
-        raise BatchBenchmarkError(
+        raise ModelValidationError(
             f"Only {free_bytes} bytes are free; "
             f"{RESERVED_BYTES} bytes are reserved"
         )
@@ -519,7 +519,7 @@ def plan_batches(
         details = ", ".join(
             f"{model.id} ({model.size_bytes} bytes)" for model in oversized
         )
-        raise BatchBenchmarkError(
+        raise ModelValidationError(
             f"Selected model(s) exceed the {capacity_bytes}-byte batch capacity: "
             f"{details}"
         )
@@ -561,7 +561,7 @@ def _download_once(
     """Stream and verify one complete response from byte zero."""
     request = urllib.request.Request(
         model.download_url,
-        headers={"User-Agent": "hrx-benchmark/1"},
+        headers={"User-Agent": "hrx-check/1"},
     )
     actual_size = 0
     digest = hashlib.sha256()
@@ -721,7 +721,7 @@ def cleanup_batch(batch_dir: Path) -> None:
     """Remove a completed batch and confirm its disappearance."""
     shutil.rmtree(batch_dir)
     if batch_dir.exists() or batch_dir.is_symlink():
-        raise BatchBenchmarkError(
+        raise ModelValidationError(
             f"Batch cleanup did not remove target: {batch_dir}"
         )
 
@@ -730,20 +730,20 @@ def cleanup_work_root(work_root: Path) -> None:
     """Remove the empty work root and confirm its disappearance."""
     work_root.rmdir()
     if work_root.exists() or work_root.is_symlink():
-        raise BatchBenchmarkError(
+        raise ModelValidationError(
             f"Work-root cleanup did not remove target: {work_root}"
         )
 
 
-def build_benchmark_command(
-    benchmark: BenchmarkSpec,
+def build_check_command(
+    check: ValidationCheck,
     *,
     batch_number: int,
     models_dir: Path,
     resident: list[ModelSpec],
 ) -> list[str]:
     return [
-        *benchmark.argv,
+        *check.argv,
         "--batched",
         "--batch-number",
         str(batch_number),
@@ -760,7 +760,7 @@ def _format_bytes(value: int) -> str:
 
 def _summarize_failures(failures: list[str]) -> None:
     if not failures:
-        log("Batched benchmark completed successfully")
+        log("Model validation completed successfully")
         return
 
     print(f"Failure summary ({len(failures)}):", file=sys.stderr)
@@ -775,13 +775,13 @@ def run(args: argparse.Namespace) -> int:
     cleanup_exact = True
 
     try:
-        benchmarks = load_benchmark_spec(args.benchmark_spec)
+        checks = load_validation_spec(args.validation_spec)
         manifest = load_manifest(
-            args.model_manifest, known_checks={benchmark.id for benchmark in benchmarks}
+            args.model_manifest, known_checks={check.id for check in checks}
         )
         # Model expectations may refer to workers omitted from this run.
-        benchmarks = select_benchmarks(benchmarks, args.include_benchmarks)
-        log(f"Selected benchmarks: {', '.join(benchmark.id for benchmark in benchmarks)}")
+        checks = select_checks(checks, args.include_checks)
+        log(f"Selected model validation checks: {', '.join(check.id for check in checks)}")
         selected = select_models(manifest, args.model_tier, args.model_ids)
         work_root = prepare_work_root(args.work_root)
 
@@ -822,13 +822,13 @@ def run(args: argparse.Namespace) -> int:
                 )
                 if not resident:
                     log(
-                        f"Skipping benchmarks for batch {batch_number}: "
+                        f"Skipping model validation for batch {batch_number}: "
                         "no models downloaded successfully"
                     )
                 else:
-                    for benchmark in benchmarks:
-                        command = build_benchmark_command(
-                            benchmark,
+                    for check in checks:
+                        command = build_check_command(
+                            check,
                             batch_number=batch_number,
                             models_dir=models_dir,
                             resident=resident,
@@ -838,23 +838,23 @@ def run(args: argparse.Namespace) -> int:
                             completed = subprocess.run(command, check=False)
                         except OSError as exc:
                             log(
-                                f"Benchmark {benchmark.id} batch "
+                                f"Check {check.id} batch "
                                 f"{batch_number} failed to run: {exc}"
                             )
                             failures.append(
-                                "benchmark invocation "
+                                "check invocation "
                                 f"(batch={batch_number}, "
-                                f"benchmark={benchmark.id}): {exc}"
+                                f"check={check.id}): {exc}"
                             )
                             continue
                         log(
-                            f"Benchmark {benchmark.id} batch {batch_number} "
+                            f"Check {check.id} batch {batch_number} "
                             f"exited with status {completed.returncode}"
                         )
                         if completed.returncode != 0:
                             failures.append(
-                                "benchmark exit "
-                                f"(batch={batch_number}, benchmark={benchmark.id}): "
+                                "check exit "
+                                f"(batch={batch_number}, check={check.id}): "
                                 "command exited with status "
                                 f"{completed.returncode}"
                             )
@@ -867,7 +867,7 @@ def run(args: argparse.Namespace) -> int:
             finally:
                 try:
                     cleanup_batch(batch_dir)
-                except (BatchBenchmarkError, OSError) as exc:
+                except (ModelValidationError, OSError) as exc:
                     cleanup_exact = False
                     failures.append(
                         f"cleanup (batch={batch_number}): {exc}"
@@ -881,13 +881,13 @@ def run(args: argparse.Namespace) -> int:
                     log(f"Cleaned batch {batch_number}: {batch_dir}")
             if not cleanup_exact:
                 break
-    except (BatchBenchmarkError, OSError) as exc:
+    except (ModelValidationError, OSError) as exc:
         failures.append(f"setup: {exc}")
     finally:
         if work_root is not None and cleanup_exact:
             try:
                 cleanup_work_root(work_root)
-            except (BatchBenchmarkError, OSError) as exc:
+            except (ModelValidationError, OSError) as exc:
                 failures.append(
                     f"cleanup: Could not remove work root {work_root}: {exc}"
                 )
@@ -901,15 +901,15 @@ def run(args: argparse.Namespace) -> int:
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--benchmark-spec",
+        "--validation-spec",
         type=Path,
         required=True,
         help="JSON command list; relative argv paths use the current directory",
     )
     parser.add_argument(
-        "--include-benchmarks",
+        "--include-checks",
         default='["lemonade-benchmark","perplexity"]',
-        help='JSON array of benchmark IDs to run; default: ["lemonade-benchmark","perplexity"]',
+        help='JSON array of check IDs to run; default: ["lemonade-benchmark","perplexity"]',
     )
     parser.add_argument("--model-manifest", type=Path, required=True)
     parser.add_argument("--model-tier", default="single", metavar="TIER")
@@ -925,8 +925,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     try:
         return run(parse_args(argv))
-    except (BatchBenchmarkError, OSError) as exc:
-        print(f"Batched benchmark failed: {exc}", file=sys.stderr)
+    except (ModelValidationError, OSError) as exc:
+        print(f"Model validation failed: {exc}", file=sys.stderr)
         return 1
 
 

@@ -1,11 +1,15 @@
-# Benchmarking
+# Model validation
 
-By default, CI runs the packaged HRX suites before benchmarks in the same GPU
+Model validation runs the `lemonade-benchmark` and `perplexity` checks over
+selected GGUF models by default. The `long-context-benchmark` check is opt-in.
+The check IDs also name their manifest expectations.
+
+By default, CI runs the packaged HRX suites before model validation in the same GPU
 job and stops if a suite fails. The [CI validation guide](../ci/README.md)
-describes tests-only and benchmarks-only execution. These workflow modes are
+describes tests-only and model-validation-only execution. These workflow modes are
 separate from the per-model `test-modes` described below.
 
-When benchmarks run, PR CI defaults to the `single` tier defined in the model
+When model validation runs, PR CI defaults to the `single` tier defined in the model
 manifest. The cumulative `small` tier covers
 Lemonade's smaller-model suite; `all` covers every ordinary model. Automated submodule
 bumps use `all`.
@@ -37,7 +41,7 @@ See [run_lemonade_benchmark.py](run_lemonade_benchmark.py) for the setup mechani
 its function docstrings explain private daemon state, local-path registrations,
 recipe options, executable overrides and runtime verification.
 
-`test-modes` maps benchmark IDs to independent cases. A benchmark omitted from
+`test-modes` maps check IDs to independent cases. A check omitted from
 that mapping uses `["default"]` on both backends. Setting
 `"lemonade-benchmark": ["mtp:off", "mtp:on"]` produces two comparisons:
 HRX/off versus Vulkan/off and HRX/on versus Vulkan/on. Off supplies
@@ -54,7 +58,7 @@ measure a 32K-token prefill ending at each model's GGUF-declared maximum context
 then 256-token decode at that context. It uses llama-bench's default warmup and
 two measured repetitions per case. `--contexts` accepts `max` and comma-separated
 numeric lengths for additional cases; numeric lengths above a model's limit are
-skipped. Select it with the CI `include_benchmarks` input set to
+skipped. Select it with the CI `include_checks` input set to
 `["long-context-benchmark"]`; the default remains `["lemonade-benchmark","perplexity"]`.
 
 Speculative counters and verification of actual drafting are deferred. A passing
@@ -85,7 +89,7 @@ perplexity, explicit `mtp:off`/`mtp:on` keys for expanded Lemonade cases, and
 decimal token counts for long-context benchmark exceptions. `fail`
 requires failure (a success is a CI-failing XPASS); `report-only` retains the
 measured outcome without gating. No exception is inherited by the other mode
-or backend. Unsupported benchmark/mode combinations, duplicate modes and
+or backend. Unsupported check/mode combinations, duplicate modes and
 expectations for unselected modes are rejected. Modes are independent cases,
 not a Cartesian product. Short perplexity supports only `default`.
 Infrastructure and malformed-artifact errors remain fatal.

@@ -1,5 +1,5 @@
 {
-  "benchmarks": [
+  "checks": [
     {
       "id": "lemonade-benchmark",
       "argv": [

@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Any
 
 from benchmark_output import append_batch_log, atomic_write_json, merge_benchmark_output
-from run_batched_benchmark import ModelSpec, load_manifest
+from run_model_validation import ModelSpec, load_manifest
 
 
 DEFAULT_CONTEXTS = ("max",)

@@ -76,14 +76,14 @@ same basic packaging model with DLL copying instead of ELF RPATHs.
 
 ## CI validation
 
-CI runs the packaged HRX test suites before model benchmarks in the same GPU
-job. Failed tests stop benchmark execution. See the
+CI runs the packaged HRX test suites before model validation in the same GPU
+job. Failed tests stop model validation. See the
 [HRX test workflow guide](scripts/hrx/ci/README.md) for the three validation
 modes, package contents, and test results.
 
 CI compares HRX and Vulkan through released Lemonade and runs perplexity checks.
-See the [benchmarking guide](scripts/hrx/benchmark/README.md) for model tiers,
-per-benchmark test modes, expectations and release configuration.
+See the [model validation guide](scripts/hrx/benchmark/README.md) for model tiers,
+per-check test modes, expectations and release configuration.
 
 ## Releases
 

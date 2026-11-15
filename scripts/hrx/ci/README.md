@@ -10,13 +10,13 @@ contains no runtime libraries: tests use the standard release archive's `lib/`
 directory through `LD_LIBRARY_PATH`. Both archives must come from the same build. Scheduled release builds also produce the test artifact;
 the published release archive does not contain tests.
 
-CI runs tests first in the existing benchmark GPU job. A failing suite stops
-benchmark setup and execution. The manual `validation_mode` input selects
-`tests-and-benchmarks` (the default), `tests-only`, or `benchmarks-only`.
+CI runs tests first in the existing model validation GPU job. A failing suite stops
+model validation setup and execution. The manual `validation_mode` input selects
+`tests-and-model-validation` (the default), `tests-only`, or `model-validation-only`.
 Tests-only downloads both the test and standard release archives, but skips the
-pinned Lemonade release download, model/corpus downloads, and benchmark reports. The [benchmarking guide](../benchmark/README.md)
-explains the model tiers, benchmark selection, and per-model test modes that
-apply when benchmarks run.
+pinned Lemonade release download, model/corpus downloads, and model validation reports. The [model validation guide](../benchmark/README.md)
+explains the model tiers, check selection, and per-model test modes that
+apply when model validation runs.
 All modes use the checked-in submodule revisions.
 
 The workflow invokes CTest directly and preserves its exit status. GPU visibility is

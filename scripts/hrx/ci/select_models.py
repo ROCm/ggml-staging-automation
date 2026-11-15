@@ -4,7 +4,7 @@
 """Select CI coverage from GitHub's event payload.
 
 Coverage labels and manual dispatch override path filtering. Unlabeled PRs
-use the single tier when their whole diff affects build or benchmark inputs.
+use the single tier when their whole diff affects build or model validation inputs.
 The CI workflow consumes should_run and model_tier through GITHUB_OUTPUT;
 README.md describes the coverage policy and label behavior.
 """
@@ -29,7 +29,7 @@ RELEVANT_FILES = {
     "rocm-version.json",
     ".github/workflows/ci.yml",
     ".github/workflows/build_llama_cpp_linux.yml",
-    ".github/workflows/release_test_bench.yml",
+    ".github/workflows/release_validation.yml",
 }
 RELEVANT_DIRECTORIES = (
     "scripts/hrx/build/",
@@ -72,8 +72,8 @@ def select_models(event_name: str, event: dict) -> tuple[bool, str, str]:
         if requested_tiers:
             return True, model_tier, "explicit coverage label"
         if any(is_relevant(path) for path in changed_paths(event)):
-            return True, model_tier, "build or benchmark inputs changed"
-        return False, model_tier, "no build or benchmark inputs changed"
+            return True, model_tier, "build or model validation inputs changed"
+        return False, model_tier, "no build or model validation inputs changed"
 
     raise ValueError(f"Unsupported CI event: {event_name}")
 
