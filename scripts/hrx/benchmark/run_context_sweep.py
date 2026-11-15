@@ -116,7 +116,7 @@ def resolve_models(manifest_path: Path, models_dir: Path, names: list[str]) -> l
     return resolved
 
 
-def inspect_model(model_path: Path) -> tuple[int | None, str | None]:
+def inspect_model(model_path: Path) -> int:
     """Read the architecture context field from the GGUF metadata header."""
     try:
         with model_path.open("rb") as model_file:
@@ -184,9 +184,9 @@ def inspect_model(model_path: Path) -> tuple[int | None, str | None]:
             context = values.get(f"{architecture}.context_length")
             if not isinstance(context, int) or context < 1:
                 raise ValueError(f"missing or invalid {architecture}.context_length metadata")
-            return context, None
+            return context
     except (KeyError, TypeError, ValueError, OSError, UnicodeDecodeError, struct.error) as exc:
-        return None, f"could not read GGUF context metadata: {exc}"
+        raise ContextSweepError(f"Could not read GGUF context metadata from {model_path}: {exc}") from exc
 
 
 def measurement_command(
@@ -378,54 +378,41 @@ def run(args: argparse.Namespace) -> int:
     }
     unexpected = False
     for spec, model_path in models:
-        model_context, inspect_error = inspect_model(model_path)
+        model_context = inspect_model(model_path)
         row: dict[str, Any] = {
             "model": spec.name, "model_id": spec.id, "file": spec.filename,
             "model_sha256": spec.sha256, "model_revision": spec.revision,
             "model_context": model_context, "batch": args.batch_number, "contexts": {},
             "expected_results": {backend: {} for backend in ("hrx", "vulkan")},
         }
-        if inspect_error:
-            for context_length in args.context_lengths:
-                by_backend = {}
-                for backend in logs:
-                    measurement = {
-                        "status": "failed", "error": inspect_error,
-                        "failure_kind": "infrastructure", "log": logs[backend].name,
-                    }
-                    by_backend[backend] = {
-                        "prefill": dict(measurement), "decode": dict(measurement),
-                    }
-                unexpected = record_context(row, context_length, by_backend, spec) or unexpected
-        else:
-            requested_contexts = tuple(
-                model_context if length == "max" else length for length in args.context_lengths
-            )
-            eligible_contexts = tuple(sorted({
-                length for length in requested_contexts
-                if args.decode_tokens < length <= model_context
-            }))
-            for context_length in eligible_contexts:
-                by_backend = {}
-                for backend, device in (("hrx", args.hrx_device), ("vulkan", args.vulkan_device)):
-                    active_log = logs[backend]
-                    if args.batched:
-                        active_log = models_dir.parent / f"long-context-benchmark-{backend}.log"
-                    by_backend[backend] = {
-                        "prefill": run_measurement(
-                            llama_bench, model_path, device, context_length, model_context,
-                            "prefill", args, active_log,
-                        ),
-                        "decode": run_measurement(
-                            llama_bench, model_path, device, context_length, model_context,
-                            "decode", args, active_log,
-                        ),
-                    }
-                unexpected = record_context(row, context_length, by_backend, spec) or unexpected
-                log(f"{spec.id} context={context_length}: HRX pp={by_backend['hrx']['prefill'].get('tokens_per_second')} tg={by_backend['hrx']['decode'].get('tokens_per_second')}; Vulkan pp={by_backend['vulkan']['prefill'].get('tokens_per_second')} tg={by_backend['vulkan']['decode'].get('tokens_per_second')}")
-            for context_length in args.context_lengths:
-                if isinstance(context_length, int) and context_length > model_context:
-                    log(f"{spec.id} context={context_length}: skipped above GGUF context {model_context}")
+        requested_contexts = tuple(
+            model_context if length == "max" else length for length in args.context_lengths
+        )
+        eligible_contexts = tuple(sorted({
+            length for length in requested_contexts
+            if args.decode_tokens < length <= model_context
+        }))
+        for context_length in eligible_contexts:
+            by_backend = {}
+            for backend, device in (("hrx", args.hrx_device), ("vulkan", args.vulkan_device)):
+                active_log = logs[backend]
+                if args.batched:
+                    active_log = models_dir.parent / f"long-context-benchmark-{backend}.log"
+                by_backend[backend] = {
+                    "prefill": run_measurement(
+                        llama_bench, model_path, device, context_length, model_context,
+                        "prefill", args, active_log,
+                    ),
+                    "decode": run_measurement(
+                        llama_bench, model_path, device, context_length, model_context,
+                        "decode", args, active_log,
+                    ),
+                }
+            unexpected = record_context(row, context_length, by_backend, spec) or unexpected
+            log(f"{spec.id} context={context_length}: HRX pp={by_backend['hrx']['prefill'].get('tokens_per_second')} tg={by_backend['hrx']['decode'].get('tokens_per_second')}; Vulkan pp={by_backend['vulkan']['prefill'].get('tokens_per_second')} tg={by_backend['vulkan']['decode'].get('tokens_per_second')}")
+        for context_length in args.context_lengths:
+            if isinstance(context_length, int) and context_length > model_context:
+                log(f"{spec.id} context={context_length}: skipped above GGUF context {model_context}")
         document["models"].append(row)
         row["result"] = aggregate_status(
             values["hrx"]["result"] for values in row["contexts"].values()

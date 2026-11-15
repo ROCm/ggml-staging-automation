@@ -59,8 +59,7 @@ def format_report(document: dict[str, Any]) -> str:
         ])
     failures = []
     for model in document["models"]:
-        declared_context = model["model_context"]
-        declared_context_text = f"{declared_context:,}" if declared_context is not None else "unknown"
+        declared_context_text = f"{model['model_context']:,}"
         for context, backends in model["contexts"].items():
             hrx = backends["hrx"]
             vulkan = backends["vulkan"]
@@ -84,8 +83,6 @@ def format_report(document: dict[str, Any]) -> str:
                         )
     skipped = []
     for model in document["models"]:
-        if model["model_context"] is None:
-            continue
         lengths = [length for length in settings["context_lengths"]
                    if isinstance(length, int) and length > model["model_context"]]
         if lengths:
