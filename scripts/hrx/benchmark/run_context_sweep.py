@@ -189,10 +189,10 @@ def inspect_model(model_path: Path) -> tuple[int | None, str | None]:
         return None, f"could not read GGUF context metadata: {exc}"
 
 
-def run_measurement(
+def measurement_command(
     llama_bench: Path, model_path: Path, device: str, context_length: int,
-    model_context: int, kind: str, args: argparse.Namespace, log_path: Path,
-) -> dict[str, Any]:
+    kind: str, args: argparse.Namespace,
+) -> tuple[list[str], int, int, int]:
     if kind == "prefill":
         prompt = min(args.prefill_tokens, context_length)
         generated, depth = 0, context_length - prompt
@@ -205,26 +205,87 @@ def run_measurement(
         "-b", str(args.batch_size), "-ub", str(args.ubatch_size),
         "-r", str(args.repetitions), "-o", "json",
     ]
-    def execute(argv: list[str]) -> tuple[str, str, int | None, bool, float]:
-        started = time.monotonic()
+    return command, prompt, generated, depth
+
+
+def execute(command: list[str], timeout: float) -> tuple[str, str, int | None, bool, float]:
+    started = time.monotonic()
+    try:
+        result = subprocess.run(
+            command, text=True, encoding="utf-8", errors="replace",
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout,
+        )
+        return result.stdout, result.stderr, result.returncode, False, time.monotonic() - started
+    except subprocess.TimeoutExpired as exc:
+        stdout = exc.stdout or ""
+        stderr = exc.stderr or ""
+        if isinstance(stdout, bytes):
+            stdout = stdout.decode("utf-8", errors="replace")
+        if isinstance(stderr, bytes):
+            stderr = stderr.decode("utf-8", errors="replace")
+        return stdout, stderr, None, True, time.monotonic() - started
+
+
+def interpret_result(
+    measurement: dict[str, Any], stdout: str, stderr: str,
+    exit_code: int | None, timed_out: bool, device: str, timeout: float,
+) -> None:
+    if not timed_out and exit_code == 0:
         try:
-            result = subprocess.run(
-                argv, text=True, encoding="utf-8", errors="replace",
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                timeout=args.run_timeout_seconds,
-            )
-            return result.stdout, result.stderr, result.returncode, False, time.monotonic() - started
-        except subprocess.TimeoutExpired as exc:
-            stdout = exc.stdout or ""
-            stderr = exc.stderr or ""
-            if isinstance(stdout, bytes):
-                stdout = stdout.decode("utf-8", errors="replace")
-            if isinstance(stderr, bytes):
-                stderr = stderr.decode("utf-8", errors="replace")
-            return stdout, stderr, None, True, time.monotonic() - started
+            rows = json.loads(stdout)
+            if not isinstance(rows, list) or len(rows) != 1:
+                raise ValueError("expected one llama-bench JSON row")
+            row = rows[0]
+            if (row.get("n_prompt") != measurement["prompt_tokens"]
+                    or row.get("n_gen") != measurement["decode_tokens"]
+                    or row.get("n_depth") != measurement["decode_history_tokens"]):
+                raise ValueError("llama-bench returned a row with different token counts")
+            throughput = float(row["avg_ts"])
+            if not throughput > 0:
+                raise ValueError("llama-bench returned nonpositive throughput")
+            measurement.update({
+                "status": "ok", "tokens_per_second": throughput,
+                "stddev_tokens_per_second": float(row["stddev_ts"]),
+                "avg_ns": int(row["avg_ns"]), "stddev_ns": int(row["stddev_ns"]),
+                "backend": row.get("backends"), "gpu_layers": row.get("n_gpu_layers"),
+                "cache_type_k": row.get("type_k"), "cache_type_v": row.get("type_v"),
+                "llama_bench_row": row,
+            })
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            measurement.update({
+                "error": f"invalid llama-bench result: {exc}",
+                "failure_kind": "invalid-measurement",
+            })
+        return
+
+    combined = (stdout + "\n" + stderr).lower()
+    if timed_out:
+        error, failure_kind = f"timed out after {timeout} seconds", "execution"
+    elif exit_code == -9 or any(term in combined for term in ("out of memory", "allocation failed", "failed to allocate", "out of device memory", "std::bad_alloc")):
+        error, failure_kind = f"llama-bench exited {exit_code} after allocation failure", "resource-exhausted"
+    elif any(term in combined for term in ("no matching device", "device not found", "unknown device", "failed to initialize backend", "unsupported device")):
+        error, failure_kind = f"backend device unavailable: {device}", "infrastructure"
+    elif any(term in combined for term in (
+        "prefill failed", "decode failed", "failed to decode",
+        "llama_decode failed", "failed to evaluate", "evaluation failed",
+        "failed to compute", "graph compute failed", "nonfinite", "non-finite",
+    )):
+        error, failure_kind = f"model execution failed: llama-bench exited {exit_code}", "model-execution"
+    else:
+        error, failure_kind = f"llama-bench exited with status {exit_code}", "infrastructure"
+    measurement.update({"error": error, "failure_kind": failure_kind})
+
+
+def run_measurement(
+    llama_bench: Path, model_path: Path, device: str, context_length: int,
+    model_context: int, kind: str, args: argparse.Namespace, log_path: Path,
+) -> dict[str, Any]:
+    command, prompt, generated, depth = measurement_command(
+        llama_bench, model_path, device, context_length, kind, args,
+    )
 
     log("++ " + shlex.join(command))
-    stdout, stderr, exit_code, timed_out, duration_s = execute(command)
+    stdout, stderr, exit_code, timed_out, duration_s = execute(command, args.run_timeout_seconds)
     log_path.parent.mkdir(parents=True, exist_ok=True)
     with log_path.open("a", encoding="utf-8") as handle:
         handle.write(f"===== {device} {kind} context={context_length} =====\n")
@@ -243,52 +304,40 @@ def run_measurement(
         "llama_bench_default_warmup": True,
         "repetitions": args.repetitions,
     }
-    if not timed_out and exit_code == 0:
-        try:
-            rows = json.loads(stdout)
-            if not isinstance(rows, list) or len(rows) != 1:
-                raise ValueError("expected one llama-bench JSON row")
-            row = rows[0]
-            expected_prompt = prompt
-            expected_generated = generated
-            expected_depth = depth
-            if (row.get("n_prompt") != expected_prompt or row.get("n_gen") != expected_generated
-                    or row.get("n_depth") != expected_depth):
-                raise ValueError("llama-bench returned a row with different token counts")
-            throughput = float(row["avg_ts"])
-            if not throughput > 0:
-                raise ValueError("llama-bench returned nonpositive throughput")
-            measurement.update({
-                "status": "ok", "tokens_per_second": throughput,
-                "stddev_tokens_per_second": float(row["stddev_ts"]),
-                "avg_ns": int(row["avg_ns"]), "stddev_ns": int(row["stddev_ns"]),
-                "backend": row.get("backends"), "gpu_layers": row.get("n_gpu_layers"),
-                "cache_type_k": row.get("type_k"), "cache_type_v": row.get("type_v"),
-                "llama_bench_row": row,
-            })
-        except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
-            measurement.update({
-                "error": f"invalid llama-bench result: {exc}",
-                "failure_kind": "invalid-measurement",
-            })
-    else:
-        combined = (stdout + "\n" + stderr).lower()
-        if timed_out:
-            error, failure_kind = f"timed out after {args.run_timeout_seconds} seconds", "execution"
-        elif exit_code == -9 or any(term in combined for term in ("out of memory", "allocation failed", "failed to allocate", "out of device memory", "std::bad_alloc")):
-            error, failure_kind = f"llama-bench exited {exit_code} after allocation failure", "resource-exhausted"
-        elif any(term in combined for term in ("no matching device", "device not found", "unknown device", "failed to initialize backend", "unsupported device")):
-            error, failure_kind = f"backend device unavailable: {device}", "infrastructure"
-        elif any(term in combined for term in (
-            "prefill failed", "decode failed", "failed to decode",
-            "llama_decode failed", "failed to evaluate", "evaluation failed",
-            "failed to compute", "graph compute failed", "nonfinite", "non-finite",
-        )):
-            error, failure_kind = f"model execution failed: llama-bench exited {exit_code}", "model-execution"
-        else:
-            error, failure_kind = f"llama-bench exited with status {exit_code}", "infrastructure"
-        measurement.update({"error": error, "failure_kind": failure_kind})
+    interpret_result(measurement, stdout, stderr, exit_code, timed_out, device, args.run_timeout_seconds)
     return measurement
+
+
+def score_backend(measurements: dict[str, Any], expectation: str) -> None:
+    result = aggregate_status(measurements[kind]["status"] for kind in ("prefill", "decode"))
+    failure_kinds = [
+        measurements[kind].get("failure_kind") for kind in ("prefill", "decode")
+        if measurements[kind]["status"] != "ok"
+    ]
+    measurements["result"] = result
+    measurements["outcome"] = classify_outcome(
+        result, expectation,
+        expected_failure_allowed=all(kind in MODEL_FAILURE_KINDS for kind in failure_kinds),
+        infrastructure_failure=any(kind not in MODEL_FAILURE_KINDS for kind in failure_kinds),
+    )
+
+
+def record_context(
+    row: dict[str, Any], context: int | str, by_backend: dict[str, Any], spec: ModelSpec,
+) -> bool:
+    context_key = str(context)
+    row["contexts"][context_key] = by_backend
+    for backend, measurements in by_backend.items():
+        expectation = spec.expectation("long-context-benchmark", backend, context_key)
+        row["expected_results"][backend][context_key] = expectation
+        score_backend(measurements, expectation)
+    return any(is_unexpected(measurements["outcome"]) for measurements in by_backend.values())
+
+
+def overall_outcome(outcomes: Iterable[str]) -> str:
+    values = tuple(outcomes)
+    return next((value for value in ("FAIL", "XPASS", "XFAIL") if value in values),
+                "PASS" if values else "SKIP")
 
 
 def run(args: argparse.Namespace) -> int:
@@ -340,27 +389,14 @@ def run(args: argparse.Namespace) -> int:
             for context_length in args.context_lengths:
                 by_backend = {}
                 for backend in logs:
-                    expectation = spec.expectation("long-context-benchmark", backend, str(context_length))
-                    row["expected_results"][backend][str(context_length)] = expectation
                     measurement = {
                         "status": "failed", "error": inspect_error,
                         "failure_kind": "infrastructure", "log": logs[backend].name,
                     }
-                    outcome = classify_outcome(
-                        "fail", expectation, expected_failure_allowed=False,
-                        infrastructure_failure=True,
-                    )
                     by_backend[backend] = {
                         "prefill": dict(measurement), "decode": dict(measurement),
-                        "result": "fail", "outcome": outcome,
                     }
-                    unexpected = unexpected or is_unexpected(outcome)
-                row["contexts"][str(context_length)] = by_backend
-            for backend in logs:
-                row["expected_results"][backend] = {
-                    str(length): spec.expectation("long-context-benchmark", backend, str(length))
-                    for length in args.context_lengths
-                }
+                unexpected = record_context(row, context_length, by_backend, spec) or unexpected
         else:
             requested_contexts = tuple(
                 model_context if length == "max" else length for length in args.context_lengths
@@ -385,34 +421,7 @@ def run(args: argparse.Namespace) -> int:
                             "decode", args, active_log,
                         ),
                     }
-                row["contexts"][str(context_length)] = by_backend
-                for backend, measurements in list(by_backend.items()):
-                    expectation = spec.expectation("long-context-benchmark", backend, str(context_length))
-                    row["expected_results"][backend][str(context_length)] = expectation
-                    raw_result = aggregate_status(
-                        measurement["status"] for measurement in measurements.values()
-                    )
-                    failed_measurements = [
-                        measurement for measurement in measurements.values()
-                        if measurement["status"] != "ok"
-                    ]
-                    failure_kinds = [
-                        measurement.get("failure_kind") for measurement in failed_measurements
-                    ]
-                    expected_failure_allowed = all(
-                        kind in MODEL_FAILURE_KINDS for kind in failure_kinds
-                    )
-                    infrastructure_failure = any(
-                        kind not in MODEL_FAILURE_KINDS for kind in failure_kinds
-                    )
-                    outcome = classify_outcome(
-                        raw_result, expectation,
-                        expected_failure_allowed=expected_failure_allowed,
-                        infrastructure_failure=infrastructure_failure,
-                    )
-                    measurements["result"] = raw_result
-                    measurements["outcome"] = outcome
-                    unexpected = unexpected or is_unexpected(outcome)
+                unexpected = record_context(row, context_length, by_backend, spec) or unexpected
                 log(f"{spec.id} context={context_length}: HRX pp={by_backend['hrx']['prefill'].get('tokens_per_second')} tg={by_backend['hrx']['decode'].get('tokens_per_second')}; Vulkan pp={by_backend['vulkan']['prefill'].get('tokens_per_second')} tg={by_backend['vulkan']['decode'].get('tokens_per_second')}")
             for context_length in args.context_lengths:
                 if isinstance(context_length, int) and context_length > model_context:
@@ -424,13 +433,11 @@ def run(args: argparse.Namespace) -> int:
         row["reference_result"] = aggregate_status(
             values["vulkan"]["result"] for values in row["contexts"].values()
         ) if row["contexts"] else "skip"
-        hrx_outcomes = [values["hrx"]["outcome"] for values in row["contexts"].values()]
-        vulkan_outcomes = [values["vulkan"]["outcome"] for values in row["contexts"].values()]
-        row["outcome"] = "FAIL" if "FAIL" in hrx_outcomes else (
-            "XPASS" if "XPASS" in hrx_outcomes else "XFAIL" if "XFAIL" in hrx_outcomes else "PASS" if hrx_outcomes else "SKIP"
+        row["outcome"] = overall_outcome(
+            values["hrx"]["outcome"] for values in row["contexts"].values()
         )
-        row["reference_outcome"] = "FAIL" if "FAIL" in vulkan_outcomes else (
-            "XPASS" if "XPASS" in vulkan_outcomes else "XFAIL" if "XFAIL" in vulkan_outcomes else "PASS" if vulkan_outcomes else "SKIP"
+        row["reference_outcome"] = overall_outcome(
+            values["vulkan"]["outcome"] for values in row["contexts"].values()
         )
 
     if args.batched:
