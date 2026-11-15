@@ -29,7 +29,7 @@ def _ratio(hrx: dict[str, Any], vulkan: dict[str, Any]) -> str:
 def format_report(document: dict[str, Any]) -> str:
     settings = document["settings"]
     lines = [
-        "## HRX/Vulkan llama-bench context sweep",
+        "## HRX/Vulkan long-context benchmark (llama-bench)",
         "",
         f"**Requested contexts:** {', '.join(f'{n:,}' if isinstance(n, int) else n for n in settings['context_lengths'])} · "
         f"**Prefill tokens:** up to {settings['prefill_tokens']:,} · "
@@ -104,7 +104,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("artifact", type=Path)
     args = parser.parse_args()
-    return write_report("context sweep", lambda: format_report(load_json(args.artifact)))
+    return write_report("long-context benchmark", lambda: format_report(load_json(args.artifact)))
 
 
 if __name__ == "__main__":

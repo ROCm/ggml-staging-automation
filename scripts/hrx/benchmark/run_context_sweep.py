@@ -340,7 +340,7 @@ def run(args: argparse.Namespace) -> int:
             for context_length in args.context_lengths:
                 by_backend = {}
                 for backend in logs:
-                    expectation = spec.expectation("context-sweep", backend, str(context_length))
+                    expectation = spec.expectation("long-context-benchmark", backend, str(context_length))
                     row["expected_results"][backend][str(context_length)] = expectation
                     measurement = {
                         "status": "failed", "error": inspect_error,
@@ -358,7 +358,7 @@ def run(args: argparse.Namespace) -> int:
                 row["contexts"][str(context_length)] = by_backend
             for backend in logs:
                 row["expected_results"][backend] = {
-                    str(length): spec.expectation("context-sweep", backend, str(length))
+                    str(length): spec.expectation("long-context-benchmark", backend, str(length))
                     for length in args.context_lengths
                 }
         else:
@@ -374,7 +374,7 @@ def run(args: argparse.Namespace) -> int:
                 for backend, device in (("hrx", args.hrx_device), ("vulkan", args.vulkan_device)):
                     active_log = logs[backend]
                     if args.batched:
-                        active_log = models_dir.parent / f"context-sweep-{backend}.log"
+                        active_log = models_dir.parent / f"long-context-benchmark-{backend}.log"
                     by_backend[backend] = {
                         "prefill": run_measurement(
                             llama_bench, model_path, device, context_length, model_context,
@@ -387,7 +387,7 @@ def run(args: argparse.Namespace) -> int:
                     }
                 row["contexts"][str(context_length)] = by_backend
                 for backend, measurements in list(by_backend.items()):
-                    expectation = spec.expectation("context-sweep", backend, str(context_length))
+                    expectation = spec.expectation("long-context-benchmark", backend, str(context_length))
                     row["expected_results"][backend][str(context_length)] = expectation
                     raw_result = aggregate_status(
                         measurement["status"] for measurement in measurements.values()
@@ -438,7 +438,7 @@ def run(args: argparse.Namespace) -> int:
             raise ContextSweepError("--batch-number is required with --batched")
         merge_benchmark_output(args.output, document)
         for backend, log_path in logs.items():
-            source = models_dir.parent / f"context-sweep-{backend}.log"
+            source = models_dir.parent / f"long-context-benchmark-{backend}.log"
             try:
                 append_batch_log(log_path, source, args.batch_number)
             except OSError as exc:
@@ -498,7 +498,7 @@ def main() -> int:
     try:
         return run(parse_args())
     except (ContextSweepError, OSError, subprocess.SubprocessError) as exc:
-        print(f"Context sweep failed: {exc}", file=sys.stderr)
+        print(f"Long-context benchmark failed: {exc}", file=sys.stderr)
         return 1
 
 

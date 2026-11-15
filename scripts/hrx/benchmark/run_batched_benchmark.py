@@ -254,14 +254,14 @@ def load_manifest(
         supported_modes = {
             "lemonade-benchmark": {"default", "mtp:on", "mtp:off"},
             "perplexity": {"default"},
-            "context-sweep": {"default"},
+            "long-context-benchmark": {"default"},
         }
 
         def valid_mode(check: str, mode: str) -> bool:
             if mode in supported_modes[check]:
                 return True
             return (
-                check == "context-sweep"
+                check == "long-context-benchmark"
                 and mode.isdecimal()
                 and int(mode) > 0
             )

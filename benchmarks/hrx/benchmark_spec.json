@@ -41,7 +41,7 @@
       ]
     },
     {
-      "id": "context-sweep",
+      "id": "long-context-benchmark",
       "argv": [
         "python3",
         "scripts/hrx/benchmark/run_context_sweep.py",
@@ -50,11 +50,11 @@
         "--llama-bench",
         "release/benchmark-package/bin/llama-bench",
         "--output",
-        "lemonade-benchmark/context-sweep.json",
+        "lemonade-benchmark/long-context-benchmark.json",
         "--hrx-log",
-        "lemonade-benchmark-debug/context-sweep-hrx.log",
+        "lemonade-benchmark-debug/long-context-benchmark-hrx.log",
         "--vulkan-log",
-        "lemonade-benchmark-debug/context-sweep-vulkan.log"
+        "lemonade-benchmark-debug/long-context-benchmark-vulkan.log"
       ]
     }
   ]

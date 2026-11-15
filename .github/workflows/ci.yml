@@ -18,7 +18,7 @@ on:
           - tests-only
           - benchmarks-only
       include_benchmarks:
-        description: 'JSON benchmark IDs to run, e.g. ["context-sweep"].'
+        description: 'JSON benchmark IDs to run, e.g. ["long-context-benchmark"].'
         type: string
         default: '["lemonade-benchmark","perplexity"]'
       model_ids:

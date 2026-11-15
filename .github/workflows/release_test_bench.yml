@@ -14,7 +14,7 @@ on:
         type: string
         default: tests-and-benchmarks
       include_benchmarks:
-        description: 'JSON benchmark IDs to run, e.g. ["context-sweep"].'
+        description: 'JSON benchmark IDs to run, e.g. ["long-context-benchmark"].'
         type: string
         default: '["lemonade-benchmark","perplexity"]'
       name:
@@ -208,11 +208,11 @@ jobs:
             "$PWD/lemonade-benchmark/perplexity.json" \
             >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Write context-sweep report
-        if: ${{ inputs.validation_mode != 'tests-only' && contains(fromJSON(inputs.include_benchmarks), 'context-sweep') }}
+      - name: Write long-context benchmark report
+        if: ${{ inputs.validation_mode != 'tests-only' && contains(fromJSON(inputs.include_benchmarks), 'long-context-benchmark') }}
         run: |
           python3 scripts/hrx/benchmark/write_context_sweep_report.py \
-            "$PWD/lemonade-benchmark/context-sweep.json" \
+            "$PWD/lemonade-benchmark/long-context-benchmark.json" \
             >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload benchmark results
@@ -224,7 +224,7 @@ jobs:
             lemonade-benchmark/benchmark-hrx.json
             lemonade-benchmark/benchmark-vulkan.json
             lemonade-benchmark/perplexity.json
-            lemonade-benchmark/context-sweep.json
+            lemonade-benchmark/long-context-benchmark.json
             lemonade-benchmark/metadata.json
           if-no-files-found: error
           retention-days: 45
@@ -242,8 +242,8 @@ jobs:
             lemonade-benchmark-debug/responses-vulkan.jsonl
             lemonade-benchmark-debug/perplexity-hrx.log
             lemonade-benchmark-debug/perplexity-vulkan.log
-            lemonade-benchmark-debug/context-sweep-hrx.log
-            lemonade-benchmark-debug/context-sweep-vulkan.log
+            lemonade-benchmark-debug/long-context-benchmark-hrx.log
+            lemonade-benchmark-debug/long-context-benchmark-vulkan.log
           if-no-files-found: warn
 
       - name: Fail unexpected benchmark results
