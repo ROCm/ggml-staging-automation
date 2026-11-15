@@ -24,8 +24,8 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
-from validation_output import append_batch_log, atomic_write_json, merge_validation_output
-from run_model_validation import ModelSpec, load_manifest
+from qualification_output import append_batch_log, atomic_write_json, merge_qualification_output
+from run_gguf_qualification import ModelSpec, load_manifest
 
 
 DEFAULT_CONTEXTS = ("max",)
@@ -430,7 +430,7 @@ def run(args: argparse.Namespace) -> int:
     if args.batched:
         if args.batch_number is None:
             raise ContextSweepError("--batch-number is required with --batched")
-        merge_validation_output(args.output, document)
+        merge_qualification_output(args.output, document)
         for backend, log_path in logs.items():
             source = models_dir.parent / f"long-context-benchmark-{backend}.log"
             try:

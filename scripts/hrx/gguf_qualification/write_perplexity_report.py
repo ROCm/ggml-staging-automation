@@ -20,7 +20,7 @@ import argparse
 from pathlib import Path
 from typing import Any
 
-from validation_report import (
+from qualification_report import (
     UNAVAILABLE_MEASUREMENT,
     format_code,
     format_table_cell,

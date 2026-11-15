@@ -9,7 +9,7 @@ import argparse
 from pathlib import Path
 from typing import Any
 
-from validation_report import UNAVAILABLE_MEASUREMENT, format_code, format_table_cell, load_json, write_report
+from qualification_report import UNAVAILABLE_MEASUREMENT, format_code, format_table_cell, load_json, write_report
 
 
 def _throughput(measurement: dict[str, Any]) -> str:

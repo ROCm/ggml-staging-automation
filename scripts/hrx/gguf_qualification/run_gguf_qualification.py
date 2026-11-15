@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # Copyright Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
-"""Run model validation checks over a tiered model set within a fixed disk bound.
+"""Run GGUF qualification workloads over a tiered model set within a fixed disk bound.
 
 Terms:
 
@@ -10,28 +10,28 @@ Terms:
   the manifest order defines the size of the run. The reserved select-only
   tier is excluded; its models require explicit --model-ids.
 - Batch: a subset of the selected models that fits on disk at once. Models in a
-  batch are downloaded together, checked together, and deleted together.
-- Validation check: a command from the model validation specification (for
+  batch are downloaded together, run together, and deleted together.
+- Qualification workload: a command from the GGUF qualification specification (for
   example run_perplexity.py). It is invoked once per batch and is expected to
   merge its per-batch results itself.
-- Expected result: ``expected_results`` maps check, backend and mode to
+- Expected result: ``expected_results`` maps workload, backend and mode to
   "pass", "fail", or "report-only". Omitted cases expect a pass. Workers read
   these expectations from the manifest; failures and XPASS are strict.
-- Test modes: optional ``test-modes`` selects cases independently per check.
+- Test modes: optional ``test-modes`` selects cases independently per workload.
   Perplexity remains one comparison per model using the "default" mode.
 
-Why this exists: CI runners for the HRX release model validation checks have
-far less free disk than the full model set requires. Instead of pinning model validation to
+Why this exists: CI runners for the HRX release GGUF qualification workloads have
+far less free disk than the full model set requires. Instead of pinning GGUF qualification to
 whatever fits, this driver keeps the model set as data
-(``model_validation/hrx/model_manifest.json`` plus
-``model_validation/hrx/model_validation_spec.json``), splits it into batches
+(``gguf_qualification/hrx/model_manifest.json`` plus
+``gguf_qualification/hrx/qualification_spec.json``), splits it into batches
 that respect --max-disk-gib, and guarantees no batch leaks onto the next.
 
 Boundary contract:
 
-- Inputs: --validation-spec (ordered "checks" with "id" and "argv"),
+- Inputs: --qualification-spec (ordered "workloads" with "id" and "argv"),
   --model-manifest (ordered "tiers" and "models"), --model-tier, --model-ids, --work-root,
-  and --max-disk-gib. Optional --include-checks is a JSON array of IDs
+  and --max-disk-gib. Optional --include-workloads is a JSON array of IDs
   to run in specification order.
   Both JSON files are fully validated up front; a malformed
   file fails the run before any download.
@@ -99,8 +99,8 @@ RATE_LIMIT_RETRY_DELAY = 60.0
 HF_BASE_URL = "https://huggingface.co"
 
 
-class ModelValidationError(RuntimeError):
-    """Base error for an invalid or unsafe model validation request."""
+class QualificationError(RuntimeError):
+    """Base error for an invalid or unsafe GGUF qualification request."""
 
 
 class DownloadError(RuntimeError):
@@ -120,12 +120,12 @@ class ModelSpec:
     size_bytes: int
     sha256: str
 
-    def modes(self, check: str) -> tuple[str, ...]:
-        """Use the ordinary case when this check has no explicit modes."""
-        return self.test_modes.get(check, ("default",))
+    def modes(self, workload: str) -> tuple[str, ...]:
+        """Use the ordinary case when this workload has no explicit modes."""
+        return self.test_modes.get(workload, ("default",))
 
-    def expectation(self, check: str, backend: str, mode: str = "default") -> str:
-        return self.expected_results.get(check, {}).get(backend, {}).get(mode, "pass")
+    def expectation(self, workload: str, backend: str, mode: str = "default") -> str:
+        return self.expected_results.get(workload, {}).get(backend, {}).get(mode, "pass")
 
     @property
     def download_url(self) -> str:
@@ -141,7 +141,7 @@ class ModelManifest:
 
 
 @dataclass(frozen=True)
-class ValidationCheck:
+class QualificationWorkload:
     id: str
     argv: tuple[str, ...]
 
@@ -154,14 +154,14 @@ def _load_json(path: Path, description: str) -> Any:
     try:
         return json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
-        raise ModelValidationError(
+        raise QualificationError(
             f"Could not load {description} {path}: {exc}"
         ) from exc
 
 
 def _require_object(value: Any, context: str) -> dict[str, Any]:
     if not isinstance(value, dict):
-        raise ModelValidationError(f"{context} must be a JSON object")
+        raise QualificationError(f"{context} must be a JSON object")
     return value
 
 
@@ -181,15 +181,15 @@ def _require_string_value(value: Any, context: str) -> str:
     value_is_present = bool(value)
     value_is_valid = value_is_a_string and value_is_present
     if not value_is_valid:
-        raise ModelValidationError(f"{context} must be a non-empty string")
+        raise QualificationError(f"{context} must be a non-empty string")
     if "\0" in value:
-        raise ModelValidationError(f"{context} must not contain a NUL byte")
+        raise QualificationError(f"{context} must not contain a NUL byte")
     return value
 
 
 def _validate_local_name(value: str, field: str, context: str) -> None:
     if value in {".", ".."} or "/" in value or "\\" in value:
-        raise ModelValidationError(
+        raise QualificationError(
             f"{context}.{field} must be a safe single path component"
         )
 
@@ -201,13 +201,13 @@ def _validate_repository(repository: str, context: str) -> None:
         or not all(parts)
         or any(part in {".", ".."} for part in parts)
     ):
-        raise ModelValidationError(
+        raise QualificationError(
             f"{context}.repository must be an owner/repository pair"
         )
 
 
 def load_manifest(
-    path: Path, *, known_checks: set[str] | None = None
+    path: Path, *, known_workloads: set[str] | None = None
 ) -> ModelManifest:
     """Load and validate an ordered, cumulative model-tier manifest."""
     root = _require_object(_load_json(path, "model manifest"), "manifest")
@@ -216,7 +216,7 @@ def load_manifest(
     tiers_are_present = bool(raw_tiers)
     tiers_are_valid = tiers_are_an_array and tiers_are_present
     if not tiers_are_valid:
-        raise ModelValidationError("manifest.tiers must be a non-empty array")
+        raise QualificationError("manifest.tiers must be a non-empty array")
 
     tiers: list[str] = []
     tier_names: set[str] = set()
@@ -226,13 +226,13 @@ def load_manifest(
             f"manifest.tiers[{tier_index}]",
         )
         if tier in tier_names:
-            raise ModelValidationError(f"Duplicate model tier in manifest: {tier}")
+            raise QualificationError(f"Duplicate model tier in manifest: {tier}")
         tier_names.add(tier)
         tiers.append(tier)
 
     entries = root.get("models")
     if not isinstance(entries, list) or not entries:
-        raise ModelValidationError("manifest.models must be a non-empty array")
+        raise QualificationError("manifest.models must be a non-empty array")
 
     models: list[ModelSpec] = []
     ids: set[str] = set()
@@ -257,68 +257,68 @@ def load_manifest(
             "long-context-benchmark": {"default"},
         }
 
-        def valid_mode(check: str, mode: str) -> bool:
-            if mode in supported_modes[check]:
+        def valid_mode(workload: str, mode: str) -> bool:
+            if mode in supported_modes[workload]:
                 return True
             return (
-                check == "long-context-benchmark"
+                workload == "long-context-benchmark"
                 and mode.isdecimal()
                 and int(mode) > 0
             )
 
-        for check, modes in raw_modes.items():
-            if check not in supported_modes:
-                raise ModelValidationError(f"{context}: unknown check {check!r}")
-            if known_checks is not None:
-                if check not in known_checks:
-                    raise ModelValidationError(f"{context}: unknown check {check!r}")
+        for workload, modes in raw_modes.items():
+            if workload not in supported_modes:
+                raise QualificationError(f"{context}: unknown workload {workload!r}")
+            if known_workloads is not None:
+                if workload not in known_workloads:
+                    raise QualificationError(f"{context}: unknown workload {workload!r}")
             modes_are_list = isinstance(modes, list)
             modes_are_present = bool(modes)
             valid_mode_list = modes_are_list and modes_are_present
             if not valid_mode_list:
-                raise ModelValidationError(f"{context}.test-modes.{check} must be a non-empty list")
+                raise QualificationError(f"{context}.test-modes.{workload} must be a non-empty list")
             for mode in modes:
                 if not isinstance(mode, str):
-                    raise ModelValidationError(f"{context}: modes for {check} must be strings")
-                if not valid_mode(check, mode):
-                    raise ModelValidationError(f"{context}: unsupported mode {mode!r} for {check}")
+                    raise QualificationError(f"{context}: modes for {workload} must be strings")
+                if not valid_mode(workload, mode):
+                    raise QualificationError(f"{context}: unsupported mode {mode!r} for {workload}")
             if len(set(modes)) != len(modes):
-                raise ModelValidationError(f"{context}: duplicate modes for {check}")
-            test_modes[check] = tuple(modes)
+                raise QualificationError(f"{context}: duplicate modes for {workload}")
+            test_modes[workload] = tuple(modes)
         expected_results = _require_object(entry.get("expected_results", {}), context)
-        for check, backends in expected_results.items():
-            if known_checks is not None:
-                if check not in known_checks:
-                    raise ModelValidationError(f"{context}: unknown check {check!r}")
-            if check not in supported_modes:
-                raise ModelValidationError(f"{context}: unknown check {check!r}")
-            valid_modes = test_modes.get(check, ("default",))
+        for workload, backends in expected_results.items():
+            if known_workloads is not None:
+                if workload not in known_workloads:
+                    raise QualificationError(f"{context}: unknown workload {workload!r}")
+            if workload not in supported_modes:
+                raise QualificationError(f"{context}: unknown workload {workload!r}")
+            valid_modes = test_modes.get(workload, ("default",))
             for backend, modes in _require_object(backends, context).items():
                 if backend not in ("hrx", "vulkan"):
-                    raise ModelValidationError(f"{context}: unknown backend {backend!r}")
+                    raise QualificationError(f"{context}: unknown backend {backend!r}")
                 for mode, result in _require_object(modes, context).items():
                     if mode not in valid_modes:
-                        raise ModelValidationError(f"{context}: unused mode {mode!r} for {check}")
+                        raise QualificationError(f"{context}: unused mode {mode!r} for {workload}")
                     if result not in ("pass", "fail", "report-only"):
-                        raise ModelValidationError(f"{context}: invalid expectation {result!r}")
+                        raise QualificationError(f"{context}: invalid expectation {result!r}")
 
         _validate_local_name(name, "name", context)
         _validate_local_name(filename, "filename", context)
         _validate_repository(repository, context)
         if tier not in tier_names:
-            raise ModelValidationError(
+            raise QualificationError(
                 f"{context}.tier references unknown tier {tier!r}"
             )
         if type(size_bytes) is not int or size_bytes <= 0:
-            raise ModelValidationError(
+            raise QualificationError(
                 f"{context}.size_bytes must be a positive integer"
             )
         if model_id in ids:
-            raise ModelValidationError(
+            raise QualificationError(
                 f"Duplicate model id in manifest: {model_id}"
             )
         if name in names:
-            raise ModelValidationError(
+            raise QualificationError(
                 f"Duplicate runtime model name in manifest: {name}"
             )
 
@@ -341,23 +341,23 @@ def load_manifest(
     return ModelManifest(tiers=tuple(tiers), models=tuple(models))
 
 
-def load_validation_spec(path: Path) -> list[ValidationCheck]:
-    """Load an ordered model validation specification."""
+def load_qualification_spec(path: Path) -> list[QualificationWorkload]:
+    """Load an ordered GGUF qualification specification."""
     root = _require_object(
-        _load_json(path, "model validation specification"),
-        "model validation specification",
+        _load_json(path, "GGUF qualification specification"),
+        "GGUF qualification specification",
     )
-    entries = root.get("checks")
+    entries = root.get("workloads")
     entries_are_an_array = isinstance(entries, list)
     entries_are_present = bool(entries)
     entries_are_valid = entries_are_an_array and entries_are_present
     if not entries_are_valid:
-        raise ModelValidationError(
-            "model validation specification must contain at least one check"
+        raise QualificationError(
+            "GGUF qualification specification must contain at least one workload"
         )
 
-    check_ids: set[str] = set()
-    checks: list[ValidationCheck] = []
+    workload_ids: set[str] = set()
+    workloads: list[QualificationWorkload] = []
     managed_arguments = {
         "--batched",
         "--batch-number",
@@ -365,21 +365,21 @@ def load_validation_spec(path: Path) -> list[ValidationCheck]:
         "--models",
     }
     for entry_index, raw_entry in enumerate(entries):
-        context = f"model validation specification.checks[{entry_index}]"
+        context = f"GGUF qualification specification.workloads[{entry_index}]"
         entry = _require_object(raw_entry, context)
-        check_id = _require_string(entry, "id", context)
-        if check_id in check_ids:
-            raise ModelValidationError(
-                f"Duplicate check id in specification: {check_id}"
+        workload_id = _require_string(entry, "id", context)
+        if workload_id in workload_ids:
+            raise QualificationError(
+                f"Duplicate workload id in specification: {workload_id}"
             )
-        check_ids.add(check_id)
+        workload_ids.add(workload_id)
 
         raw_argv = entry.get("argv")
         argv_is_an_array = isinstance(raw_argv, list)
         argv_is_present = bool(raw_argv)
         argv_is_valid = argv_is_an_array and argv_is_present
         if not argv_is_valid:
-            raise ModelValidationError(
+            raise QualificationError(
                 f"{context}.argv must be a non-empty string array"
             )
         argv: list[str] = []
@@ -389,12 +389,12 @@ def load_validation_spec(path: Path) -> list[ValidationCheck]:
             argument_is_present = bool(raw_argument)
             argument_is_valid = argument_is_a_string and argument_is_present
             if not argument_is_valid:
-                raise ModelValidationError(
+                raise QualificationError(
                     f"{argument_context} must be a non-empty string"
                 )
             argument_has_nul = "\0" in raw_argument
             if argument_has_nul:
-                raise ModelValidationError(
+                raise QualificationError(
                     f"{argument_context} must not contain a NUL byte"
                 )
             argv.append(raw_argument)
@@ -410,38 +410,38 @@ def load_validation_spec(path: Path) -> list[ValidationCheck]:
                 if is_managed_argument:
                     present_managed.add(managed)
         if present_managed:
-            raise ModelValidationError(
+            raise QualificationError(
                 f"{context}.argv must not contain batch-managed arguments: "
                 f"{', '.join(sorted(present_managed))}"
             )
-        checks.append(ValidationCheck(id=check_id, argv=tuple(argv)))
+        workloads.append(QualificationWorkload(id=workload_id, argv=tuple(argv)))
 
-    return checks
+    return workloads
 
 
-def select_checks(
-    checks: list[ValidationCheck],
+def select_workloads(
+    workloads: list[QualificationWorkload],
     requested: str,
-) -> list[ValidationCheck]:
+) -> list[QualificationWorkload]:
     """Validate the user include list and preserve specification order."""
     try:
         ids = json.loads(requested)
     except json.JSONDecodeError as exc:
-        raise ModelValidationError("--include-checks must be a JSON array of IDs") from exc
+        raise QualificationError("--include-workloads must be a JSON array of IDs") from exc
     if not isinstance(ids, list):
-        raise ModelValidationError("--include-checks must be a JSON array of IDs")
-    for check_id in ids:
-        _require_string_value(check_id, "--include-checks entry")
-    known_ids = {check.id for check in checks}
+        raise QualificationError("--include-workloads must be a JSON array of IDs")
+    for workload_id in ids:
+        _require_string_value(workload_id, "--include-workloads entry")
+    known_ids = {workload.id for workload in workloads}
     unknown_ids = set(ids) - known_ids
     if unknown_ids:
-        raise ModelValidationError(
-            f"Unknown model validation check IDs: {', '.join(sorted(unknown_ids))}; "
+        raise QualificationError(
+            f"Unknown GGUF qualification workload IDs: {', '.join(sorted(unknown_ids))}; "
             f"available IDs: {', '.join(sorted(known_ids))}"
         )
-    selected = [check for check in checks if check.id in ids]
+    selected = [workload for workload in workloads if workload.id in ids]
     if not selected:
-        raise ModelValidationError("--include-checks must select at least one check")
+        raise QualificationError("--include-workloads must select at least one workload")
     return selected
 
 
@@ -454,27 +454,27 @@ def select_models(
     try:
         requested_ids = json.loads(model_ids_json)
     except json.JSONDecodeError as exc:
-        raise ModelValidationError("--model-ids must be a JSON array of model IDs") from exc
+        raise QualificationError("--model-ids must be a JSON array of model IDs") from exc
     if not isinstance(requested_ids, list):
-        raise ModelValidationError("--model-ids must be a JSON array of model IDs")
+        raise QualificationError("--model-ids must be a JSON array of model IDs")
     for model_id in requested_ids:
         if not isinstance(model_id, str):
-            raise ModelValidationError("--model-ids entries must be strings")
+            raise QualificationError("--model-ids entries must be strings")
     if len(set(requested_ids)) != len(requested_ids):
-        raise ModelValidationError("--model-ids contains duplicate IDs")
+        raise QualificationError("--model-ids contains duplicate IDs")
     if requested_ids:
         known_ids = {model.id for model in manifest.models}
         unknown_ids = set(requested_ids) - known_ids
         if unknown_ids:
-            raise ModelValidationError(f"Unknown model IDs: {', '.join(sorted(unknown_ids))}")
+            raise QualificationError(f"Unknown model IDs: {', '.join(sorted(unknown_ids))}")
         return [model for model in manifest.models if model.id in requested_ids]
     if requested_tier == "select-only":
-        raise ModelValidationError("select-only models require explicit --model-ids")
+        raise QualificationError("select-only models require explicit --model-ids")
     try:
         requested_tier_index = manifest.tiers.index(requested_tier)
     except ValueError:
         available_tiers = ", ".join(manifest.tiers)
-        raise ModelValidationError(
+        raise QualificationError(
             f"Unknown model tier {requested_tier!r}; "
             f"available tiers: {available_tiers}"
         ) from None
@@ -484,7 +484,7 @@ def select_models(
         model for model in manifest.models if model.tier in included_tiers
     ]
     if not selected:
-        raise ModelValidationError(
+        raise QualificationError(
             f"Model tier {requested_tier!r} does not select any models"
         )
     return selected
@@ -493,13 +493,13 @@ def select_models(
 def calculate_batch_capacity(max_disk_gib: float, free_bytes: int) -> int:
     """Reserve 2 GiB and cap model residency by policy and current free space."""
     if not math.isfinite(max_disk_gib) or max_disk_gib <= 2:
-        raise ModelValidationError(
+        raise QualificationError(
             "--max-disk-gib must be finite and greater than 2"
         )
 
     maximum_bytes = int(max_disk_gib * GIB)
     if free_bytes <= RESERVED_BYTES:
-        raise ModelValidationError(
+        raise QualificationError(
             f"Only {free_bytes} bytes are free; "
             f"{RESERVED_BYTES} bytes are reserved"
         )
@@ -519,7 +519,7 @@ def plan_batches(
         details = ", ".join(
             f"{model.id} ({model.size_bytes} bytes)" for model in oversized
         )
-        raise ModelValidationError(
+        raise QualificationError(
             f"Selected model(s) exceed the {capacity_bytes}-byte batch capacity: "
             f"{details}"
         )
@@ -561,7 +561,7 @@ def _download_once(
     """Stream and verify one complete response from byte zero."""
     request = urllib.request.Request(
         model.download_url,
-        headers={"User-Agent": "hrx-check/1"},
+        headers={"User-Agent": "hrx-workload/1"},
     )
     actual_size = 0
     digest = hashlib.sha256()
@@ -721,7 +721,7 @@ def cleanup_batch(batch_dir: Path) -> None:
     """Remove a completed batch and confirm its disappearance."""
     shutil.rmtree(batch_dir)
     if batch_dir.exists() or batch_dir.is_symlink():
-        raise ModelValidationError(
+        raise QualificationError(
             f"Batch cleanup did not remove target: {batch_dir}"
         )
 
@@ -730,20 +730,20 @@ def cleanup_work_root(work_root: Path) -> None:
     """Remove the empty work root and confirm its disappearance."""
     work_root.rmdir()
     if work_root.exists() or work_root.is_symlink():
-        raise ModelValidationError(
+        raise QualificationError(
             f"Work-root cleanup did not remove target: {work_root}"
         )
 
 
-def build_check_command(
-    check: ValidationCheck,
+def build_workload_command(
+    workload: QualificationWorkload,
     *,
     batch_number: int,
     models_dir: Path,
     resident: list[ModelSpec],
 ) -> list[str]:
     return [
-        *check.argv,
+        *workload.argv,
         "--batched",
         "--batch-number",
         str(batch_number),
@@ -760,7 +760,7 @@ def _format_bytes(value: int) -> str:
 
 def _summarize_failures(failures: list[str]) -> None:
     if not failures:
-        log("Model validation completed successfully")
+        log("GGUF qualification completed successfully")
         return
 
     print(f"Failure summary ({len(failures)}):", file=sys.stderr)
@@ -775,13 +775,13 @@ def run(args: argparse.Namespace) -> int:
     cleanup_exact = True
 
     try:
-        checks = load_validation_spec(args.validation_spec)
+        workloads = load_qualification_spec(args.qualification_spec)
         manifest = load_manifest(
-            args.model_manifest, known_checks={check.id for check in checks}
+            args.model_manifest, known_workloads={workload.id for workload in workloads}
         )
         # Model expectations may refer to workers omitted from this run.
-        checks = select_checks(checks, args.include_checks)
-        log(f"Selected model validation checks: {', '.join(check.id for check in checks)}")
+        workloads = select_workloads(workloads, args.include_workloads)
+        log(f"Selected GGUF qualification workloads: {', '.join(workload.id for workload in workloads)}")
         selected = select_models(manifest, args.model_tier, args.model_ids)
         work_root = prepare_work_root(args.work_root)
 
@@ -822,13 +822,13 @@ def run(args: argparse.Namespace) -> int:
                 )
                 if not resident:
                     log(
-                        f"Skipping model validation for batch {batch_number}: "
+                        f"Skipping GGUF qualification for batch {batch_number}: "
                         "no models downloaded successfully"
                     )
                 else:
-                    for check in checks:
-                        command = build_check_command(
-                            check,
+                    for workload in workloads:
+                        command = build_workload_command(
+                            workload,
                             batch_number=batch_number,
                             models_dir=models_dir,
                             resident=resident,
@@ -838,23 +838,23 @@ def run(args: argparse.Namespace) -> int:
                             completed = subprocess.run(command, check=False)
                         except OSError as exc:
                             log(
-                                f"Check {check.id} batch "
+                                f"Workload {workload.id} batch "
                                 f"{batch_number} failed to run: {exc}"
                             )
                             failures.append(
-                                "check invocation "
+                                "workload invocation "
                                 f"(batch={batch_number}, "
-                                f"check={check.id}): {exc}"
+                                f"workload={workload.id}): {exc}"
                             )
                             continue
                         log(
-                            f"Check {check.id} batch {batch_number} "
+                            f"Workload {workload.id} batch {batch_number} "
                             f"exited with status {completed.returncode}"
                         )
                         if completed.returncode != 0:
                             failures.append(
-                                "check exit "
-                                f"(batch={batch_number}, check={check.id}): "
+                                "workload exit "
+                                f"(batch={batch_number}, workload={workload.id}): "
                                 "command exited with status "
                                 f"{completed.returncode}"
                             )
@@ -867,7 +867,7 @@ def run(args: argparse.Namespace) -> int:
             finally:
                 try:
                     cleanup_batch(batch_dir)
-                except (ModelValidationError, OSError) as exc:
+                except (QualificationError, OSError) as exc:
                     cleanup_exact = False
                     failures.append(
                         f"cleanup (batch={batch_number}): {exc}"
@@ -881,13 +881,13 @@ def run(args: argparse.Namespace) -> int:
                     log(f"Cleaned batch {batch_number}: {batch_dir}")
             if not cleanup_exact:
                 break
-    except (ModelValidationError, OSError) as exc:
+    except (QualificationError, OSError) as exc:
         failures.append(f"setup: {exc}")
     finally:
         if work_root is not None and cleanup_exact:
             try:
                 cleanup_work_root(work_root)
-            except (ModelValidationError, OSError) as exc:
+            except (QualificationError, OSError) as exc:
                 failures.append(
                     f"cleanup: Could not remove work root {work_root}: {exc}"
                 )
@@ -901,15 +901,15 @@ def run(args: argparse.Namespace) -> int:
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--validation-spec",
+        "--qualification-spec",
         type=Path,
         required=True,
         help="JSON command list; relative argv paths use the current directory",
     )
     parser.add_argument(
-        "--include-checks",
+        "--include-workloads",
         default='["lemonade-benchmark","perplexity"]',
-        help='JSON array of check IDs to run; default: ["lemonade-benchmark","perplexity"]',
+        help='JSON array of workload IDs to run; default: ["lemonade-benchmark","perplexity"]',
     )
     parser.add_argument("--model-manifest", type=Path, required=True)
     parser.add_argument("--model-tier", default="single", metavar="TIER")
@@ -925,8 +925,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def main(argv: list[str] | None = None) -> int:
     try:
         return run(parse_args(argv))
-    except (ModelValidationError, OSError) as exc:
-        print(f"Model validation failed: {exc}", file=sys.stderr)
+    except (QualificationError, OSError) as exc:
+        print(f"GGUF qualification failed: {exc}", file=sys.stderr)
         return 1
 
 

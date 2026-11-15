@@ -4,7 +4,7 @@
 """Select CI coverage from GitHub's event payload.
 
 Coverage labels and manual dispatch override path filtering. Unlabeled PRs
-use the single tier when their whole diff affects build or model validation inputs.
+use the single tier when their whole diff affects build or GGUF qualification inputs.
 The CI workflow consumes should_run and model_tier through GITHUB_OUTPUT;
 README.md describes the coverage policy and label behavior.
 """
@@ -33,10 +33,10 @@ RELEVANT_FILES = {
 }
 RELEVANT_DIRECTORIES = (
     "scripts/hrx/build/",
-    "scripts/hrx/model_validation/",
+    "scripts/hrx/gguf_qualification/",
     "scripts/hrx/package/",
     "scripts/hrx/ci/",
-    "model_validation/hrx/",
+    "gguf_qualification/hrx/",
 )
 
 
@@ -72,8 +72,8 @@ def select_models(event_name: str, event: dict) -> tuple[bool, str, str]:
         if requested_tiers:
             return True, model_tier, "explicit coverage label"
         if any(is_relevant(path) for path in changed_paths(event)):
-            return True, model_tier, "build or model validation inputs changed"
-        return False, model_tier, "no build or model validation inputs changed"
+            return True, model_tier, "build or GGUF qualification inputs changed"
+        return False, model_tier, "no build or GGUF qualification inputs changed"
 
     raise ValueError(f"Unsupported CI event: {event_name}")
 

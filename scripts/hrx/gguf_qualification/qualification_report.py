@@ -1,8 +1,8 @@
 # Copyright Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
-"""Shared output, error handling, and Markdown helpers for CI model validation reports.
+"""Shared output, error handling, and Markdown helpers for CI GGUF qualification reports.
 
-Three scripts turn CI model validation artifacts into Markdown for the GitHub step
+Three scripts turn CI GGUF qualification artifacts into Markdown for the GitHub step
 summary: ``write_lemonade_benchmark_report.py`` (Lemonade throughput),
 ``write_perplexity_report.py`` (llama-perplexity), and
 ``write_context_sweep_report.py`` (long-context performance). Lemonade compares

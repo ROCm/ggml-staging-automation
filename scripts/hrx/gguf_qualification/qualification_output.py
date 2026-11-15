@@ -1,6 +1,6 @@
 # Copyright Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
-"""Shared output helpers for model validation workers run once per model batch."""
+"""Shared output helpers for GGUF qualification workers run once per model batch."""
 
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ def atomic_write_json(path: Path, data: dict[str, Any]) -> None:
     os.replace(temporary_path, path)
 
 
-def merge_validation_output(
+def merge_qualification_output(
     cumulative_output: Path, batch_data: dict[str, Any]
 ) -> int:
     """Atomically append one trusted model batch to cumulative output."""

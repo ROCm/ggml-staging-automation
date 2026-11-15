@@ -10,13 +10,13 @@ contains no runtime libraries: tests use the standard release archive's `lib/`
 directory through `LD_LIBRARY_PATH`. Both archives must come from the same build. Scheduled release builds also produce the test artifact;
 the published release archive does not contain tests.
 
-CI runs tests first in the existing model validation GPU job. A failing suite stops
-model validation setup and execution. The manual `validation_mode` input selects
-`tests-and-model-validation` (the default), `tests-only`, or `model-validation-only`.
+CI runs tests first in the existing GGUF qualification GPU job. A failing suite stops
+GGUF qualification setup and execution. The manual `validation_mode` input selects
+`tests-and-gguf-qualification` (the default), `tests-only`, or `gguf-qualification-only`.
 Tests-only downloads both the test and standard release archives, but skips the
-pinned Lemonade release download, model/corpus downloads, and model validation reports. The [model validation guide](../model_validation/README.md)
-explains the model tiers, check selection, and per-model test modes that
-apply when model validation runs.
+pinned Lemonade release download, model/corpus downloads, and GGUF qualification reports. The [GGUF qualification guide](../gguf_qualification/README.md)
+explains the model tiers, workload selection, and per-model test modes that
+apply when GGUF qualification runs.
 All modes use the checked-in submodule revisions.
 
 The workflow invokes CTest directly and preserves its exit status. GPU visibility is

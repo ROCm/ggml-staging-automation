@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # Copyright Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
-"""Record source revisions so persisted model validation results remains attributable."""
+"""Record source revisions so persisted GGUF qualification results remain attributable."""
 
 from __future__ import annotations
 
@@ -29,7 +29,7 @@ def main() -> int:
         json.dumps(metadata, indent=2) + "\n",
         encoding="utf-8",
     )
-    print(f"Wrote model validation metadata to {args.output}", flush=True)
+    print(f"Wrote GGUF qualification metadata to {args.output}", flush=True)
     return 0
 
 

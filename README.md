@@ -76,14 +76,14 @@ same basic packaging model with DLL copying instead of ELF RPATHs.
 
 ## CI validation
 
-CI runs the packaged HRX test suites before model validation in the same GPU
-job. Failed tests stop model validation. See the
+CI runs the packaged HRX test suites before GGUF qualification in the same GPU
+job. Failed tests stop GGUF qualification. See the
 [HRX test workflow guide](scripts/hrx/ci/README.md) for the three validation
 modes, package contents, and test results.
 
-CI compares HRX and Vulkan through released Lemonade and runs perplexity checks.
-See the [model validation guide](scripts/hrx/model_validation/README.md) for model tiers,
-per-check test modes, expectations and release configuration.
+CI compares HRX and Vulkan through released Lemonade and runs perplexity workloads.
+See the [GGUF qualification guide](scripts/hrx/gguf_qualification/README.md) for model tiers,
+per-workload test modes, expectations and release configuration.
 
 ## Releases
 
