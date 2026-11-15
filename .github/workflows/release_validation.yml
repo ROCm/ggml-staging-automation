@@ -10,11 +10,11 @@ on:
   workflow_call:
     inputs:
       validation_mode:
-        description: tests-and-benchmarks, tests-only, or benchmarks-only.
+        description: tests-and-gguf-qualification, tests-only, or gguf-qualification-only.
         type: string
-        default: tests-and-benchmarks
-      include_benchmarks:
-        description: 'JSON benchmark IDs to run, e.g. ["long-context-benchmark"].'
+        default: tests-and-gguf-qualification
+      include_workloads:
+        description: 'JSON GGUF qualification workload IDs to run, e.g. ["long-context-benchmark"].'
         type: string
         default: '["lemonade-benchmark","perplexity"]'
       name:
@@ -32,7 +32,7 @@ on:
         type: string
         default: '[]'
       model_tier:
-        description: Cumulative model manifest tier to benchmark.
+        description: Cumulative model manifest tier to run.
         type: string
         required: true
       allow_failure:
@@ -45,7 +45,7 @@ permissions:
   actions: read
 
 jobs:
-  benchmark_llama_cpp_release_linux:
+  gguf_qualification_llama_cpp_release_linux:
     name: ${{ inputs.name }} (${{ matrix.gpu_target }})
     continue-on-error: ${{ inputs.allow_failure }}
     strategy:
@@ -59,8 +59,8 @@ jobs:
     runs-on: ${{ matrix.runs_on }}
     timeout-minutes: 360
     env:
-      BENCHMARK_ARTIFACT_NAME: lemonade-bench-${{ matrix.gpu_target }}
-      BENCHMARK_STATE_NAME: lemonade-bench-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.gpu_target }}
+      GGUF_QUALIFICATION_ARTIFACT_NAME: gguf-qualification-${{ matrix.gpu_target }}
+      GGUF_QUALIFICATION_STATE_NAME: gguf-qualification-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.gpu_target }}
     steps:
       - name: Checkout automation repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -81,23 +81,23 @@ jobs:
           python3 scripts/hrx/package/extract_release_package.py \
             --archive "artifacts/${RELEASE_ARTIFACT_NAME}.tar.gz" \
             --package-root-name "$PACKAGE_ROOT_NAME" \
-            --output-dir release/benchmark-package
+            --output-dir release/validation-package
 
       - name: Install CTest
-        if: inputs.validation_mode != 'benchmarks-only'
+        if: inputs.validation_mode != 'gguf-qualification-only'
         run: |
           sudo -n apt-get update
           sudo -n apt-get install -y --no-install-recommends cmake
 
       - name: Download HRX test package
-        if: inputs.validation_mode != 'benchmarks-only'
+        if: inputs.validation_mode != 'gguf-qualification-only'
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: hrx-tests
           path: artifacts
 
       - name: Extract HRX test package
-        if: inputs.validation_mode != 'benchmarks-only'
+        if: inputs.validation_mode != 'gguf-qualification-only'
         run: |
           python3 scripts/hrx/package/extract_release_package.py \
             --archive artifacts/hrx-tests.tar.gz \
@@ -106,9 +106,9 @@ jobs:
 
       - name: Run packaged HRX suites
         id: hrx_tests
-        if: inputs.validation_mode != 'benchmarks-only'
+        if: inputs.validation_mode != 'gguf-qualification-only'
         env:
-          LD_LIBRARY_PATH: ${{ github.workspace }}/release/benchmark-package/lib
+          LD_LIBRARY_PATH: ${{ github.workspace }}/release/validation-package/lib
         run: |
           ctest --test-dir release/hrx-tests --parallel 2 --verbose \
             --output-junit "$PWD/release/hrx-tests/junit.xml"
@@ -144,110 +144,110 @@ jobs:
           echo "hrx_system=$hrx_system" >> "$GITHUB_OUTPUT"
 
       - name: Install pinned Lemonade release
-        if: ${{ inputs.validation_mode != 'tests-only' && contains(fromJSON(inputs.include_benchmarks), 'lemonade-benchmark') }}
+        if: ${{ inputs.validation_mode != 'tests-only' && contains(fromJSON(inputs.include_workloads), 'lemonade-benchmark') }}
         run: |
           python3 scripts/hrx/package/fetch_lemonade.py \
-            --pin benchmarks/hrx/lemonade_release.json \
+            --pin gguf_qualification/hrx/lemonade_release.json \
             --output-dir release/lemonade
 
-      - name: Write benchmark metadata
+      - name: Write GGUF qualification metadata
         if: inputs.validation_mode != 'tests-only'
         env:
           HRX_SYSTEM_COMMIT: ${{ steps.sources.outputs.hrx_system }}
           LLAMA_CPP_COMMIT: ${{ steps.sources.outputs.llama_cpp }}
         run: |
-          python3 scripts/hrx/benchmark/write_benchmark_metadata.py \
-            --output "$PWD/lemonade-benchmark/metadata.json" \
+          python3 scripts/hrx/gguf_qualification/write_qualification_metadata.py \
+            --output "$PWD/gguf-qualification/metadata.json" \
             --llama-cpp-commit "$LLAMA_CPP_COMMIT" \
             --hrx-system-commit "$HRX_SYSTEM_COMMIT" \
-            --lemonade-release benchmarks/hrx/lemonade_release.json
+            --lemonade-release gguf_qualification/hrx/lemonade_release.json
 
       - name: Fetch perplexity corpus
-        if: ${{ inputs.validation_mode != 'tests-only' && contains(fromJSON(inputs.include_benchmarks), 'perplexity') }}
+        if: ${{ inputs.validation_mode != 'tests-only' && contains(fromJSON(inputs.include_workloads), 'perplexity') }}
         run: |
-          python3 scripts/hrx/benchmark/fetch_wikitext2.py \
+          python3 scripts/hrx/gguf_qualification/fetch_wikitext2.py \
             --output-dir "$PWD/perplexity-corpus"
 
-      - name: Run batched HRX and Vulkan benchmarks
+      - name: Run HRX and Vulkan GGUF qualification
         if: inputs.validation_mode != 'tests-only'
-        id: benchmark
+        id: gguf_qualification
         continue-on-error: true
         env:
-          INCLUDE_BENCHMARKS: ${{ inputs.include_benchmarks }}
-          BENCHMARK_MODEL_IDS: ${{ inputs.model_ids }}
-          BENCHMARK_MODEL_TIER: ${{ inputs.model_tier }}
+          INCLUDE_WORKLOADS: ${{ inputs.include_workloads }}
+          QUALIFICATION_MODEL_IDS: ${{ inputs.model_ids }}
+          QUALIFICATION_MODEL_TIER: ${{ inputs.model_tier }}
         run: |
           set -euo pipefail
-          python3 scripts/hrx/benchmark/run_batched_benchmark.py \
-            --benchmark-spec "$PWD/benchmarks/hrx/benchmark_spec.json" \
-            --model-manifest "$PWD/benchmarks/hrx/model_manifest.json" \
-            --include-benchmarks "$INCLUDE_BENCHMARKS" \
-            --model-tier "$BENCHMARK_MODEL_TIER" \
-            --model-ids "$BENCHMARK_MODEL_IDS" \
-            --work-root "$RUNNER_TEMP/$BENCHMARK_STATE_NAME" \
+          python3 scripts/hrx/gguf_qualification/run_gguf_qualification.py \
+            --qualification-spec "$PWD/gguf_qualification/hrx/qualification_spec.json" \
+            --model-manifest "$PWD/gguf_qualification/hrx/model_manifest.json" \
+            --include-workloads "$INCLUDE_WORKLOADS" \
+            --model-tier "$QUALIFICATION_MODEL_TIER" \
+            --model-ids "$QUALIFICATION_MODEL_IDS" \
+            --work-root "$RUNNER_TEMP/$GGUF_QUALIFICATION_STATE_NAME" \
             --max-disk-gib 60
 
       - name: Remove perplexity corpus
-        # The runners are self-hosted, so benchmark inputs are removed explicitly.
+        # The runners are self-hosted, so GGUF qualification inputs are removed explicitly.
         if: ${{ always() && inputs.validation_mode != 'tests-only' }}
         run: |
           rm -rf "$PWD/perplexity-corpus"
 
       - name: Write Lemonade benchmark report
-        if: ${{ inputs.validation_mode != 'tests-only' && contains(fromJSON(inputs.include_benchmarks), 'lemonade-benchmark') }}
+        if: ${{ inputs.validation_mode != 'tests-only' && contains(fromJSON(inputs.include_workloads), 'lemonade-benchmark') }}
         run: |
-          python3 scripts/hrx/benchmark/write_lemonade_benchmark_report.py \
-            "$PWD/lemonade-benchmark/benchmark-hrx.json" \
-            "$PWD/lemonade-benchmark/benchmark-vulkan.json" \
+          python3 scripts/hrx/gguf_qualification/write_lemonade_benchmark_report.py \
+            "$PWD/gguf-qualification/benchmark-hrx.json" \
+            "$PWD/gguf-qualification/benchmark-vulkan.json" \
             >> "$GITHUB_STEP_SUMMARY"
 
       - name: Write perplexity report
-        if: ${{ inputs.validation_mode != 'tests-only' && contains(fromJSON(inputs.include_benchmarks), 'perplexity') }}
+        if: ${{ inputs.validation_mode != 'tests-only' && contains(fromJSON(inputs.include_workloads), 'perplexity') }}
         run: |
-          python3 scripts/hrx/benchmark/write_perplexity_report.py \
-            "$PWD/lemonade-benchmark/perplexity.json" \
+          python3 scripts/hrx/gguf_qualification/write_perplexity_report.py \
+            "$PWD/gguf-qualification/perplexity.json" \
             >> "$GITHUB_STEP_SUMMARY"
 
       - name: Write long-context benchmark report
-        if: ${{ inputs.validation_mode != 'tests-only' && contains(fromJSON(inputs.include_benchmarks), 'long-context-benchmark') }}
+        if: ${{ inputs.validation_mode != 'tests-only' && contains(fromJSON(inputs.include_workloads), 'long-context-benchmark') }}
         run: |
-          python3 scripts/hrx/benchmark/write_context_sweep_report.py \
-            "$PWD/lemonade-benchmark/long-context-benchmark.json" \
+          python3 scripts/hrx/gguf_qualification/write_context_sweep_report.py \
+            "$PWD/gguf-qualification/long-context-benchmark.json" \
             >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Upload benchmark results
-        if: ${{ always() && (steps.benchmark.outcome == 'success' || steps.benchmark.outcome == 'failure') }}
+      - name: Upload GGUF qualification results
+        if: ${{ always() && (steps.gguf_qualification.outcome == 'success' || steps.gguf_qualification.outcome == 'failure') }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: ${{ env.BENCHMARK_ARTIFACT_NAME }}
+          name: ${{ env.GGUF_QUALIFICATION_ARTIFACT_NAME }}
           path: |
-            lemonade-benchmark/benchmark-hrx.json
-            lemonade-benchmark/benchmark-vulkan.json
-            lemonade-benchmark/perplexity.json
-            lemonade-benchmark/long-context-benchmark.json
-            lemonade-benchmark/metadata.json
+            gguf-qualification/benchmark-hrx.json
+            gguf-qualification/benchmark-vulkan.json
+            gguf-qualification/perplexity.json
+            gguf-qualification/long-context-benchmark.json
+            gguf-qualification/metadata.json
           if-no-files-found: error
           retention-days: 45
 
-      - name: Upload benchmark debug logs
-        # Preserve diagnostics when the benchmark or report step fails.
-        if: ${{ always() && (steps.benchmark.outcome == 'success' || steps.benchmark.outcome == 'failure') }}
+      - name: Upload GGUF qualification debug logs
+        # Preserve diagnostics when GGUF qualification or report steps fail.
+        if: ${{ always() && (steps.gguf_qualification.outcome == 'success' || steps.gguf_qualification.outcome == 'failure') }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: lemonade-bench-debug-log-${{ matrix.gpu_target }}
+          name: gguf-qualification-debug-log-${{ matrix.gpu_target }}
           path: |
-            lemonade-benchmark-debug/lemond-hrx.log
-            lemonade-benchmark-debug/lemond-vulkan.log
-            lemonade-benchmark-debug/responses-hrx.jsonl
-            lemonade-benchmark-debug/responses-vulkan.jsonl
-            lemonade-benchmark-debug/perplexity-hrx.log
-            lemonade-benchmark-debug/perplexity-vulkan.log
-            lemonade-benchmark-debug/long-context-benchmark-hrx.log
-            lemonade-benchmark-debug/long-context-benchmark-vulkan.log
+            gguf-qualification-debug/lemond-hrx.log
+            gguf-qualification-debug/lemond-vulkan.log
+            gguf-qualification-debug/responses-hrx.jsonl
+            gguf-qualification-debug/responses-vulkan.jsonl
+            gguf-qualification-debug/perplexity-hrx.log
+            gguf-qualification-debug/perplexity-vulkan.log
+            gguf-qualification-debug/long-context-benchmark-hrx.log
+            gguf-qualification-debug/long-context-benchmark-vulkan.log
           if-no-files-found: warn
 
-      - name: Fail unexpected benchmark results
-        if: ${{ always() && steps.benchmark.outcome == 'failure' }}
+      - name: Fail unexpected GGUF qualification results
+        if: ${{ always() && steps.gguf_qualification.outcome == 'failure' }}
         run: |
-          echo "One or more benchmark batches had unexpected failures or XPASS results." >&2
+          echo "One or more GGUF qualification batches had unexpected failures or XPASS results." >&2
           exit 1

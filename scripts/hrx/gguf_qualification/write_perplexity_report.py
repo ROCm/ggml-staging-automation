@@ -20,7 +20,7 @@ import argparse
 from pathlib import Path
 from typing import Any
 
-from benchmark_report import (
+from qualification_report import (
     UNAVAILABLE_MEASUREMENT,
     format_code,
     format_table_cell,
@@ -88,7 +88,7 @@ def format_report(document: dict[str, Any]) -> str:
         "",
     ])
     if not document["models"]:
-        return "\n".join([*lines, "No models were benchmarked."])
+        return "\n".join([*lines, "No models were checked."])
 
     lines.extend([
         "| Model | Prefill HRX PPL | Prefill Vulkan PPL | Prefill ratio (verdict) | "

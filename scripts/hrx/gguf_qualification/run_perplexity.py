@@ -39,12 +39,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, TextIO
 
-from benchmark_output import (
+from qualification_output import (
     append_batch_log,
     atomic_write_json,
-    merge_benchmark_output,
+    merge_qualification_output,
 )
-from run_batched_benchmark import ModelSpec, load_manifest
+from run_gguf_qualification import ModelSpec, load_manifest
 
 
 FINAL_ESTIMATE_PATTERN = re.compile(
@@ -71,8 +71,8 @@ def numerical_verdict(hrx: dict, vulkan: dict, maximum: float) -> str:
     return "fail" if exceeds_limit else "pass"
 
 
-class PerplexityBenchmarkError(RuntimeError):
-    """Raised when the perplexity benchmark cannot run as requested."""
+class PerplexityError(RuntimeError):
+    """Raised when the perplexity run cannot proceed as requested."""
 
 
 @dataclass
@@ -110,7 +110,7 @@ def resolve_models(
     specs_by_name = {spec.name: spec for spec in manifest.models}
     unknown_names = [name for name in names if name not in specs_by_name]
     if unknown_names:
-        raise PerplexityBenchmarkError(
+        raise PerplexityError(
             f"Models are not in {manifest_path}: {unknown_names!r}"
         )
     resolved: list[ResolvedModel] = []
@@ -118,7 +118,7 @@ def resolve_models(
         spec = specs_by_name[name]
         path = models_dir / spec.name / spec.filename
         if not path.is_file():
-            raise PerplexityBenchmarkError(f"Model {name} is not staged at {path}")
+            raise PerplexityError(f"Model {name} is not staged at {path}")
         resolved.append(ResolvedModel(spec=spec, path=path))
     return resolved
 
@@ -320,7 +320,7 @@ def run(args: argparse.Namespace) -> int:
     models_dir = args.models_dir.resolve()
     corpus_file = args.corpus_file.resolve()
     if not corpus_file.is_file():
-        raise PerplexityBenchmarkError(f"Corpus file is missing: {corpus_file}")
+        raise PerplexityError(f"Corpus file is missing: {corpus_file}")
     corpus_sha256 = sha256_file(corpus_file)
     models = resolve_models(args.model_manifest, models_dir, args.models)
     phases = (
@@ -431,7 +431,7 @@ def run(args: argparse.Namespace) -> int:
 
         has_unexpected_outcomes = evaluate_models(batch_data)
         if args.batched:
-            merged_count = merge_benchmark_output(args.output, batch_data)
+            merged_count = merge_qualification_output(args.output, batch_data)
             log(f"Merged {merged_count} model(s) from "
                 f"batch {args.batch_number} into {args.output}")
         else:
@@ -440,7 +440,7 @@ def run(args: argparse.Namespace) -> int:
 
     if has_unexpected_outcomes:
         log(
-            "Perplexity benchmark completed with unexpected FAIL or XPASS "
+            "Perplexity run completed with unexpected FAIL or XPASS "
             "outcomes"
         )
         return 1
@@ -489,7 +489,7 @@ def main() -> int:
         json.JSONDecodeError,
         subprocess.SubprocessError,
     ) as exc:
-        print(f"Perplexity benchmark failed: {exc}", file=sys.stderr)
+        print(f"Perplexity run failed: {exc}", file=sys.stderr)
         return 1
 
 

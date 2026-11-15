@@ -1,0 +1,61 @@
+{
+  "workloads": [
+    {
+      "id": "lemonade-benchmark",
+      "argv": [
+        "python3",
+        "scripts/hrx/gguf_qualification/run_lemonade_benchmark.py",
+        "--lemonade-dir",
+        "release/lemonade",
+        "--llama-server",
+        "release/validation-package/bin/llama-server",
+        "--hrx-output",
+        "gguf-qualification/benchmark-hrx.json",
+        "--vulkan-output",
+        "gguf-qualification/benchmark-vulkan.json",
+        "--hrx-server-log",
+        "gguf-qualification-debug/lemond-hrx.log",
+        "--vulkan-server-log",
+        "gguf-qualification-debug/lemond-vulkan.log",
+        "--model-manifest",
+        "gguf_qualification/hrx/model_manifest.json"
+      ]
+    },
+    {
+      "id": "perplexity",
+      "argv": [
+        "python3",
+        "scripts/hrx/gguf_qualification/run_perplexity.py",
+        "--llama-perplexity",
+        "release/validation-package/bin/llama-perplexity",
+        "--model-manifest",
+        "gguf_qualification/hrx/model_manifest.json",
+        "--corpus-file",
+        "perplexity-corpus/wiki.test.raw",
+        "--output",
+        "gguf-qualification/perplexity.json",
+        "--hrx-log",
+        "gguf-qualification-debug/perplexity-hrx.log",
+        "--vulkan-log",
+        "gguf-qualification-debug/perplexity-vulkan.log"
+      ]
+    },
+    {
+      "id": "long-context-benchmark",
+      "argv": [
+        "python3",
+        "scripts/hrx/gguf_qualification/run_context_sweep.py",
+        "--model-manifest",
+        "gguf_qualification/hrx/model_manifest.json",
+        "--llama-bench",
+        "release/validation-package/bin/llama-bench",
+        "--output",
+        "gguf-qualification/long-context-benchmark.json",
+        "--hrx-log",
+        "gguf-qualification-debug/long-context-benchmark-hrx.log",
+        "--vulkan-log",
+        "gguf-qualification-debug/long-context-benchmark-vulkan.log"
+      ]
+    }
+  ]
+}

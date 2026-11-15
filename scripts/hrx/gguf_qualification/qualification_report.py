@@ -1,11 +1,12 @@
 # Copyright Advanced Micro Devices, Inc.
 # SPDX-License-Identifier: MIT
-"""Shared output, error handling, and Markdown helpers for CI benchmark reports.
+"""Shared output, error handling, and Markdown helpers for CI GGUF qualification reports.
 
-Two scripts turn CI benchmark artifacts into Markdown for the GitHub step
-summary: ``write_lemonade_benchmark_report.py`` (Lemonade throughput) and
-``write_perplexity_report.py`` (llama-perplexity). Lemonade compares separate HRX
-and Vulkan artifacts; perplexity reads one combined artifact. Each script owns
+Three scripts turn CI GGUF qualification artifacts into Markdown for the GitHub step
+summary: ``write_lemonade_benchmark_report.py`` (Lemonade throughput),
+``write_perplexity_report.py`` (llama-perplexity), and
+``write_context_sweep_report.py`` (long-context performance). Lemonade compares
+separate HRX and Vulkan artifacts; perplexity reads one combined artifact. Each script owns
 its argument parsing and report layout. This module provides JSON loading,
 Markdown helpers, and ``write_report`` for their common output contract.
 
@@ -15,7 +16,7 @@ receive the same handling, regardless of the number of input artifacts.
 On success, the complete report goes to stdout and the exit status is 0. An
 input or comparison error produces a diagnostic on stderr, exit status 1, and
 nothing on stdout: a misleading or partial summary is worse than a missing
-one. A valid artifact describing a failed benchmark is distinct from malformed
+one. A valid artifact describing a failed check is distinct from malformed
 input; the formatter renders that failure without failing the report itself.
 
 ``load_json`` owns reading and JSON decoding. Each report owns interpretation
