@@ -39,12 +39,17 @@ def format_report(document: dict[str, Any]) -> str:
         f"llama.cpp {format_code(document['source_revisions']['llama_cpp'][:12])} · "
         f"HRX {format_code(document['source_revisions']['hrx_system'][:12])}",
         "",
-        "Prefill measures the final prompt tokens after llama-bench populates the earlier "
-        "context outside the timer. Decode uses `tg T @ d (N − T)`: llama-bench "
-        "populates the history before timing T generated tokens. Contexts above each model's GGUF-declared "
-        "limit are skipped. Hardware allocation failures are failures. Only explicit "
-        "context/backend `fail` expectations classify model failures "
-        "as XFAIL; infrastructure failures are never excused.",
+        "**pp (prompt processing)** measures the speed of adding up to "
+        f"{settings['prefill_tokens']:,} prompt tokens at the selected context length. "
+        "llama-bench first builds the earlier context outside the timer, then times "
+        "those final prompt tokens. **tg (text generation)** measures the speed of "
+        f"generating {settings['decode_tokens']} tokens near that context length; "
+        "building the preceding history is also outside the timer. Each result is "
+        f"the average of {settings['repetitions']} timed repetitions, with llama-bench's default warmup.",
+        "",
+        "Contexts above each model's GGUF-declared limit are skipped. Hardware allocation "
+        "failures are failures. Only explicit context/backend `fail` expectations classify "
+        "model failures as XFAIL; infrastructure failures are never excused.",
     ]
     if any(model["contexts"] for model in document["models"]):
         lines.extend([
