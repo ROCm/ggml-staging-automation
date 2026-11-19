@@ -141,6 +141,9 @@ def build_llama_cpp(
         f"-DLLAMA_BUILD_EXAMPLES={'ON' if build_examples else 'OFF'}",
         "-DLLAMA_BUILD_TOOLS=ON",
         "-DLLAMA_BUILD_SERVER=ON",
+        # The HRX qualification uses the server API, not its embedded web UI.
+        # Avoid fetching mutable UI assets during the integration build.
+        "-DLLAMA_USE_PREBUILT_UI=OFF",
         f"-DGGML_BACKEND_DL={'ON' if backend_dl else 'OFF'}",
         *extra_cmake_args,
     ]
